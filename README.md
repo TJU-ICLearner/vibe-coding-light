@@ -43,15 +43,15 @@ Vibe Coding Light now includes a pixel art desktop pet that reacts to your AI ag
 
 The pet window is always on top and draggable, so you can position it anywhere on your screen.
 
-### Use your own photo (macOS)
+### Create a custom pet (macOS)
 
 1. Open the tray menu and choose **Customize Pet**.
    With the pet window focused, **⌘,** also opens this window.
-2. Choose a PNG or JPEG (up to 10 MiB, with each side up to 4096 pixels). On macOS 14+, select **Remove Background** to cut out the largest visible subject locally. On macOS 12–13, use a PNG that already has a transparent background and select **Keep Alpha**.
-3. Check the transparent preview, choose a name, size, and position, then click **Save and Use**. Previewing alone does not replace the active pet.
-4. In the same window, select a saved pet, return to the built-in pixel cat, or delete a saved pet.
+2. Choose **Single image** to use one asset for every state, or **By state** to set a required default plus optional Working, Waiting, Error, and Completed assets. Missing state assets use the default. Switching modes keeps your draft; saving in Single image mode stores only the default.
+3. Each slot accepts PNG, JPEG, or a transparent GIF (up to 10 MiB). Static images can be cut out locally with **Remove Background** on macOS 14+; transparent PNG and GIF work on macOS 12–13. GIFs retain their original animation and must already have a transparent background. Static images may be up to 4096 pixels per side; GIFs may be up to 1024 pixels per side and 120 frames.
+4. Preview each state, choose a name, size, and position, then click **Save and Use**. Previewing alone does not replace the active pet. You can select or delete saved pets and return to the built-in pixel cat in the same window.
 
-The processed 256×256 PNG, its settings, and the selected pet are saved in Vibe Coding Light's local app data. The original photo is not saved or uploaded. Photo pets respond to agent states with gentle motion; the built-in cat keeps its sprite animations. Windows and Linux continue to use the built-in cat in this version.
+Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop settings are kept. Everything stays in Vibe Coding Light's local app data; source photos are not uploaded. Static pets use gentle state motion, while GIFs play their own frames. Existing single-image pets remain usable. Windows and Linux continue to use the built-in cat in this version.
 
 ## How It Works
 
@@ -71,7 +71,7 @@ Zero network ports, zero APIs, zero configuration — just files on disk.
 
 ### Download for Mac
 
-Download the Apple Silicon DMG from the [latest release](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest), then drag **Vibe Coding Light.app** into Applications. This first downloadable build is for Apple Silicon; Intel Mac users can build from source. The build is unsigned, so macOS may require the extra opening step below.
+Download the Apple Silicon DMG from the [latest release](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest), then drag **Vibe Coding Light.app** into Applications. Intel Mac users can build from source. The build is unsigned, so macOS may require the extra opening step below.
 
 The app keeps the existing `com.cuihuapeng.code-light` bundle identifier and `~/.code-light` hook data directory so previous local settings remain available after the rename.
 
