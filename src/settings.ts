@@ -1,24 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActivePet, AgentVisualState, ImportCapabilities, PetImageMode, PetManifest, PreparedAssetPayload } from "./pet/types";
+import { AssetDraft, validatePetFile } from "./pet/asset_draft";
+import type { DraftMode } from "./pet/asset_draft";
+import type { ActivePet, AgentVisualState, ImportCapabilities, PetImageMode, PetManifest, PetSlot, PreparedAssetPayload } from "./pet/types";
 import "./settings.css";
+export { validatePetFile } from "./pet/asset_draft";
 
 export function availableModes(capabilities: ImportCapabilities): PetImageMode[] {
   const modes: PetImageMode[] = [];
   if (capabilities.automatic) modes.push("remove_background");
   if (capabilities.transparent_png) modes.push("keep_alpha");
+  if (capabilities.transparent_gif) modes.push("keep_animation");
   return modes;
-}
-
-const MAX_INPUT_BYTES = 10 * 1024 * 1024;
-
-export function validatePetFile(file: File, mode: PetImageMode): string | null {
-  if (file.size > MAX_INPUT_BYTES) return "图片不能超过 10 MiB";
-  const extension = file.name.split(".").pop()?.toLowerCase();
-  const isPng = extension === "png" && (file.type === "image/png" || file.type === "");
-  const isJpeg = (extension === "jpg" || extension === "jpeg") && (file.type === "image/jpeg" || file.type === "");
-  if (!isPng && !isJpeg) return "请选择 PNG 或 JPEG 图片";
-  if (mode === "keep_alpha" && !isPng) return "保留透明背景需要 PNG 图片";
-  return null;
 }
 
 export function validPetTransform(scale: number, offsetX: number, offsetY: number): boolean {
@@ -63,8 +55,8 @@ export class PreviewController {
 }
 
 interface SettingsApi {
-  prepare(bytes: Uint8Array, mode: PetImageMode): Promise<string>;
-  save(name: string, png: string, scale: number, offsetX: number, offsetY: number): Promise<PetManifest>;
+  prepare(bytes: Uint8Array, mode: PetImageMode): Promise<PreparedAssetPayload>;
+  save(name: string, assets: Partial<Record<PetSlot, PreparedAssetPayload>>, scale: number, offsetX: number, offsetY: number): Promise<PetManifest>;
   list(): Promise<PetManifest[]>;
   select(id: string): Promise<void>;
   delete(id: string): Promise<void>;
@@ -72,21 +64,20 @@ interface SettingsApi {
 }
 
 export class SettingsController {
-  readonly preview: PreviewController;
-  previewUrl: string | null = null;
+  readonly draft: AssetDraft;
+  mode: DraftMode = "single";
   error = "";
   busy = false;
   pets: PetManifest[] = [];
   selectedId = "builtin-cat";
+  invalidSlots: PetSlot[] = [];
   private listeners = new Set<() => void>();
 
   constructor(private readonly api: SettingsApi) {
-    this.preview = new PreviewController(
-      api.prepare,
-      (url) => { this.previewUrl = url; this.error = ""; this.busy = false; this.notify(); },
-      (message) => { this.previewUrl = null; this.error = message; this.busy = false; this.notify(); },
-    );
+    this.draft = new AssetDraft(() => this.notify());
   }
+
+  get previewUrl(): string | null { return this.draft.get("default")?.asset?.data_url ?? null; }
 
   onChange(listener: () => void): () => void {
     this.listeners.add(listener); return () => this.listeners.delete(listener);
@@ -94,27 +85,39 @@ export class SettingsController {
   private notify(): void { this.listeners.forEach((listener) => listener()); }
 
   async load(file: File, mode: PetImageMode): Promise<void> {
-    this.preview.clear();
-    this.previewUrl = null;
-    this.error = validatePetFile(file, mode) ?? "";
-    this.busy = !this.error;
+    await this.loadSlot("default", file, mode);
+  }
+
+  async loadSlot(slot: PetSlot, file: File, mode: PetImageMode): Promise<void> {
+    this.error = "";
+    await this.draft.load(slot, file, mode, this.api.prepare);
+    this.error = this.draft.get("default")?.error ?? "";
     this.notify();
-    if (this.error) return;
-    await this.preview.load(file, mode);
+  }
+
+  setMode(mode: DraftMode): void {
+    this.mode = mode;
+    this.error = "";
+    this.notify();
   }
 
   async refresh(): Promise<void> {
     const [pets, active] = await Promise.all([this.api.list(), this.api.active()]);
     this.pets = pets;
     this.selectedId = active.kind === "photo" ? active.id : "builtin-cat";
+    this.invalidSlots = active.kind === "photo" ? (active.invalid_slots ?? []) : [];
     this.notify();
   }
 
   async save(name: string, scale: number, offsetX: number, offsetY: number): Promise<PetManifest> {
-    if (!this.previewUrl) throw new Error("请先生成预览");
+    const assets = this.draft.selected(this.mode);
+    if (!assets.default) throw new Error("请先生成默认素材预览");
+    if (this.draft.isBusy(this.mode)) throw new Error("请等待图片处理完成");
+    if (this.draft.blockingError(this.mode)) throw new Error(this.draft.blockingError(this.mode));
+    if (!validPetTransform(scale, offsetX, offsetY)) throw new Error("大小或位置会使桌宠超出窗口");
     this.busy = true; this.error = ""; this.notify();
     try {
-      const saved = await this.api.save(name, this.previewUrl, scale, offsetX, offsetY);
+      const saved = await this.api.save(name, assets, scale, offsetX, offsetY);
       await this.refresh();
       return saved;
     } catch (error) {
@@ -127,6 +130,8 @@ export class SettingsController {
     try {
       await this.api.select(id);
       this.selectedId = id;
+      const active = await this.api.active();
+      this.invalidSlots = active.kind === "photo" ? (active.invalid_slots ?? []) : [];
       this.notify();
     } catch (error) { this.error = String(error); this.notify(); throw error; }
   }
@@ -136,14 +141,15 @@ export class SettingsController {
       await this.api.delete(id);
       this.pets = this.pets.filter((pet) => pet.id !== id);
       if (this.selectedId === id) this.selectedId = "builtin-cat";
+      if (this.selectedId === "builtin-cat") this.invalidSlots = [];
       this.notify();
     } catch (error) { this.error = String(error); this.notify(); throw error; }
   }
 }
 
 const api: SettingsApi = {
-  prepare: async (bytes, mode) => (await invoke<PreparedAssetPayload>("prepare_pet_preview", { input: Array.from(bytes), mode })).data_url,
-  save: (name, png, scale, offsetX, offsetY) => invoke("save_photo_pet", { name, pngDataUrl: png, scale, offsetX, offsetY }),
+  prepare: (bytes, mode) => invoke<PreparedAssetPayload>("prepare_pet_preview", { input: Array.from(bytes), mode }),
+  save: (name, assets, scale, offsetX, offsetY) => invoke("save_pet_profile", { name, assets, scale, offsetX, offsetY }),
   list: () => invoke("list_photo_pets"),
   select: (id) => invoke("select_pet", { id }),
   delete: (id) => invoke("delete_photo_pet", { id }),
@@ -153,11 +159,18 @@ const api: SettingsApi = {
 const stateLabels: Record<AgentVisualState, string> = {
   idle: "休息", unknown: "未知", working: "工作", waiting: "等待", error: "出错", completed: "完成",
 };
+const slotLabels: Record<PetSlot, string> = {
+  default: "默认", working: "工作", waiting: "等待", error: "出错", completed: "完成",
+};
 
 export function mountSettings(): void {
   const root = document.getElementById("settings-app");
   if (!root) return;
   const controller = new SettingsController(api);
+  const styleInput = document.querySelector<HTMLSelectElement>("#pet-style");
+  const stateAssets = document.querySelector<HTMLElement>("#state-assets");
+  const modeHint = document.querySelector<HTMLElement>("#mode-hint");
+  const savedWarning = document.querySelector<HTMLElement>("#saved-warning");
   const fileInput = document.querySelector<HTMLInputElement>("#photo-file")!;
   const modeInput = document.querySelector<HTMLSelectElement>("#photo-mode")!;
   const original = document.querySelector<HTMLImageElement>("#original-preview")!;
@@ -171,8 +184,44 @@ export function mountSettings(): void {
   const list = document.querySelector<HTMLElement>("#saved-pets")!;
   const status = document.querySelector<HTMLElement>("#status")!;
   const stateButtons = document.querySelector<HTMLElement>("#state-buttons")!;
-  let originalUrl: string | null = null;
+  const originalUrls = new Map<PetSlot, string>();
+  const slotControls = new Map<PetSlot, { file: HTMLInputElement; mode: HTMLSelectElement; original: HTMLImageElement; preview: HTMLImageElement; status: HTMLElement }>();
+  const stateSlots: PetSlot[] = ["working", "waiting", "error", "completed"];
+  let capabilities: ImportCapabilities = { automatic: false, transparent_png: false, transparent_gif: false };
+  let selectedState: AgentVisualState = "idle";
   let suggestedName = "";
+
+  const setOriginal = (slot: PetSlot, file: File, image: HTMLImageElement) => {
+    const previous = originalUrls.get(slot);
+    if (previous) URL.revokeObjectURL(previous);
+    const url = URL.createObjectURL(file);
+    originalUrls.set(slot, url);
+    image.src = url;
+  };
+
+  const modesFor = (file?: File): PetImageMode[] => {
+    if (file?.name.toLowerCase().endsWith(".gif")) return capabilities.transparent_gif ? ["keep_animation"] : [];
+    return availableModes(capabilities).filter((mode) => mode !== "keep_animation");
+  };
+
+  const configureModes = (select: HTMLSelectElement, file?: File) => {
+    const previous = select.value;
+    select.replaceChildren();
+    for (const mode of modesFor(file)) {
+      const label = mode === "remove_background" ? "自动去背景（macOS 14+）"
+        : mode === "keep_alpha" ? "保留透明 PNG" : "保留透明 GIF 动画";
+      select.add(new Option(label, mode));
+    }
+    if (modesFor(file).includes(previous as PetImageMode)) select.value = previous;
+    select.disabled = select.options.length <= 1;
+  };
+
+  const chosenAsset = () => {
+    const slot: PetSlot = controller.mode === "states" && selectedState !== "idle" && selectedState !== "unknown"
+      ? selectedState : "default";
+    return controller.draft.get(slot)?.asset ?? controller.draft.get("default")?.asset ?? null;
+  };
+
   const updateTransform = () => {
     const scale = Number(scaleInput.value);
     if (Number.isFinite(scale) && scale >= 0.5 && scale <= 0.95) {
@@ -181,22 +230,46 @@ export function mountSettings(): void {
       yInput.min = String(top); yInput.max = String(side);
     }
     const valid = applyPreviewTransform(processedFrame, scale, Number(xInput.value), Number(yInput.value));
-    saveButton.disabled = controller.busy || !controller.previewUrl || !valid;
-    if (!valid && controller.previewUrl) {
+    saveButton.disabled = controller.busy || controller.draft.isBusy(controller.mode) ||
+      Boolean(controller.draft.blockingError(controller.mode)) || !controller.previewUrl || !valid;
+    if (!valid && controller.previewUrl && !controller.error) {
       status.textContent = "大小或位置会使桌宠超出窗口，请调整参数";
       status.classList.add("error");
     }
   };
 
   const render = () => {
-    if (controller.previewUrl) {
-      if (processed.getAttribute("src") !== controller.previewUrl) processed.src = controller.previewUrl;
+    const asset = chosenAsset();
+    if (asset) {
+      if (processed.getAttribute("src") !== asset.data_url) processed.src = asset.data_url;
     } else {
       processed.removeAttribute("src");
     }
-    processed.style.visibility = controller.previewUrl ? "visible" : "hidden";
-    status.textContent = controller.error || (controller.busy ? "正在处理图片…" : controller.previewUrl ? "预览已生成，可调整并保存" : "请选择图片");
-    status.classList.toggle("error", Boolean(controller.error));
+    processed.style.visibility = asset ? "visible" : "hidden";
+    processed.className = asset?.kind === "gif" ? "animated" : `motion-${selectedState}`;
+    const slotError = controller.draft.blockingError(controller.mode);
+    status.textContent = controller.error || slotError || (controller.busy || controller.draft.isBusy(controller.mode)
+      ? "正在处理图片…" : asset ? "预览已生成，可调整并保存" : "请选择默认素材");
+    status.classList.toggle("error", Boolean(controller.error || slotError));
+    if (stateAssets) stateAssets.hidden = controller.mode !== "states";
+    if (modeHint) modeHint.textContent = controller.mode === "single"
+      ? "单图模式只保存默认素材。切换模式会保留当前草稿。"
+      : "未设置专属素材的状态会使用默认素材。切回单图时只保存默认素材。";
+    for (const slot of stateSlots) {
+      const controls = slotControls.get(slot);
+      if (!controls) continue;
+      const entry = controller.draft.get(slot);
+      if (entry?.asset) {
+        if (controls.preview.getAttribute("src") !== entry.asset.data_url) controls.preview.src = entry.asset.data_url;
+      } else controls.preview.removeAttribute("src");
+      controls.status.textContent = entry?.error || (entry?.busy ? "正在处理…" : entry?.asset ? "预览已生成" : "未设置，使用默认素材");
+      controls.status.classList.toggle("error", Boolean(entry?.error));
+    }
+    if (savedWarning) {
+      savedWarning.hidden = controller.invalidSlots.length === 0;
+      savedWarning.textContent = controller.invalidSlots.length
+        ? `当前桌宠的${controller.invalidSlots.map((slot) => slotLabels[slot]).join("、")}素材不可用，已使用默认素材。请重新创建桌宠。` : "";
+    }
     updateTransform();
     list.replaceChildren();
     const builtin = document.createElement("button");
@@ -217,21 +290,51 @@ export function mountSettings(): void {
     }
   };
   controller.onChange(render);
-  const chooseFile = async () => {
-    const file = fileInput.files?.[0]; if (!file) return;
-    if (originalUrl) URL.revokeObjectURL(originalUrl);
-    originalUrl = null;
-    original.removeAttribute("src");
-    const validationError = validatePetFile(file, modeInput.value as PetImageMode);
-    if (validationError) { await controller.load(file, modeInput.value as PetImageMode); return; }
-    originalUrl = URL.createObjectURL(file); original.src = originalUrl;
-    const nextName = file.name.replace(/\.[^.]+$/, "");
-    if (!nameInput.value.trim() || nameInput.value === suggestedName) nameInput.value = nextName;
-    suggestedName = nextName;
-    await controller.load(file, modeInput.value as PetImageMode);
+  const chooseFile = async (slot: PetSlot, input: HTMLInputElement, mode: HTMLSelectElement, image: HTMLImageElement) => {
+    const file = input.files?.[0]; if (!file) return;
+    configureModes(mode, file);
+    const selectedMode = mode.value as PetImageMode;
+    if (!selectedMode) {
+      status.textContent = "当前系统不支持这种图片导入";
+      return;
+    }
+    if (!validatePetFile(file, selectedMode)) setOriginal(slot, file, image);
+    if (slot === "default") {
+      const nextName = file.name.replace(/\.[^.]+$/, "");
+      if (!nameInput.value.trim() || nameInput.value === suggestedName) nameInput.value = nextName;
+      suggestedName = nextName;
+    }
+    await controller.loadSlot(slot, file, selectedMode);
   };
-  fileInput.onchange = () => { void chooseFile(); };
-  modeInput.onchange = () => { if (fileInput.files?.length) void chooseFile(); };
+  fileInput.onchange = () => { void chooseFile("default", fileInput, modeInput, original); };
+  modeInput.onchange = () => { if (fileInput.files?.length) void chooseFile("default", fileInput, modeInput, original); };
+  if (styleInput) styleInput.onchange = () => controller.setMode(styleInput.value as DraftMode);
+
+  if (stateAssets) for (const slot of stateSlots) {
+    const card = document.createElement("div"); card.className = "slot-card"; card.dataset.slot = slot;
+    const title = document.createElement("h3"); title.textContent = `${slotLabels[slot]}素材（可选）`;
+    const label = document.createElement("label"); label.textContent = "上传图片或透明 GIF";
+    const input = document.createElement("input"); input.type = "file"; input.accept = "image/png,image/jpeg,image/gif";
+    input.setAttribute("aria-label", `${slotLabels[slot]}素材`); label.append(input);
+    const modeLabel = document.createElement("label"); modeLabel.textContent = "处理方式";
+    const mode = document.createElement("select"); mode.setAttribute("aria-label", `${slotLabels[slot]}处理方式`); modeLabel.append(mode);
+    const previewGrid = document.createElement("div"); previewGrid.className = "slot-preview-grid";
+    const originalImage = document.createElement("img"); originalImage.alt = `${slotLabels[slot]}原图预览`;
+    const previewImage = document.createElement("img"); previewImage.alt = `${slotLabels[slot]}桌宠预览`;
+    previewGrid.append(originalImage, previewImage);
+    const message = document.createElement("p"); message.className = "slot-status"; message.setAttribute("role", "status");
+    const clear = document.createElement("button"); clear.type = "button"; clear.textContent = "移除该状态素材";
+    clear.onclick = () => {
+      controller.draft.clear(slot); input.value = "";
+      const url = originalUrls.get(slot); if (url) URL.revokeObjectURL(url);
+      originalUrls.delete(slot); originalImage.removeAttribute("src");
+      configureModes(mode);
+    };
+    input.onchange = () => { void chooseFile(slot, input, mode, originalImage); };
+    mode.onchange = () => { if (input.files?.length) void chooseFile(slot, input, mode, originalImage); };
+    card.append(title, label, modeLabel, previewGrid, message, clear); stateAssets.append(card);
+    slotControls.set(slot, { file: input, mode, original: originalImage, preview: previewImage, status: message });
+  }
   for (const input of [scaleInput, xInput, yInput]) input.addEventListener("input", render);
   saveButton.onclick = () => {
     void controller.save(nameInput.value, Number(scaleInput.value), Number(xInput.value), Number(yInput.value)).catch(() => {});
@@ -240,27 +343,26 @@ export function mountSettings(): void {
     if (state === "unknown") continue;
     const button = document.createElement("button"); button.type = "button"; button.textContent = label;
     button.onclick = () => {
+      selectedState = state;
       stateButtons.querySelectorAll("button").forEach((item) => item.classList.remove("selected"));
       button.classList.add("selected");
-      processed.className = "";
-      void processed.offsetWidth;
-      processed.className = `motion-${state}`;
+      render();
     };
     stateButtons.append(button);
   }
   stateButtons.querySelector("button")?.classList.add("selected");
-  processed.className = "motion-idle";
   processed.addEventListener("animationend", (event) => {
-    if (event.animationName === "pet-photo-completed") processed.className = "motion-idle";
+    if (event.animationName === "pet-photo-completed" && !processed.classList.contains("animated")) processed.className = "motion-idle";
   });
-  invoke<ImportCapabilities>("get_pet_import_capabilities").then((capabilities) => {
-    const modes = availableModes(capabilities);
-    modeInput.replaceChildren();
-    if (modes.includes("remove_background")) modeInput.add(new Option("自动去背景（macOS 14+）", "remove_background"));
-    if (modes.includes("keep_alpha")) modeInput.add(new Option("保留透明 PNG", "keep_alpha"));
-    fileInput.disabled = modes.length === 0;
-    if (modes.length === 0) status.textContent = "图片导入当前仅支持 macOS";
+  invoke<ImportCapabilities>("get_pet_import_capabilities").then((result) => {
+    capabilities = result;
+    configureModes(modeInput, fileInput.files?.[0]);
+    for (const controls of slotControls.values()) configureModes(controls.mode, controls.file.files?.[0]);
+    fileInput.disabled = availableModes(capabilities).length === 0;
+    for (const controls of slotControls.values()) controls.file.disabled = fileInput.disabled;
+    if (fileInput.disabled) status.textContent = "图片导入当前仅支持 macOS";
   }).catch((error) => { status.textContent = String(error); });
+  window.addEventListener("beforeunload", () => { for (const url of originalUrls.values()) URL.revokeObjectURL(url); }, { once: true });
   void controller.refresh().catch((error) => { status.textContent = String(error); });
   render();
 }

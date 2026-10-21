@@ -25,6 +25,7 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid #4a9a78; ou
 #processed-preview.motion-error { animation: pet-photo-error .34s ease-in-out infinite; }
 #processed-preview.motion-completed { animation: pet-photo-completed .7s ease-out 1; }
 #processed-preview.motion-idle { animation: pet-photo-idle 2.6s ease-in-out infinite; }
+#processed-preview.animated { animation: none; }
 @keyframes pet-photo-idle { 50% { transform: translateY(-3px); } }
 @keyframes pet-photo-working { 50% { transform: rotate(-5deg) translateY(-2px); } }
 @keyframes pet-photo-waiting { 50% { transform: scale(1.035); } }
@@ -32,6 +33,18 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid #4a9a78; ou
 @keyframes pet-photo-completed { 50% { transform: translateY(-12px) scale(1.06); } }
 #status { font-size: 13px; color: #536b61; margin: 13px 0 0; min-height: 18px; }
 #status.error { color: #ac3744; }
+.hint { margin: 4px 0 16px; color: #62717b; font-size: 12px; }
+.slot-grid { display: grid; gap: 12px; margin-top: 18px; }
+.slot-grid[hidden] { display: none; }
+.slot-card { border: 1px solid #dce5e8; border-radius: 10px; padding: 14px; background: #f9fbfb; }
+.slot-card h3 { font-size: 14px; margin: 0 0 8px; }
+.slot-card label { margin: 8px 0; }
+.slot-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.slot-preview-grid img { width: 100%; height: 100px; object-fit: contain; background: #eef2f4; border-radius: 8px; }
+.slot-preview-grid img:not([src]) { visibility: hidden; }
+.slot-status { min-height: 18px; margin: 8px 0; color: #62717b; font-size: 12px; }
+.slot-status.error, .warning { color: #ac3744; }
+.warning { font-size: 13px; margin: 0 0 12px; }
 .controls { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 16px; }
 button { border: 1px solid #cad5da; border-radius: 8px; padding: 8px 12px; background: white; color: #263238; cursor: pointer; font: inherit; }
 button:hover { background: #f0f6f3; }

@@ -7,11 +7,14 @@
   </head>
   <body>
     <main id="settings-app">
-      <header><p class="eyebrow">VIBE CODING LIGHT</p><h1>自定义桌宠</h1><p>选择一张图片，在本机生成透明桌宠。</p></header>
+      <header><p class="eyebrow">VIBE CODING LIGHT</p><h1>自定义桌宠</h1><p>在本机用静态图片或透明 GIF 制作桌宠。</p></header>
       <section class="panel">
         <h2>1. 导入图片</h2>
-        <label>图片（PNG 或 JPEG，最大 10 MiB）<input id="photo-file" type="file" accept="image/png,image/jpeg" /></label>
+        <label>制作方式<select id="pet-style"><option value="single">单图：所有状态共用一张</option><option value="states">按状态：为不同状态设置素材</option></select></label>
+        <p id="mode-hint" class="hint">单图模式只保存默认素材。切换模式会保留当前草稿。</p>
+        <label>默认素材（必选，PNG、JPEG 或透明 GIF，最大 10 MiB）<input id="photo-file" type="file" accept="image/png,image/jpeg,image/gif" /></label>
         <label>处理方式<select id="photo-mode"><option value="remove_background">自动去背景（macOS 14+）</option><option value="keep_alpha">保留透明 PNG</option></select></label>
+        <div id="state-assets" class="slot-grid" hidden></div>
         <div class="preview-grid">
           <div><span>原图</span><div class="preview-box"><img id="original-preview" alt="原图预览" /></div></div>
           <div><span>桌宠预览（实际 128 × 128 窗口）</span><div class="preview-box checker"><div class="preview-window"><div id="processed-frame"><img id="processed-preview" alt="透明桌宠预览" /></div></div></div></div>
@@ -29,7 +32,7 @@
         <div class="states"><span>状态预览</span><div id="state-buttons"></div></div>
         <button id="save-pet" class="primary" type="button" disabled>保存并使用</button>
       </section>
-      <section class="panel"><h2>我的桌宠</h2><div id="saved-pets"></div></section>
+      <section class="panel"><h2>我的桌宠</h2><p id="saved-warning" class="warning" role="status" hidden></p><div id="saved-pets"></div></section>
     </main>
     <script type="module" src="/src/settings.ts"></script>
   </body>
