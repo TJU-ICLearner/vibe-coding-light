@@ -472,25 +472,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "code-light"
-version = "0.1.5"
-dependencies = [
- "base64 0.22.1",
- "cc",
- "dirs 5.0.1",
- "image",
- "objc",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-opener",
- "tempfile",
- "uuid",
-]
-
-[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4217,6 +4198,25 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vibe-coding-light"
+version = "1.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "cc",
+ "dirs 5.0.1",
+ "image",
+ "objc",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-opener",
+ "tempfile",
+ "uuid",
+]
 
 [[package]]
 name = "vswhom"

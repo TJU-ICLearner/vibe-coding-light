@@ -1,7 +1,7 @@
 {
-  "name": "code-light",
+  "name": "vibe-coding-light",
   "private": true,
-  "version": "0.1.5",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

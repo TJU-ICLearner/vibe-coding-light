@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="./logo.png" alt="Code Light AI" width="120" />
+  <img src="./logo.png" alt="Vibe Coding Light" width="120" />
 
-  # Code Light AI
+  # Vibe Coding Light
 
   A system tray status light for AI coding agents, with a desktop pet companion.
 
@@ -29,7 +29,7 @@ Active states blink every 500ms to catch your attention. The tray tooltip shows 
 
 ## Desktop Pet 🐱
 
-Code Light now includes a pixel art desktop pet that reacts to your AI agent's status! The cat companion sits on your desktop and animates based on what your agent is doing.
+Vibe Coding Light now includes a pixel art desktop pet that reacts to your AI agent's status! The cat companion sits on your desktop and animates based on what your agent is doing.
 
 | State | Animation |
 |:---:|---|
@@ -51,11 +51,11 @@ The pet window is always on top and draggable, so you can position it anywhere o
 3. Check the transparent preview, choose a name, size, and position, then click **Save and Use**. Previewing alone does not replace the active pet.
 4. In the same window, select a saved pet, return to the built-in pixel cat, or delete a saved pet.
 
-The processed 256×256 PNG, its settings, and the selected pet are saved in Code Light's local app data. The original photo is not saved or uploaded. Photo pets respond to agent states with gentle motion; the built-in cat keeps its sprite animations. Windows and Linux continue to use the built-in cat in this version.
+The processed 256×256 PNG, its settings, and the selected pet are saved in Vibe Coding Light's local app data. The original photo is not saved or uploaded. Photo pets respond to agent states with gentle motion; the built-in cat keeps its sprite animations. Windows and Linux continue to use the built-in cat in this version.
 
 ## How It Works
 
-Code Light uses a file-based polling mechanism:
+Vibe Coding Light uses a file-based polling mechanism:
 
 1. **Shell hooks** are registered as lifecycle hooks for Claude Code (`~/.claude/settings.json`) and Codex (`~/.codex/hooks.json`)
 2. Each hook writes a JSON state file to `~/.code-light/sessions/<session-id>.json`
@@ -69,19 +69,24 @@ Zero network ports, zero APIs, zero configuration — just files on disk.
 
 ## Install
 
+### Download for Mac
+
+Download the Apple Silicon DMG from the [v1.0.0 release](https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.0.0), then drag **Vibe Coding Light.app** into Applications. This first downloadable build is for Apple Silicon; Intel Mac users can build from source. The build is unsigned, so macOS may require the extra opening step below.
+
+The app keeps the existing `com.cuihuapeng.code-light` bundle identifier and `~/.code-light` hook data directory so previous local settings remain available after the rename.
+
 ### Prerequisites
 
 - macOS 12+ / Linux / Windows 10+
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) and/or [Codex CLI](https://github.com/openai/codex) installed
-- Node.js 18+ and [pnpm](https://pnpm.io/)
-- [Rust](https://rustup.rs/) toolchain
+- Node.js 18+, [pnpm](https://pnpm.io/), and the [Rust](https://rustup.rs/) toolchain for source builds
 - Windows users need [Git for Windows](https://git-scm.com/) (provides bash)
 
 ### Build from source
 
 ```bash
-git clone https://github.com/cuihuapeng/code-light-ai.git
-cd code-light-ai
+git clone https://github.com/TJU-ICLearner/vibe-coding-light.git
+cd vibe-coding-light
 pnpm install
 pnpm tauri build
 ```
@@ -90,13 +95,13 @@ Built artifacts:
 
 | Platform | Location |
 |----------|----------|
-| macOS | `src-tauri/target/release/bundle/macos/Code Light.app` |
-| Linux | `src-tauri/target/release/bundle/deb/code-light_*.deb` |
-| Windows | `src-tauri/target/release/bundle/nsis/code-light_*.exe` |
+| macOS | `src-tauri/target/release/bundle/macos/Vibe Coding Light.app` |
+| Linux | `src-tauri/target/release/bundle/deb/vibe-coding-light_*.deb` |
+| Windows | `src-tauri/target/release/bundle/nsis/Vibe Coding Light_*.exe` |
 
 ## Usage
 
-1. **Launch** Code Light — a gray dot appears in your system tray
+1. **Launch** Vibe Coding Light — a gray dot appears in your system tray
 2. **Right-click** the icon and select **"Setup Claude Hooks"** to register hooks for Claude Code, or **"Setup Codex Hooks"** for Codex CLI
 3. **Start your AI agent** in the terminal — the tray icon changes color as the agent works
 
@@ -109,14 +114,14 @@ That's it. On macOS the app runs as a pure menu bar accessory with no dock icon.
 If you build from source or download an unsigned build, macOS may block the app. To fix this:
 
 ```bash
-xattr -cr /path/to/Code\ Light.app
+xattr -cr "/Applications/Vibe Coding Light.app"
 ```
 
 Then open it by **right-clicking** the app and selecting **Open** → **Open** again in the dialog. You only need to do this once.
 
 ### Multi-session support
 
-If you run multiple sessions (Claude Code and/or Codex) in different terminals, Code Light tracks all of them simultaneously. The icon reflects the highest-priority state across all sessions (Error > Waiting > Working > Completed > Unknown > Idle).
+If you run multiple sessions (Claude Code and/or Codex) in different terminals, Vibe Coding Light tracks all of them simultaneously. The icon reflects the highest-priority state across all sessions (Error > Waiting > Working > Completed > Unknown > Idle).
 
 ### Automatic cleanup
 
@@ -143,7 +148,7 @@ cd src-tauri && cargo clippy
 ## Project Structure
 
 ```
-code-light/
+vibe-coding-light/
 ├── hooks/
 │   ├── claude/                      # Claude Code hook scripts
 │   │   ├── _helpers.sh              # Shared helpers (session ID from env, atomic write)
@@ -172,7 +177,7 @@ code-light/
 │   │   └── lib.rs                   # Tray icon, polling, blink, hook setup, pet window
 │   ├── icons/status/                # Status indicator PNGs (gray, green, yellow, red, blue)
 │   └── tauri.conf.json              # Tauri configuration
-├── src/                             # Frontend (vestigial — no visible window)
+├── src/                             # Pet renderer and photo settings frontend
 ├── generate-sprites.cjs             # Sprite sheet generator for desktop pet
 ├── package.json
 └── vite.config.ts
@@ -193,7 +198,7 @@ code-light/
 ## Tech Stack
 
 - **Backend:** [Tauri v2](https://v2.tauri.app/) + Rust
-- **Frontend:** Vite + TypeScript (minimal — the app has no visible window)
+- **Frontend:** Vite + TypeScript for the pet and settings windows
 - **Hooks:** Bash scripts registered as lifecycle hooks
 - **Desktop Pet:** Pixel art sprite sheets generated with Node.js canvas
 

@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="./logo.png" alt="Code Light AI" width="120" />
+  <img src="./logo.png" alt="Vibe Coding Light" width="120" />
 
-  # Code Light AI
+  # Vibe Coding Light
 
   AI 编程助手的系统托盘状态指示灯，附带桌面宠物伴侣
 
@@ -29,7 +29,7 @@
 
 ## 桌面宠物 🐱
 
-Code Light 现在附带一只像素艺术风格的桌面宠物，会根据 AI Agent 的状态做出反应！这只猫咪伴侣会坐在你的桌面上，根据 Agent 的工作状态播放不同动画。
+Vibe Coding Light 现在附带一只像素艺术风格的桌面宠物，会根据 AI Agent 的状态做出反应！这只猫咪伴侣会坐在你的桌面上，根据 Agent 的工作状态播放不同动画。
 
 | 状态 | 动画 |
 |:---:|---|
@@ -55,7 +55,7 @@ Code Light 现在附带一只像素艺术风格的桌面宠物，会根据 AI Ag
 
 ## 工作原理
 
-Code Light 使用基于文件的轮询机制：
+Vibe Coding Light 使用基于文件的轮询机制：
 
 1. **Shell 脚本**作为生命周期钩子注册到 Claude Code（`~/.claude/settings.json`）和 Codex（`~/.codex/hooks.json`）
 2. 每个钩子将 JSON 状态文件写入 `~/.code-light/sessions/<会话ID>.json`
@@ -69,19 +69,24 @@ Agent 事件 → 钩子脚本 → ~/.code-light/sessions/*.json → 托盘图标
 
 ## 安装
 
+### 在 Mac 上下载
+
+从 [v1.0.0 发布页](https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.0.0)下载 Apple Silicon 版 DMG，然后将 **Vibe Coding Light.app** 拖入“应用程序”。第一版可下载的安装包仅面向 Apple Silicon；Intel Mac 可从源码构建。安装包尚未签名，macOS 可能需要按下文操作后才能打开。
+
+更名后继续使用原有 `com.cuihuapeng.code-light` 应用标识和 `~/.code-light` 钩子数据目录，便于保留已有本地设置。
+
 ### 前提条件
 
 - macOS 12+ / Linux / Windows 10+
 - 已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 和/或 [Codex CLI](https://github.com/openai/codex)
-- Node.js 18+ 和 [pnpm](https://pnpm.io/)
-- [Rust](https://rustup.rs/) 工具链
+- 从源码构建时需要 Node.js 18+、[pnpm](https://pnpm.io/) 和 [Rust](https://rustup.rs/) 工具链
 - Windows 用户需安装 [Git for Windows](https://git-scm.com/)（提供 bash 环境）
 
 ### 从源码构建
 
 ```bash
-git clone https://github.com/cuihuapeng/code-light-ai.git
-cd code-light-ai
+git clone https://github.com/TJU-ICLearner/vibe-coding-light.git
+cd vibe-coding-light
 pnpm install
 pnpm tauri build
 ```
@@ -90,13 +95,13 @@ pnpm tauri build
 
 | 平台 | 路径 |
 |------|------|
-| macOS | `src-tauri/target/release/bundle/macos/Code Light.app` |
-| Linux | `src-tauri/target/release/bundle/deb/code-light_*.deb` |
-| Windows | `src-tauri/target/release/bundle/nsis/code-light_*.exe` |
+| macOS | `src-tauri/target/release/bundle/macos/Vibe Coding Light.app` |
+| Linux | `src-tauri/target/release/bundle/deb/vibe-coding-light_*.deb` |
+| Windows | `src-tauri/target/release/bundle/nsis/Vibe Coding Light_*.exe` |
 
 ## 使用方法
 
-1. **启动** Code Light —— 系统托盘会出现一个灰色圆点
+1. **启动** Vibe Coding Light —— 系统托盘会出现一个灰色圆点
 2. **右键点击**图标，选择 **"Setup Claude Hooks"** 注册 Claude Code 钩子，或选择 **"Setup Codex Hooks"** 注册 Codex 钩子
 3. **在终端启动你的 AI Agent** —— 托盘图标会随着 Agent 的工作自动变色
 
@@ -109,14 +114,14 @@ pnpm tauri build
 从源码构建或下载未签名版本时，macOS 可能会阻止打开。解决方法：
 
 ```bash
-xattr -cr /path/to/Code\ Light.app
+xattr -cr "/Applications/Vibe Coding Light.app"
 ```
 
 然后**右键点击**应用，选择**打开** → 再次点击**打开**即可。只需操作一次。
 
 ### 多会话支持
 
-如果你在不同终端同时运行多个会话（Claude Code 和/或 Codex），Code Light 会同时追踪所有会话。图标显示所有会话中优先级最高的状态（错误 > 等待 > 工作 > 完成 > 状态未知 > 空闲）。
+如果你在不同终端同时运行多个会话（Claude Code 和/或 Codex），Vibe Coding Light 会同时追踪所有会话。图标显示所有会话中优先级最高的状态（错误 > 等待 > 工作 > 完成 > 状态未知 > 空闲）。
 
 ### 自动清理
 
@@ -143,7 +148,7 @@ cd src-tauri && cargo clippy
 ## 项目结构
 
 ```
-code-light/
+vibe-coding-light/
 ├── hooks/
 │   ├── claude/                      # Claude Code 钩子脚本
 │   │   ├── _helpers.sh              # 公共函数（环境变量获取会话 ID、原子写入）
@@ -172,7 +177,7 @@ code-light/
 │   │   └── lib.rs                   # 托盘图标、轮询、闪烁、钩子注册、宠物窗口
 │   ├── icons/status/                # 状态指示灯图标（灰、绿、黄、红、蓝）
 │   └── tauri.conf.json              # Tauri 配置
-├── src/                             # 前端（无可见窗口，仅占位）
+├── src/                             # 桌宠渲染和图片设置窗口前端
 ├── generate-sprites.cjs             # 桌面宠物精灵图生成脚本
 ├── package.json
 └── vite.config.ts
@@ -193,7 +198,7 @@ code-light/
 ## 技术栈
 
 - **后端：** [Tauri v2](https://v2.tauri.app/) + Rust
-- **前端：** Vite + TypeScript（最小化 —— 应用没有可见窗口）
+- **前端：** Vite + TypeScript，用于桌宠和设置窗口
 - **钩子：** Bash 脚本，注册为生命周期钩子
 - **桌面宠物：** 使用 Node.js canvas 生成像素艺术精灵图
 

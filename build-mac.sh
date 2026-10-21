@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-APP_NAME="Code Light"
-BIN_NAME="code-light"
+APP_NAME="Vibe Coding Light"
+APP_SLUG="${APP_NAME// /_}"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERSION=$(grep '"version"' "$SRC_DIR/package.json" | head -1 | sed 's/.*: *"//;s/".*//')
 OUT_DIR="$SRC_DIR/dist"
@@ -23,7 +23,7 @@ build_arch() {
     pnpm tauri build --target "$target" 2>&1 | tail -5
 
     local app_bundle="$SRC_DIR/src-tauri/target/$target/release/bundle/macos/$APP_NAME.app"
-    local dmg_path="$OUT_DIR/${APP_NAME/ /_}_${VERSION}_${arch_suffix}.dmg"
+    local dmg_path="$OUT_DIR/${APP_SLUG}_${VERSION}_${arch_suffix}.dmg"
 
     if [ ! -d "$app_bundle" ]; then
         echo "ERROR: $app_bundle not found"

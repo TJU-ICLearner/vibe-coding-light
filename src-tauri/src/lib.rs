@@ -208,7 +208,7 @@ fn build_status_text(state: State, message: &str, ts: u64, count: usize) -> Stri
         State::Unknown => "Status unknown",
         State::Idle => "Idle",
     };
-    let mut parts = vec![format!("code-light: {}", label)];
+    let mut parts = vec![format!("Vibe Coding Light: {}", label)];
     if count > 1 {
         parts.push(format!("({} sessions)", count));
     }
@@ -253,7 +253,7 @@ fn get_hooks_dir() -> PathBuf {
             let search_paths: &[&str] = if cfg!(target_os = "macos") {
                 &["../Resources/hooks", "../Resources/_up_/hooks"]
             } else if cfg!(target_os = "linux") {
-                &["../lib/code-light/hooks", "../resources/hooks"]
+                &["../lib/vibe-coding-light/hooks", "../lib/code-light/hooks", "../resources/hooks"]
             } else {
                 &["../resources/hooks"]
             };
@@ -430,9 +430,9 @@ fn setup_codex_hooks() -> Result<(), String> {
     let codex_dest = codex_local_hooks_dir();
 
     let hook_defs = serde_json::json!({
-        "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&codex_dest, "session_start.sh"), "statusMessage": "Code Light: Session tracking" }] }],
-        "PreToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&codex_dest, "pre_tool_use.sh"), "statusMessage": "Code Light: Tracking" }] }],
-        "PermissionRequest": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&codex_dest, "permission_request.sh"), "statusMessage": "Code Light: Waiting for approval" }] }],
+        "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&codex_dest, "session_start.sh"), "statusMessage": "Vibe Coding Light: Session tracking" }] }],
+        "PreToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&codex_dest, "pre_tool_use.sh"), "statusMessage": "Vibe Coding Light: Tracking" }] }],
+        "PermissionRequest": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&codex_dest, "permission_request.sh"), "statusMessage": "Vibe Coding Light: Waiting for approval" }] }],
         "PostToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&codex_dest, "post_tool_use.sh") }] }],
         "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": shell_command(&codex_dest, "user_prompt_submit.sh") }] }],
         "Stop": [{ "hooks": [{ "type": "command", "command": shell_command(&codex_dest, "stop.sh"), "timeout": 30 }] }],
@@ -477,7 +477,7 @@ fn show_pet_settings(app: &tauri::AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|error| error.to_string())?;
     } else {
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-            .title("Customize Pet · Code Light")
+            .title("Customize Pet · Vibe Coding Light")
             .inner_size(760.0, 760.0)
             .min_inner_size(620.0, 540.0)
             .build()
@@ -541,7 +541,7 @@ pub fn run() {
                 MenuItemBuilder::with_id("setup_claude", "Setup Claude Hooks").build(app)?;
             let setup_codex_item =
                 MenuItemBuilder::with_id("setup_codex", "Setup Codex Hooks").build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "Quit Code Light").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit Vibe Coding Light").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&toggle_pet_item)
                 .item(&whip_item);
@@ -564,7 +564,7 @@ pub fn run() {
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(initial_icon)
                 .menu(&menu)
-                .tooltip("code-light: Idle")
+                .tooltip("Vibe Coding Light: Idle")
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "toggle_pet" => {
                         if let Some(window) = app.get_webview_window("pet") {
@@ -594,7 +594,7 @@ pub fn run() {
                             let _ = claude_setup_item.set_text("Claude hooks: installed");
                         }
                         Err(error) => {
-                            eprintln!("Code Light Claude hook setup failed: {error}");
+                            eprintln!("Vibe Coding Light Claude hook setup failed: {error}");
                             let _ = claude_setup_item
                                 .set_text(format!("Claude hooks: failed ({error})"));
                         }
@@ -604,7 +604,7 @@ pub fn run() {
                             let _ = codex_setup_item.set_text("Codex hooks: installed");
                         }
                         Err(error) => {
-                            eprintln!("Code Light Codex hook setup failed: {error}");
+                            eprintln!("Vibe Coding Light Codex hook setup failed: {error}");
                             let _ =
                                 codex_setup_item.set_text(format!("Codex hooks: failed ({error})"));
                         }
