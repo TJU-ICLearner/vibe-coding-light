@@ -12,6 +12,11 @@ fn supports_foreground_mask(major: u32) -> bool {
     major >= 14
 }
 
+pub fn automatic_available() -> bool {
+    let major = unsafe { code_light_macos_major_version() };
+    major >= 0 && supports_foreground_mask(major as u32)
+}
+
 pub fn remove_background(input: &[u8]) -> Result<Vec<u8>, PetImageError> {
     let major = unsafe { code_light_macos_major_version() };
     if major < 0 || !supports_foreground_mask(major as u32) {

@@ -16,6 +16,8 @@ use tauri::{
     tray::TrayIconBuilder,
     Emitter, Manager,
 };
+#[cfg(target_os = "macos")]
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -492,7 +494,8 @@ pub fn run() {
             pet_commands::list_photo_pets,
             pet_commands::select_pet,
             pet_commands::delete_photo_pet,
-            pet_commands::get_active_pet
+            pet_commands::get_active_pet,
+            pet_commands::get_pet_import_capabilities
         ])
         .setup(move |app| {
             let pet_data_dir = app.path().app_data_dir()?;
@@ -501,6 +504,9 @@ pub fn run() {
 
             let toggle_pet_item = MenuItemBuilder::with_id("toggle_pet", "Hide Pet").build(app)?;
             let whip_item = MenuItemBuilder::with_id("whip", "Whip  \u{2318}B").build(app)?;
+            #[cfg(target_os = "macos")]
+            let customize_item =
+                MenuItemBuilder::with_id("customize_pet", "Customize Pet").build(app)?;
             let setup_claude_item =
                 MenuItemBuilder::with_id("setup_claude", "Setup Claude Hooks").build(app)?;
             let setup_codex_item =
@@ -508,7 +514,10 @@ pub fn run() {
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Code Light").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&toggle_pet_item)
-                .item(&whip_item)
+                .item(&whip_item);
+            #[cfg(target_os = "macos")]
+            let menu = menu.item(&customize_item);
+            let menu = menu
                 .separator()
                 .item(&setup_claude_item)
                 .item(&setup_codex_item)
@@ -543,6 +552,26 @@ pub fn run() {
                     }
                     "whip" => {
                         let _ = app.emit("whip", ());
+                    }
+                    #[cfg(target_os = "macos")]
+                    "customize_pet" => {
+                        if let Some(window) = app.get_webview_window("settings") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        } else {
+                            let result = WebviewWindowBuilder::new(
+                                app,
+                                "settings",
+                                WebviewUrl::App("settings.html".into()),
+                            )
+                            .title("Customize Pet · Code Light")
+                            .inner_size(760.0, 760.0)
+                            .min_inner_size(620.0, 540.0)
+                            .build();
+                            if let Err(error) = result {
+                                eprintln!("Could not open pet settings: {error}");
+                            }
+                        }
                     }
                     "setup_claude" => match setup_hooks() {
                         Ok(()) => {

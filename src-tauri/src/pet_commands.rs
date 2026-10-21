@@ -6,6 +6,30 @@ use tauri::{AppHandle, Emitter, State};
 
 const PNG_DATA_URL_PREFIX: &str = "data:image/png;base64,";
 
+#[derive(Serialize)]
+pub struct ImportCapabilities {
+    automatic: bool,
+    transparent_png: bool,
+}
+
+#[tauri::command]
+pub fn get_pet_import_capabilities() -> ImportCapabilities {
+    #[cfg(target_os = "macos")]
+    {
+        ImportCapabilities {
+            automatic: crate::pet_vision::automatic_available(),
+            transparent_png: true,
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        ImportCapabilities {
+            automatic: false,
+            transparent_png: false,
+        }
+    }
+}
+
 fn png_data_url(png: &[u8]) -> String {
     format!("{PNG_DATA_URL_PREFIX}{}", STANDARD.encode(png))
 }
