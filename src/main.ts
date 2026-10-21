@@ -2,9 +2,11 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { PhysicalPosition } from "@tauri-apps/api/dpi";
+import { PhotoRenderer } from "./pet/photo_renderer";
+import type { ActivePet, AgentVisualState } from "./pet/types";
 
 interface StatePayload {
-  state: "idle" | "unknown" | "working" | "waiting" | "error" | "completed";
+  state: AgentVisualState;
   message: string;
   timestamp: number;
   activeCount: number;
@@ -17,21 +19,23 @@ let isHurting = false;
 let hurtTimeoutId: number | null = null;
 let whipAnimFrame: number | null = null;
 // The state to restore to after hurt animation ends
-let pendingState: string = "idle";
+let pendingState: AgentVisualState = "idle";
+let photoRenderer: PhotoRenderer | null = null;
 
 // Beat rotation queue: whip → stick → car → water → egg → repeat
 const beatRotation: BeatType[] = ["whip", "stick", "car", "water", "egg"];
 let beatIndex = 0;
 
-function setPetState(state: string) {
+function setPetState(state: AgentVisualState) {
   const pet = document.getElementById("pet-sprite");
   if (!pet) return;
   const visualState = state === "unknown" ? "idle" : state;
   if (isHurting) {
-    pendingState = visualState;
+    pendingState = visualState as AgentVisualState;
     return;
   }
-  pet.className = `pet-sprite state-${visualState}`;
+  if (photoRenderer) photoRenderer.applyState(state);
+  else pet.className = `pet-sprite state-${visualState}`;
 }
 
 /** Remove all "striking" classes and cancel running whip animation */
@@ -69,7 +73,7 @@ function startHurt(beatType: BeatType) {
   // Only save state on first entry — don't overwrite with a hurt state
   if (!isHurting) {
     const match = pet.className.match(/state-(\w+)/);
-    pendingState = match ? match[1] : "idle";
+    pendingState = match ? match[1] as AgentVisualState : "idle";
   }
 
   isHurting = true;
@@ -90,6 +94,7 @@ function endHurt() {
   if (pet) {
     pet.className = `pet-sprite state-${pendingState}`;
   }
+  photoRenderer?.applyState(pendingState);
 }
 
 /**
@@ -292,6 +297,7 @@ function triggerWhip() {
  * whip → stick → car → water → egg → whip → ...
  */
 function triggerBeat() {
+  if (photoRenderer?.react()) return;
   const beatType = beatRotation[beatIndex % beatRotation.length];
   beatIndex++;
 
@@ -349,8 +355,26 @@ async function initDrag() {
 }
 
 async function init() {
+  photoRenderer = new PhotoRenderer(
+    document.getElementById("pet-wrapper")!,
+    document.getElementById("pet-sprite")!,
+    document.getElementById("photo-frame")!,
+    document.getElementById("photo-pet") as HTMLImageElement,
+  );
   const currentState = await invoke<StatePayload>("get_current_state");
   setPetState(currentState.state);
+
+  let petRequestId = 0;
+  const refreshPet = async () => {
+    const id = ++petRequestId;
+    const pet = await invoke<ActivePet>("get_active_pet");
+    if (id !== petRequestId) return;
+    if (isHurting) endHurt();
+    photoRenderer?.applyPet(pet);
+  };
+  await refreshPet();
+
+  await listen("pet-changed", () => { void refreshPet(); });
 
   await listen<StatePayload>("state-changed", (event) => {
     setPetState(event.payload.state);
