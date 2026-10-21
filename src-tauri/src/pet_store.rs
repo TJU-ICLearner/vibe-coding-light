@@ -1,5 +1,6 @@
-use crate::pet_image::validate_processed_png;
+use crate::pet_image::{validate_pet_asset, PetAsset, PetAssetKind};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -7,10 +8,43 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 pub const BUILTIN_CAT_ID: &str = "builtin-cat";
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
+const MAX_PROFILE_BYTES: usize = 25 * 1024 * 1024;
 const MIN_SCALE: f32 = 0.5;
 const MAX_SCALE: f32 = 0.95;
 const MAX_OFFSET: i16 = 32;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PetSlot {
+    Default,
+    Working,
+    Waiting,
+    Error,
+    Completed,
+}
+
+impl PetSlot {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Working => "working",
+            Self::Waiting => "waiting",
+            Self::Error => "error",
+            Self::Completed => "completed",
+        }
+    }
+}
+
+pub type PetAssets = BTreeMap<PetSlot, PetAsset>;
+
+fn asset_filename(slot: PetSlot, kind: PetAssetKind) -> String {
+    let extension = match kind {
+        PetAssetKind::Png => "png",
+        PetAssetKind::Gif => "gif",
+    };
+    format!("{}.{}", slot.name(), extension)
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PetManifest {
@@ -21,11 +55,17 @@ pub struct PetManifest {
     pub offset_x: i16,
     pub offset_y: i16,
     pub created_at: i64,
+    #[serde(default)]
+    pub assets: BTreeMap<PetSlot, PetAssetKind>,
 }
 
 pub enum ActivePet {
     Builtin,
-    Photo { manifest: PetManifest, png: Vec<u8> },
+    Photo {
+        manifest: PetManifest,
+        assets: PetAssets,
+        invalid_slots: Vec<PetSlot>,
+    },
 }
 
 #[derive(Debug)]
@@ -122,40 +162,94 @@ impl PetStore {
             .map(|value| value.id)
     }
 
-    fn read_photo(&self, id: &str) -> Result<(PetManifest, Vec<u8>), PetStoreError> {
+    fn read_photo(
+        &self,
+        id: &str,
+    ) -> Result<(PetManifest, PetAssets, Vec<PetSlot>), PetStoreError> {
         if !valid_photo_id(id) {
             return Err(PetStoreError::InvalidId);
         }
         let directory = self.pets_dir().join(id);
         let manifest_path = directory.join("manifest.json");
-        let image_path = directory.join("pet.png");
-        if !regular_path(&directory, true)
-            || !regular_path(&manifest_path, false)
-            || !regular_path(&image_path, false)
-        {
+        if !regular_path(&directory, true) || !regular_path(&manifest_path, false) {
             return Err(PetStoreError::NotFound);
         }
         let manifest: PetManifest =
             serde_json::from_slice(&fs::read(manifest_path).map_err(io_error)?)
                 .map_err(|_| PetStoreError::InvalidManifest)?;
-        if manifest.schema_version != SCHEMA_VERSION
-            || manifest.id != id
+        if manifest.id != id
             || manifest.name.trim().is_empty()
             || manifest.name.chars().count() > 64
             || !valid_transform(manifest.scale, manifest.offset_x, manifest.offset_y)
         {
             return Err(PetStoreError::InvalidManifest);
         }
-        let png = fs::read(image_path).map_err(io_error)?;
-        validate_processed_png(&png)
-            .map_err(|error| PetStoreError::InvalidImage(error.to_string()))?;
-        Ok((manifest, png))
+        let declared = match manifest.schema_version {
+            1 if manifest.assets.is_empty() => {
+                BTreeMap::from([(PetSlot::Default, PetAssetKind::Png)])
+            }
+            SCHEMA_VERSION if manifest.assets.contains_key(&PetSlot::Default) => {
+                manifest.assets.clone()
+            }
+            _ => return Err(PetStoreError::InvalidManifest),
+        };
+        let mut assets = BTreeMap::new();
+        let mut invalid_slots = Vec::new();
+        for (slot, kind) in declared {
+            let filename = if manifest.schema_version == 1 {
+                "pet.png".to_string()
+            } else {
+                asset_filename(slot, kind)
+            };
+            let path = directory.join(filename);
+            let validated = if regular_path(&path, false) {
+                fs::read(&path).map_err(io_error).and_then(|bytes| {
+                    let asset = PetAsset { kind, bytes };
+                    validate_pet_asset(&asset)
+                        .map_err(|error| PetStoreError::InvalidImage(error.to_string()))?;
+                    Ok(asset)
+                })
+            } else {
+                Err(PetStoreError::NotFound)
+            };
+            match validated {
+                Ok(asset) => {
+                    assets.insert(slot, asset);
+                }
+                Err(error) if slot == PetSlot::Default => return Err(error),
+                Err(_) => invalid_slots.push(slot),
+            }
+        }
+        Ok((manifest, assets, invalid_slots))
     }
 
     pub fn save(
         &self,
         name: &str,
         png: &[u8],
+        scale: f32,
+        offset_x: i16,
+        offset_y: i16,
+    ) -> Result<PetManifest, PetStoreError> {
+        self.save_profile(
+            name,
+            &BTreeMap::from([(
+                PetSlot::Default,
+                PetAsset {
+                    kind: PetAssetKind::Png,
+                    bytes: png.to_vec(),
+                },
+            )]),
+            scale,
+            offset_x,
+            offset_y,
+        )
+    }
+
+    pub fn save_profile(
+        &self,
+        name: &str,
+        assets: &PetAssets,
         scale: f32,
         offset_x: i16,
         offset_y: i16,
@@ -167,8 +261,21 @@ impl PetStore {
         if !valid_transform(scale, offset_x, offset_y) {
             return Err(PetStoreError::InvalidTransform);
         }
-        validate_processed_png(png)
-            .map_err(|error| PetStoreError::InvalidImage(error.to_string()))?;
+        if !assets.contains_key(&PetSlot::Default) {
+            return Err(PetStoreError::InvalidManifest);
+        }
+        let total_bytes = assets
+            .values()
+            .try_fold(0usize, |total, asset| total.checked_add(asset.bytes.len()));
+        if total_bytes.is_none_or(|bytes| bytes > MAX_PROFILE_BYTES) {
+            return Err(PetStoreError::InvalidImage(
+                "Pet assets exceed 25 MiB".into(),
+            ));
+        }
+        for asset in assets.values() {
+            validate_pet_asset(asset)
+                .map_err(|error| PetStoreError::InvalidImage(error.to_string()))?;
+        }
         let pets = self.pets_dir();
         fs::create_dir_all(&pets).map_err(io_error)?;
         let id = Uuid::new_v4().to_string();
@@ -184,12 +291,22 @@ impl PetStore {
             offset_x,
             offset_y,
             created_at,
+            assets: assets
+                .iter()
+                .map(|(slot, asset)| (*slot, asset.kind))
+                .collect(),
         };
         let staging = tempfile::Builder::new()
             .prefix(".pending-")
             .tempdir_in(&pets)
             .map_err(io_error)?;
-        fs::write(staging.path().join("pet.png"), png).map_err(io_error)?;
+        for (slot, asset) in assets {
+            fs::write(
+                staging.path().join(asset_filename(*slot, asset.kind)),
+                &asset.bytes,
+            )
+            .map_err(io_error)?;
+        }
         fs::write(
             staging.path().join("manifest.json"),
             serde_json::to_vec_pretty(&manifest).map_err(|_| PetStoreError::InvalidManifest)?,
@@ -208,7 +325,7 @@ impl PetStore {
         for entry in fs::read_dir(pets).map_err(io_error)? {
             let entry = entry.map_err(io_error)?;
             let id = entry.file_name().to_string_lossy().to_string();
-            if let Ok((manifest, _)) = self.read_photo(&id) {
+            if let Ok((manifest, _, _)) = self.read_photo(&id) {
                 manifests.push(manifest);
             }
         }
@@ -268,7 +385,11 @@ impl PetStore {
             return ActivePet::Builtin;
         }
         match self.read_photo(&id) {
-            Ok((manifest, png)) => ActivePet::Photo { manifest, png },
+            Ok((manifest, assets, invalid_slots)) => ActivePet::Photo {
+                manifest,
+                assets,
+                invalid_slots,
+            },
             Err(_) => ActivePet::Builtin,
         }
     }
@@ -277,7 +398,8 @@ impl PetStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+    use crate::pet_image::{PetAsset, PetAssetKind};
+    use image::{codecs::gif::GifEncoder, DynamicImage, ImageFormat, Rgba, RgbaImage};
     use std::io::Cursor;
 
     fn processed_png() -> Vec<u8> {
@@ -294,28 +416,209 @@ mod tests {
         bytes.into_inner()
     }
 
+    fn transparent_gif() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let frames = (0..2).map(|index| {
+            let mut image = RgbaImage::new(8, 8);
+            image.put_pixel(index, 0, Rgba([250, 20, 30, 255]));
+            image::Frame::from_parts(image, 0, 0, image::Delay::from_numer_denom_ms(100, 1))
+        });
+        GifEncoder::new(&mut bytes).encode_frames(frames).unwrap();
+        bytes
+    }
+
+    fn two_asset_profile() -> PetAssets {
+        BTreeMap::from([
+            (
+                PetSlot::Default,
+                PetAsset {
+                    kind: PetAssetKind::Png,
+                    bytes: processed_png(),
+                },
+            ),
+            (
+                PetSlot::Working,
+                PetAsset {
+                    kind: PetAssetKind::Gif,
+                    bytes: transparent_gif(),
+                },
+            ),
+        ])
+    }
+
+    #[test]
+    fn opens_selected_v1_without_rewriting() {
+        let root = tempfile::tempdir().unwrap();
+        let id = Uuid::new_v4().to_string();
+        let package = root.path().join("pets").join(&id);
+        fs::create_dir_all(&package).unwrap();
+        let png = processed_png();
+        let manifest = serde_json::json!({
+            "schema_version": 1, "id": id, "name": "legacy", "scale": 0.8,
+            "offset_x": 0, "offset_y": 0, "created_at": 1
+        });
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        fs::write(package.join("manifest.json"), &manifest_bytes).unwrap();
+        fs::write(package.join("pet.png"), &png).unwrap();
+        fs::write(
+            root.path().join("selected-pet.json"),
+            format!("{{\"id\":\"{id}\"}}"),
+        )
+        .unwrap();
+
+        let reopened = PetStore::new(root.path().to_path_buf());
+        match reopened.active() {
+            ActivePet::Photo { assets, .. } => {
+                assert_eq!(assets[&PetSlot::Default].bytes, png);
+                assert_eq!(assets.len(), 1);
+            }
+            ActivePet::Builtin => panic!("selected version 1 pet was lost"),
+        }
+        assert_eq!(
+            fs::read(package.join("manifest.json")).unwrap(),
+            manifest_bytes
+        );
+        assert_eq!(fs::read(package.join("pet.png")).unwrap(), png);
+    }
+
+    #[test]
+    fn round_trips_v2_and_falls_back_for_missing_optional() {
+        let root = tempfile::tempdir().unwrap();
+        let store = PetStore::new(root.path().to_path_buf());
+        let assets = two_asset_profile();
+        let saved = store.save_profile("animated", &assets, 0.8, 0, 0).unwrap();
+        assert_eq!(saved.schema_version, 2);
+        assert!(root
+            .path()
+            .join("pets")
+            .join(&saved.id)
+            .join("default.png")
+            .exists());
+        store.select(&saved.id).unwrap();
+        let reopened = PetStore::new(root.path().to_path_buf());
+        match reopened.active() {
+            ActivePet::Photo {
+                assets,
+                invalid_slots,
+                ..
+            } => {
+                assert_eq!(assets[&PetSlot::Working].kind, PetAssetKind::Gif);
+                assert!(invalid_slots.is_empty());
+            }
+            ActivePet::Builtin => panic!("version 2 pet was lost"),
+        }
+        fs::remove_file(root.path().join("pets").join(&saved.id).join("working.gif")).unwrap();
+        match reopened.active() {
+            ActivePet::Photo {
+                assets,
+                invalid_slots,
+                ..
+            } => {
+                assert_eq!(assets[&PetSlot::Default].kind, PetAssetKind::Png);
+                assert!(!assets.contains_key(&PetSlot::Working));
+                assert_eq!(invalid_slots, vec![PetSlot::Working]);
+            }
+            ActivePet::Builtin => panic!("missing optional asset hid the whole pet"),
+        }
+    }
+
+    #[test]
+    fn rejects_bad_v2_without_selection_change() {
+        let root = tempfile::tempdir().unwrap();
+        let store = PetStore::new(root.path().to_path_buf());
+        let saved = store
+            .save_profile("good", &two_asset_profile(), 0.8, 0, 0)
+            .unwrap();
+        store.select(&saved.id).unwrap();
+        let before = store.list().unwrap().len();
+
+        let huge = BTreeMap::from([
+            (
+                PetSlot::Default,
+                PetAsset {
+                    kind: PetAssetKind::Gif,
+                    bytes: vec![0; 9 * 1024 * 1024],
+                },
+            ),
+            (
+                PetSlot::Working,
+                PetAsset {
+                    kind: PetAssetKind::Gif,
+                    bytes: vec![0; 9 * 1024 * 1024],
+                },
+            ),
+            (
+                PetSlot::Waiting,
+                PetAsset {
+                    kind: PetAssetKind::Gif,
+                    bytes: vec![0; 9 * 1024 * 1024],
+                },
+            ),
+        ]);
+        assert!(store.save_profile("huge", &huge, 0.8, 0, 0).is_err());
+        let bad = BTreeMap::from([(
+            PetSlot::Default,
+            PetAsset {
+                kind: PetAssetKind::Png,
+                bytes: b"bad".to_vec(),
+            },
+        )]);
+        assert!(store.save_profile("bad", &bad, 0.8, 0, 0).is_err());
+        assert_eq!(store.list().unwrap().len(), before);
+        assert_eq!(store.selected_id().as_deref(), Some(saved.id.as_str()));
+
+        fs::write(
+            root.path().join("pets").join(&saved.id).join("default.png"),
+            b"bad",
+        )
+        .unwrap();
+        assert!(matches!(store.active(), ActivePet::Builtin));
+        assert!(root.path().join("pets").join(&saved.id).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_profile_preserves_selection_when_staging_is_unwritable() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let store = PetStore::new(root.path().to_path_buf());
+        let saved = store
+            .save_profile("good", &two_asset_profile(), 0.8, 0, 0)
+            .unwrap();
+        store.select(&saved.id).unwrap();
+        let pets = root.path().join("pets");
+        fs::set_permissions(&pets, fs::Permissions::from_mode(0o500)).unwrap();
+        let result = store.save_profile("new", &two_asset_profile(), 0.8, 0, 0);
+        fs::set_permissions(&pets, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(result.is_err());
+        assert_eq!(store.selected_id().as_deref(), Some(saved.id.as_str()));
+        assert_eq!(store.list().unwrap().len(), 1);
+    }
+
     #[test]
     fn pet_store_restores_selected_photo_after_restart() {
         let root = tempfile::tempdir().unwrap();
         let store = PetStore::new(root.path().to_path_buf());
         let saved = store.save("小熊 🐻", &processed_png(), 0.8, 2, -3).unwrap();
-        assert_eq!(saved.schema_version, 1);
+        assert_eq!(saved.schema_version, 2);
         assert_eq!(saved.name, "小熊 🐻");
         assert_ne!(saved.id, "builtin-cat");
         assert!(root
             .path()
             .join("pets")
             .join(&saved.id)
-            .join("pet.png")
+            .join("default.png")
             .exists());
         store.select(&saved.id).unwrap();
 
         let reopened = PetStore::new(root.path().to_path_buf());
         match reopened.active() {
-            ActivePet::Photo { manifest, png } => {
+            ActivePet::Photo {
+                manifest, assets, ..
+            } => {
                 assert_eq!(manifest.id, saved.id);
                 assert_eq!(manifest.scale, 0.8);
-                assert_eq!(png, processed_png());
+                assert_eq!(assets[&PetSlot::Default].bytes, processed_png());
             }
             ActivePet::Builtin => panic!("saved selection was not restored"),
         }
@@ -398,7 +701,7 @@ mod tests {
         std::fs::write(pet_dir.join("manifest.json"), b"{broken").unwrap();
         assert!(matches!(store.active(), ActivePet::Builtin));
         assert!(pet_dir.exists());
-        assert!(pet_dir.join("pet.png").exists());
+        assert!(pet_dir.join("default.png").exists());
     }
 
     #[test]
@@ -407,7 +710,7 @@ mod tests {
         let store = PetStore::new(root.path().to_path_buf());
         let saved = store.save("photo", &processed_png(), 0.8, 0, 0).unwrap();
         store.select(&saved.id).unwrap();
-        std::fs::remove_file(root.path().join("pets").join(&saved.id).join("pet.png")).unwrap();
+        std::fs::remove_file(root.path().join("pets").join(&saved.id).join("default.png")).unwrap();
         assert!(matches!(
             PetStore::new(root.path().to_path_buf()).active(),
             ActivePet::Builtin

@@ -1,5 +1,5 @@
 use crate::pet_image::{prepare_pet_image, PetImageMode};
-use crate::pet_store::{ActivePet, PetManifest, PetStore};
+use crate::pet_store::{ActivePet, PetManifest, PetSlot, PetStore};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -62,9 +62,11 @@ pub enum ActivePetPayload {
 fn active_payload(active: ActivePet) -> ActivePetPayload {
     match active {
         ActivePet::Builtin => ActivePetPayload::Builtin,
-        ActivePet::Photo { manifest, png } => ActivePetPayload::Photo {
+        ActivePet::Photo {
+            manifest, assets, ..
+        } => ActivePetPayload::Photo {
             id: manifest.id,
-            image_data_url: png_data_url(&png),
+            image_data_url: png_data_url(&assets[&PetSlot::Default].bytes),
             scale: manifest.scale,
             offset_x: manifest.offset_x,
             offset_y: manifest.offset_y,
