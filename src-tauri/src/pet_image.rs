@@ -1,5 +1,6 @@
 use image::{
-    imageops, DynamicImage, ImageDecoder, ImageError, ImageFormat, ImageReader, RgbaImage,
+    codecs::gif::GifDecoder, imageops, AnimationDecoder, DynamicImage, ImageDecoder, ImageError,
+    ImageFormat, ImageReader, RgbaImage,
 };
 use std::io::Cursor;
 
@@ -7,12 +8,29 @@ const MAX_INPUT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_INPUT_SIDE: u32 = 4096;
 const OUTPUT_SIDE: u32 = 256;
 const CONTENT_SIDE: u32 = 224;
+const MAX_ANIMATED_SIDE: u32 = 1024;
+const MAX_ANIMATED_FRAMES: usize = 120;
+const MAX_DECODED_ANIMATION_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PetAssetKind {
+    Png,
+    Gif,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PetAsset {
+    pub kind: PetAssetKind,
+    pub bytes: Vec<u8>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PetImageMode {
     RemoveBackground,
     KeepAlpha,
+    KeepAnimation,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -22,6 +40,7 @@ pub enum PetImageError {
     Decode(String),
     NoSubject,
     NoTransparency,
+    InvalidAnimation,
     UnsupportedPlatform,
 }
 
@@ -33,6 +52,7 @@ impl std::fmt::Display for PetImageError {
             Self::Decode(error) => write!(f, "Unable to read image: {error}"),
             Self::NoSubject => write!(f, "No visible subject was found"),
             Self::NoTransparency => write!(f, "Choose a PNG with a transparent background"),
+            Self::InvalidAnimation => write!(f, "Choose a transparent GIF with 2–120 frames"),
             Self::UnsupportedPlatform => write!(f, "Automatic background removal is unavailable"),
         }
     }
@@ -142,6 +162,68 @@ pub fn prepare_pet_image(input: &[u8], mode: PetImageMode) -> Result<Vec<u8>, Pe
                 Err(PetImageError::UnsupportedPlatform)
             }
         }
+        PetImageMode::KeepAnimation => Err(PetImageError::UnsupportedFormat),
+    }
+}
+
+fn validate_transparent_gif(input: &[u8]) -> Result<(), PetImageError> {
+    if input.len() > MAX_INPUT_BYTES {
+        return Err(PetImageError::TooLarge);
+    }
+    if image::guess_format(input).ok() != Some(ImageFormat::Gif) {
+        return Err(PetImageError::UnsupportedFormat);
+    }
+    let decoder = GifDecoder::new(Cursor::new(input)).map_err(map_decode_error)?;
+    let (width, height) = decoder.dimensions();
+    if width == 0 || height == 0 || width > MAX_ANIMATED_SIDE || height > MAX_ANIMATED_SIDE {
+        return Err(PetImageError::TooLarge);
+    }
+    let mut count = 0;
+    let mut decoded_bytes = 0u64;
+    for frame in decoder.into_frames() {
+        let frame = frame.map_err(map_decode_error)?;
+        count += 1;
+        if count > MAX_ANIMATED_FRAMES {
+            return Err(PetImageError::InvalidAnimation);
+        }
+        let image = frame.buffer();
+        decoded_bytes += u64::from(image.width()) * u64::from(image.height()) * 4;
+        if decoded_bytes > MAX_DECODED_ANIMATION_BYTES {
+            return Err(PetImageError::TooLarge);
+        }
+        if !image.pixels().any(|pixel| pixel.0[3] > 0) {
+            return Err(PetImageError::NoSubject);
+        }
+        if !image.pixels().any(|pixel| pixel.0[3] < 255) {
+            return Err(PetImageError::NoTransparency);
+        }
+    }
+    if count < 2 {
+        return Err(PetImageError::InvalidAnimation);
+    }
+    Ok(())
+}
+
+pub fn prepare_pet_asset(input: &[u8], mode: PetImageMode) -> Result<PetAsset, PetImageError> {
+    match mode {
+        PetImageMode::KeepAnimation => {
+            validate_transparent_gif(input)?;
+            Ok(PetAsset {
+                kind: PetAssetKind::Gif,
+                bytes: input.to_vec(),
+            })
+        }
+        PetImageMode::RemoveBackground | PetImageMode::KeepAlpha => Ok(PetAsset {
+            kind: PetAssetKind::Png,
+            bytes: prepare_pet_image(input, mode)?,
+        }),
+    }
+}
+
+pub fn validate_pet_asset(asset: &PetAsset) -> Result<(), PetImageError> {
+    match asset.kind {
+        PetAssetKind::Png => validate_processed_png(&asset.bytes),
+        PetAssetKind::Gif => validate_transparent_gif(&asset.bytes),
     }
 }
 
@@ -166,7 +248,8 @@ pub fn validate_processed_png(input: &[u8]) -> Result<(), PetImageError> {
 mod tests {
     use super::*;
     use image::{
-        codecs::jpeg::JpegEncoder, DynamicImage, ImageFormat, Rgb, RgbImage, Rgba, RgbaImage,
+        codecs::gif::GifEncoder, codecs::jpeg::JpegEncoder, DynamicImage, ImageFormat, Rgb,
+        RgbImage, Rgba, RgbaImage,
     };
     use std::io::Cursor;
 
@@ -176,6 +259,70 @@ mod tests {
             .write_to(&mut bytes, ImageFormat::Png)
             .unwrap();
         bytes.into_inner()
+    }
+
+    fn gif(
+        width: u32,
+        height: u32,
+        frame_count: usize,
+        opaque_frame: Option<usize>,
+        visible: bool,
+    ) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let frames = (0..frame_count).map(|index| {
+            let mut image = if opaque_frame == Some(index) {
+                RgbaImage::from_pixel(width, height, Rgba([30, 40, 50, 255]))
+            } else {
+                RgbaImage::new(width, height)
+            };
+            if visible && opaque_frame != Some(index) {
+                image.put_pixel(0, 0, Rgba([250, 20, 30, 255]));
+            }
+            image::Frame::from_parts(image, 0, 0, image::Delay::from_numer_denom_ms(100, 1))
+        });
+        GifEncoder::new(&mut bytes).encode_frames(frames).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn prepares_transparent_animation_without_reencoding() {
+        let input = gif(8, 8, 2, None, true);
+        let asset = prepare_pet_asset(&input, PetImageMode::KeepAnimation).unwrap();
+        assert_eq!(asset.kind, PetAssetKind::Gif);
+        assert_eq!(asset.bytes, input);
+
+        let mut still = RgbaImage::new(8, 8);
+        still.put_pixel(4, 4, Rgba([10, 20, 30, 255]));
+        let static_asset = prepare_pet_asset(&png(still), PetImageMode::KeepAlpha).unwrap();
+        assert_eq!(static_asset.kind, PetAssetKind::Png);
+        assert!(validate_processed_png(&static_asset.bytes).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_animated_assets() {
+        let invalid = [
+            gif(8, 8, 2, Some(0), true),
+            gif(8, 8, 2, None, false),
+            gif(8, 8, 1, None, true),
+            gif(8, 8, 121, None, true),
+            gif(1025, 2, 2, None, true),
+            gif(1024, 1024, 17, None, true),
+        ];
+        for (index, bytes) in invalid.into_iter().enumerate() {
+            assert!(
+                validate_pet_asset(&PetAsset {
+                    kind: PetAssetKind::Gif,
+                    bytes
+                })
+                .is_err(),
+                "invalid case {index} was accepted"
+            );
+        }
+        assert!(validate_pet_asset(&PetAsset {
+            kind: PetAssetKind::Gif,
+            bytes: vec![0; 10 * 1024 * 1024 + 1],
+        })
+        .is_err());
     }
 
     fn oriented_jpeg() -> Vec<u8> {

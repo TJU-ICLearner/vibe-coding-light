@@ -19,7 +19,7 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "5"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
 tauri-plugin-global-shortcut = "2"
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
