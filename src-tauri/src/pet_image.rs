@@ -130,7 +130,17 @@ pub fn prepare_pet_image(input: &[u8], mode: PetImageMode) -> Result<Vec<u8>, Pe
             }
             normalize_visible(image)
         }
-        PetImageMode::RemoveBackground => Err(PetImageError::UnsupportedPlatform),
+        PetImageMode::RemoveBackground => {
+            #[cfg(target_os = "macos")]
+            {
+                let cutout = crate::pet_vision::remove_background(input)?;
+                normalize_visible(decode_oriented(&cutout)?.to_rgba8())
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Err(PetImageError::UnsupportedPlatform)
+            }
+        }
     }
 }
 

@@ -475,6 +475,7 @@ dependencies = [
 name = "code-light"
 version = "0.1.5"
 dependencies = [
+ "cc",
  "dirs 5.0.1",
  "image",
  "objc",
@@ -484,6 +485,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-opener",
+ "tempfile",
 ]
 
 [[package]]

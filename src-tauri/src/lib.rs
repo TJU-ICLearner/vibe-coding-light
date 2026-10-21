@@ -1,4 +1,6 @@
 mod pet_image;
+#[cfg(target_os = "macos")]
+mod pet_vision;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
