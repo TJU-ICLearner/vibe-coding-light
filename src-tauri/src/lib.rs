@@ -470,6 +470,35 @@ fn get_current_state(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> serde_jso
     })
 }
 
+#[cfg(target_os = "macos")]
+fn show_pet_settings(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+    } else {
+        WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
+            .title("Customize Pet · Code Light")
+            .inner_size(760.0, 760.0)
+            .min_inner_size(620.0, 540.0)
+            .build()
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_pet_settings(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        show_pet_settings(&app)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("Photo import is available on macOS".into())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let icons = Arc::new(Mutex::new(build_icons()));
@@ -495,7 +524,8 @@ pub fn run() {
             pet_commands::select_pet,
             pet_commands::delete_photo_pet,
             pet_commands::get_active_pet,
-            pet_commands::get_pet_import_capabilities
+            pet_commands::get_pet_import_capabilities,
+            open_pet_settings
         ])
         .setup(move |app| {
             let pet_data_dir = app.path().app_data_dir()?;
@@ -555,22 +585,8 @@ pub fn run() {
                     }
                     #[cfg(target_os = "macos")]
                     "customize_pet" => {
-                        if let Some(window) = app.get_webview_window("settings") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        } else {
-                            let result = WebviewWindowBuilder::new(
-                                app,
-                                "settings",
-                                WebviewUrl::App("settings.html".into()),
-                            )
-                            .title("Customize Pet · Code Light")
-                            .inner_size(760.0, 760.0)
-                            .min_inner_size(620.0, 540.0)
-                            .build();
-                            if let Err(error) = result {
-                                eprintln!("Could not open pet settings: {error}");
-                            }
+                        if let Err(error) = show_pet_settings(app) {
+                            eprintln!("Could not open pet settings: {error}");
                         }
                     }
                     "setup_claude" => match setup_hooks() {

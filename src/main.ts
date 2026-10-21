@@ -355,6 +355,12 @@ async function initDrag() {
 }
 
 async function init() {
+  window.addEventListener("keydown", (event) => {
+    if (event.metaKey && event.key === ",") {
+      event.preventDefault();
+      void invoke("open_pet_settings");
+    }
+  });
   photoRenderer = new PhotoRenderer(
     document.getElementById("pet-wrapper")!,
     document.getElementById("pet-sprite")!,

@@ -43,6 +43,16 @@ Code Light now includes a pixel art desktop pet that reacts to your AI agent's s
 
 The pet window is always on top and draggable, so you can position it anywhere on your screen.
 
+### Use your own photo (macOS)
+
+1. Open the tray menu and choose **Customize Pet**.
+   With the pet window focused, **⌘,** also opens this window.
+2. Choose a PNG or JPEG (up to 10 MiB, with each side up to 4096 pixels). On macOS 14+, select **Remove Background** to cut out the largest visible subject locally. On macOS 12–13, use a PNG that already has a transparent background and select **Keep Alpha**.
+3. Check the transparent preview, choose a name, size, and position, then click **Save and Use**. Previewing alone does not replace the active pet.
+4. In the same window, select a saved pet, return to the built-in pixel cat, or delete a saved pet.
+
+The processed 256×256 PNG, its settings, and the selected pet are saved in Code Light's local app data. The original photo is not saved or uploaded. Photo pets respond to agent states with gentle motion; the built-in cat keeps its sprite animations. Windows and Linux continue to use the built-in cat in this version.
+
 ## How It Works
 
 Code Light uses a file-based polling mechanism:

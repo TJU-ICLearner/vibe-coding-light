@@ -139,6 +139,7 @@ function mountSettings(): void {
   const status = document.querySelector<HTMLElement>("#status")!;
   const stateButtons = document.querySelector<HTMLElement>("#state-buttons")!;
   let originalUrl: string | null = null;
+  let suggestedName = "";
 
   const render = () => {
     processed.src = controller.previewUrl ?? "";
@@ -169,7 +170,9 @@ function mountSettings(): void {
     const file = fileInput.files?.[0]; if (!file) return;
     if (originalUrl) URL.revokeObjectURL(originalUrl);
     originalUrl = URL.createObjectURL(file); original.src = originalUrl;
-    if (!nameInput.value.trim()) nameInput.value = file.name.replace(/\.[^.]+$/, "");
+    const nextName = file.name.replace(/\.[^.]+$/, "");
+    if (!nameInput.value.trim() || nameInput.value === suggestedName) nameInput.value = nextName;
+    suggestedName = nextName;
     await controller.load(file, modeInput.value as PetImageMode);
   };
   fileInput.onchange = () => { void chooseFile(); };
