@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AssetDraft } from "./asset_draft";
 import type { PreparedAssetPayload } from "./types";
 
@@ -26,8 +26,11 @@ describe("asset draft", () => {
     const first = deferred<PreparedAssetPayload>();
     const second = deferred<PreparedAssetPayload>();
     const draft = new AssetDraft();
-    const a = draft.load("working", file("A"), "keep_alpha", async () => first.promise);
-    const b = draft.load("working", file("B"), "keep_alpha", async () => second.promise);
+    const prepare = vi.fn((bytes: Uint8Array) => bytes[0] === 65 ? first.promise : second.promise);
+    const a = draft.load("working", file("A"), "keep_alpha", prepare);
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+    const b = draft.load("working", file("B"), "keep_alpha", prepare);
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
     second.resolve(png("B")); await b;
     first.resolve(png("A")); await a;
     expect(draft.get("working")?.asset).toEqual(png("B"));

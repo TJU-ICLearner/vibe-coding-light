@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { PreviewController, SettingsController, availableModes, validatePetFile, applyPreviewTransform, mountSettings } from "./settings";
+import { PreviewController, SettingsController, availableModes, validatePetFile, applyPreviewTransform, mountSettings, petTransformBounds, validPetTransform } from "./settings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -33,6 +33,15 @@ describe("settings preview", () => {
     expect(applyPreviewTransform(frame, 0.8, 3, -2)).toBe(true);
     expect(frame.style.transform).toBe("translate(3px, -2px) scale(0.8)");
     expect(applyPreviewTransform(frame, 1, 32, 0)).toBe(false);
+  });
+
+  it("keeps full-canvas GIFs inside the window at every allowed extreme", () => {
+    expect(validPetTransform(0.8, 15, 0, true)).toBe(false);
+    expect(validPetTransform(0.8, 11, 0, true)).toBe(true);
+    expect(validPetTransform(0.95, 0, 5, true)).toBe(false);
+    expect(validPetTransform(0.95, 0, 1, true)).toBe(true);
+    expect(petTransformBounds(0.95, true)).toEqual({ side: 1, top: -1 });
+    expect(validPetTransform(0.95, 5, 5)).toBe(true);
   });
 
   it("updates the visible preview and save availability as controls change", () => {

@@ -103,7 +103,15 @@ fn io_error(error: std::io::Error) -> PetStoreError {
     PetStoreError::Io(error.to_string())
 }
 
-fn valid_transform(scale: f32, offset_x: i16, offset_y: i16) -> bool {
+fn valid_transform(scale: f32, offset_x: i16, offset_y: i16, has_gif: bool) -> bool {
+    if has_gif {
+        // Uncropped GIFs may fill 128px. Reserve two source pixels for click motion.
+        let margin = ((64.0 - scale * 66.0).floor() as i16).min(MAX_OFFSET);
+        return scale.is_finite()
+            && (MIN_SCALE..=MAX_SCALE).contains(&scale)
+            && (-margin..=margin).contains(&offset_x)
+            && (-margin..=margin).contains(&offset_y);
+    }
     // The 224px subject is displayed at most 112px wide. Leave room for the
     // working rotation and the completed jump inside the 128px pet window.
     let side_margin = ((64.0 - scale * 61.0).floor() as i16).min(MAX_OFFSET);
@@ -180,7 +188,6 @@ impl PetStore {
         if manifest.id != id
             || manifest.name.trim().is_empty()
             || manifest.name.chars().count() > 64
-            || !valid_transform(manifest.scale, manifest.offset_x, manifest.offset_y)
         {
             return Err(PetStoreError::InvalidManifest);
         }
@@ -193,6 +200,14 @@ impl PetStore {
             }
             _ => return Err(PetStoreError::InvalidManifest),
         };
+        if !valid_transform(
+            manifest.scale,
+            manifest.offset_x,
+            manifest.offset_y,
+            declared.values().any(|kind| *kind == PetAssetKind::Gif),
+        ) {
+            return Err(PetStoreError::InvalidManifest);
+        }
         let mut assets = BTreeMap::new();
         let mut invalid_slots = Vec::new();
         for (slot, kind) in declared {
@@ -258,11 +273,16 @@ impl PetStore {
         if name.is_empty() || name.chars().count() > 64 {
             return Err(PetStoreError::InvalidName);
         }
-        if !valid_transform(scale, offset_x, offset_y) {
-            return Err(PetStoreError::InvalidTransform);
-        }
         if !assets.contains_key(&PetSlot::Default) {
             return Err(PetStoreError::InvalidManifest);
+        }
+        if !valid_transform(
+            scale,
+            offset_x,
+            offset_y,
+            assets.values().any(|asset| asset.kind == PetAssetKind::Gif),
+        ) {
+            return Err(PetStoreError::InvalidTransform);
         }
         let total_bytes = assets
             .values()
@@ -444,6 +464,23 @@ mod tests {
                 },
             ),
         ])
+    }
+
+    #[test]
+    fn gif_profile_rejects_placements_that_crop_full_canvas() {
+        let root = tempfile::tempdir().unwrap();
+        let store = PetStore::new(root.path().to_path_buf());
+        let assets = two_asset_profile();
+        assert!(matches!(
+            store.save_profile("cropped", &assets, 0.8, 15, 0),
+            Err(PetStoreError::InvalidTransform)
+        ));
+        assert!(matches!(
+            store.save_profile("cropped", &assets, 0.95, 0, 5),
+            Err(PetStoreError::InvalidTransform)
+        ));
+        assert!(store.save_profile("fits", &assets, 0.95, 1, 1).is_ok());
+        assert!(store.save("static", &processed_png(), 0.95, 5, 5).is_ok());
     }
 
     #[test]

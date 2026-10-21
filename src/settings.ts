@@ -13,22 +13,27 @@ export function availableModes(capabilities: ImportCapabilities): PetImageMode[]
   return modes;
 }
 
-export function validPetTransform(scale: number, offsetX: number, offsetY: number): boolean {
+export function validPetTransform(scale: number, offsetX: number, offsetY: number, hasGif = false): boolean {
   if (![scale, offsetX, offsetY].every(Number.isFinite) || scale < 0.5 || scale > 0.95 ||
       !Number.isInteger(offsetX) || !Number.isInteger(offsetY)) return false;
-  const { side, top } = petTransformBounds(scale);
+  const { side, top } = petTransformBounds(scale, hasGif);
   return offsetX >= -Math.max(side, 0) && offsetX <= side &&
     offsetY >= Math.max(top, -32) && offsetY <= side;
 }
 
-export function petTransformBounds(scale: number): { side: number; top: number } {
+export function petTransformBounds(scale: number, hasGif = false): { side: number; top: number } {
+  if (hasGif) {
+    // A GIF may fill its whole canvas. Reserve two source pixels for the click reaction.
+    const side = Math.min(32, Math.floor(64 - scale * 66));
+    return { side, top: -side };
+  }
   return { side: Math.min(32, Math.floor(64 - scale * 61)), top: Math.max(-32, Math.ceil(scale * 72 - 64)) };
 }
 
-export function applyPreviewTransform(frame: HTMLElement, scale: number, offsetX: number, offsetY: number): boolean {
+export function applyPreviewTransform(frame: HTMLElement, scale: number, offsetX: number, offsetY: number, hasGif = false): boolean {
   frame.style.transform = [scale, offsetX, offsetY].every(Number.isFinite)
     ? `translate(${offsetX}px, ${offsetY}px) scale(${scale})` : "";
-  return validPetTransform(scale, offsetX, offsetY);
+  return validPetTransform(scale, offsetX, offsetY, hasGif);
 }
 
 export class PreviewController {
@@ -114,7 +119,9 @@ export class SettingsController {
     if (!assets.default) throw new Error("请先生成默认素材预览");
     if (this.draft.isBusy(this.mode)) throw new Error("请等待图片处理完成");
     if (this.draft.blockingError(this.mode)) throw new Error(this.draft.blockingError(this.mode));
-    if (!validPetTransform(scale, offsetX, offsetY)) throw new Error("大小或位置会使桌宠超出窗口");
+    if (!validPetTransform(scale, offsetX, offsetY, Object.values(assets).some((asset) => asset?.kind === "gif"))) {
+      throw new Error("大小或位置会使桌宠超出窗口");
+    }
     this.busy = true; this.error = ""; this.notify();
     try {
       const saved = await this.api.save(name, assets, scale, offsetX, offsetY);
@@ -224,12 +231,13 @@ export function mountSettings(): void {
 
   const updateTransform = () => {
     const scale = Number(scaleInput.value);
+    const hasGif = Object.values(controller.draft.selected(controller.mode)).some((asset) => asset?.kind === "gif");
     if (Number.isFinite(scale) && scale >= 0.5 && scale <= 0.95) {
-      const { side, top } = petTransformBounds(scale);
+      const { side, top } = petTransformBounds(scale, hasGif);
       xInput.min = String(-side); xInput.max = String(side);
       yInput.min = String(top); yInput.max = String(side);
     }
-    const valid = applyPreviewTransform(processedFrame, scale, Number(xInput.value), Number(yInput.value));
+    const valid = applyPreviewTransform(processedFrame, scale, Number(xInput.value), Number(yInput.value), hasGif);
     saveButton.disabled = controller.busy || controller.draft.isBusy(controller.mode) ||
       Boolean(controller.draft.blockingError(controller.mode)) || !controller.previewUrl || !valid;
     if (!valid && controller.previewUrl && !controller.error) {
