@@ -9,4 +9,4 @@ file_path=$(extract_field "$INPUT" "file_path")
 command=$(extract_field "$INPUT" "command")
 message=$(make_message "$tool_name" "$file_path" "$command")
 
-[ -n "$SESSION_ID" ] && write_state_unless_done "$SESSION_ID" "working" "$message" "$tool_name" "$file_path" "$command"
+[ -n "$SESSION_ID" ] && write_state "$SESSION_ID" "working" "$message" "$tool_name" "$file_path" "$command"

@@ -9,4 +9,4 @@ command=$(extract_field "$INPUT" "command")
 query=$(extract_field "$INPUT" "query")
 message=$(make_message "$tool_name" "$file_path" "$command" "$query")
 
-write_state_unless_done "working" "$message" "$tool_name" "$file_path" "$command" "$query"
+write_state "working" "$message" "$tool_name" "$file_path" "$command" "$query"

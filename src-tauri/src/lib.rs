@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{
@@ -15,18 +15,17 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const SESSION_STALE_SECS: u64 = 300;
-const WAITING_TIMEOUT_SECS: u64 = 30;
-const WORKING_STALE_SECS: u64 = 60;
+const SESSION_EXPIRE_SECS: u64 = 86_400;
 const COMPLETED_DISPLAY_SECS: u64 = 10;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 enum State {
     Idle = 0,
-    Completed = 1,
-    Working = 2,
-    Waiting = 3,
-    Error = 4,
+    Unknown = 1,
+    Completed = 2,
+    Working = 3,
+    Waiting = 4,
+    Error = 5,
 }
 
 impl State {
@@ -36,6 +35,7 @@ impl State {
             "waiting" => State::Waiting,
             "error" => State::Error,
             "completed" => State::Completed,
+            "unknown" => State::Unknown,
             _ => State::Idle,
         }
     }
@@ -46,6 +46,7 @@ impl State {
             State::Waiting => "waiting",
             State::Error => "error",
             State::Completed => "completed",
+            State::Unknown => "unknown",
             State::Idle => "idle",
         }
     }
@@ -105,15 +106,19 @@ fn build_icons() -> HashMap<String, Image<'static>> {
         map.insert(key.to_string(), Image::new_owned(rgba.into_raw(), w, h));
     }
     map.insert("off".to_string(), make_empty_icon());
+    map.insert("unknown".to_string(), map["idle"].clone());
     map
 }
 
 fn read_all_sessions() -> (State, String, u64, usize) {
-    let now = now_secs();
     let dir = sessions_dir();
-    let _ = fs::create_dir_all(&dir);
+    read_all_sessions_in(&dir, now_secs())
+}
 
-    let Ok(entries) = fs::read_dir(&dir) else {
+fn read_all_sessions_in(dir: &Path, now: u64) -> (State, String, u64, usize) {
+    let _ = fs::create_dir_all(dir);
+
+    let Ok(entries) = fs::read_dir(dir) else {
         return (State::Idle, String::new(), 0, 0);
     };
 
@@ -139,7 +144,8 @@ fn read_all_sessions() -> (State, String, u64, usize) {
             .unwrap_or_default()
             .as_secs();
 
-        if now.saturating_sub(mtime) > SESSION_STALE_SECS {
+        let age = now.saturating_sub(mtime);
+        if age > SESSION_EXPIRE_SECS {
             let _ = fs::remove_file(&path);
             continue;
         }
@@ -152,27 +158,18 @@ fn read_all_sessions() -> (State, String, u64, usize) {
         };
 
         let mut state = State::from_str(&data.state);
-
-        if state == State::Waiting && now.saturating_sub(mtime) > WAITING_TIMEOUT_SECS {
-            state = State::Working;
-        }
-
-        if state == State::Working && now.saturating_sub(mtime) > WORKING_STALE_SECS {
-            state = State::Completed;
-            if let Ok(mut f) = fs::File::create(&path) {
-                let updated = serde_json::json!({
-                    "state": "completed",
-                    "message": "Auto-completed (stop hook missing)",
-                    "timestamp": now
-                });
-                let _ = serde_json::to_writer(&mut f, &updated);
-            }
+        if age > SESSION_STALE_SECS && state != State::Completed {
+            state = State::Unknown;
         }
 
         active_count += 1;
         if state > best_state {
             best_state = state;
-            best_message = data.message.unwrap_or_default();
+            best_message = if state == State::Unknown {
+                "No recent agent event".to_string()
+            } else {
+                data.message.unwrap_or_default()
+            };
             best_ts = data.timestamp.unwrap_or(0);
         }
     }
@@ -200,6 +197,7 @@ fn build_status_text(state: State, message: &str, ts: u64, count: usize) -> Stri
         State::Waiting => "Waiting for confirmation",
         State::Error => "Error",
         State::Completed => "Task completed",
+        State::Unknown => "Status unknown",
         State::Idle => "Idle",
     };
     let mut parts = vec![format!("code-light: {}", label)];
@@ -253,7 +251,7 @@ fn get_hooks_dir() -> PathBuf {
             };
 
             for rel in search_paths {
-                if let Some(resolved) = parent.join(rel).canonicalize().ok() {
+                if let Ok(resolved) = parent.join(rel).canonicalize() {
                     if resolved.is_dir() {
                         return resolved;
                     }
@@ -293,35 +291,110 @@ fn codex_local_hooks_dir() -> PathBuf {
     base_hooks_dir().join("codex")
 }
 
-fn copy_hooks_to_local(src: &std::path::Path, dest: &std::path::Path) {
-    let _ = fs::create_dir_all(dest);
-    if let Ok(entries) = fs::read_dir(src) {
-        for entry in entries.flatten() {
-            let src_path = entry.path();
-            if src_path.is_file() {
-                let dest_path = dest.join(entry.file_name());
-                let _ = fs::copy(&src_path, &dest_path);
-            }
+fn copy_hooks_to_local(src: &Path, dest: &Path) -> Result<(), String> {
+    fs::create_dir_all(dest).map_err(|e| format!("Cannot create {}: {e}", dest.display()))?;
+    let entries = fs::read_dir(src).map_err(|e| format!("Cannot read {}: {e}", src.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Cannot read hook entry: {e}"))?;
+        let src_path = entry.path();
+        if src_path.is_file() {
+            let dest_path = dest.join(entry.file_name());
+            fs::copy(&src_path, &dest_path)
+                .map_err(|e| format!("Cannot copy {}: {e}", src_path.display()))?;
         }
     }
+    Ok(())
 }
 
-fn setup_hooks() {
+fn load_hook_config(path: &Path) -> Result<serde_json::Value, String> {
+    if !path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
+    let config: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Invalid JSON in {}: {e}", path.display()))?;
+    if !config.is_object() {
+        return Err(format!("Expected JSON object in {}", path.display()));
+    }
+    Ok(config)
+}
+
+fn is_code_light_hook(handler: &serde_json::Value, agent: &str) -> bool {
+    handler["command"].as_str().is_some_and(|command| {
+        command
+            .replace('\\', "/")
+            .contains(&format!("/.code-light/hooks/{agent}/"))
+    })
+}
+
+fn merge_hook_defs(
+    config: &mut serde_json::Value,
+    defs: &serde_json::Value,
+    agent: &str,
+) -> Result<(), String> {
+    let config = config
+        .as_object_mut()
+        .ok_or("Expected configuration object")?;
+    let hooks = config
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}));
+    let hooks = hooks.as_object_mut().ok_or("Expected hooks object")?;
+    for (event, definitions) in defs.as_object().ok_or("Expected hook definitions")? {
+        let groups = hooks.entry(event).or_insert_with(|| serde_json::json!([]));
+        let groups = groups
+            .as_array_mut()
+            .ok_or(format!("Expected hooks.{event} array"))?;
+        for group in groups.iter_mut() {
+            if let Some(handlers) = group
+                .get_mut("hooks")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                handlers.retain(|handler| !is_code_light_hook(handler, agent));
+            }
+        }
+        groups.retain(|group| {
+            group["hooks"]
+                .as_array()
+                .is_none_or(|handlers| !handlers.is_empty())
+        });
+        groups.extend(
+            definitions
+                .as_array()
+                .ok_or("Expected hook groups")?
+                .iter()
+                .cloned(),
+        );
+    }
+    Ok(())
+}
+
+fn write_hook_config(path: &Path, config: &serde_json::Value) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or("Hook configuration has no parent directory")?;
+    fs::create_dir_all(parent).map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
+    let temp = path.with_extension(format!("code-light-{}.tmp", std::process::id()));
+    let content = serde_json::to_vec_pretty(config).map_err(|e| e.to_string())?;
+    fs::write(&temp, content).map_err(|e| format!("Cannot write {}: {e}", temp.display()))?;
+    if let Ok(metadata) = fs::metadata(path) {
+        fs::set_permissions(&temp, metadata.permissions())
+            .map_err(|e| format!("Cannot preserve permissions for {}: {e}", path.display()))?;
+    }
+    fs::rename(&temp, path).map_err(|e| format!("Cannot replace {}: {e}", path.display()))?;
+    Ok(())
+}
+
+fn setup_hooks() -> Result<(), String> {
     let settings_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".claude")
         .join("settings.json");
 
-    let mut settings: serde_json::Value = if settings_path.exists() {
-        let content = fs::read_to_string(&settings_path).unwrap_or_default();
-        serde_json::from_str(&content).unwrap_or(serde_json::Value::Object(Default::default()))
-    } else {
-        serde_json::Value::Object(Default::default())
-    };
+    let mut settings = load_hook_config(&settings_path)?;
 
     let bundled_claude = get_hooks_dir().join("claude");
     let claude_dest = claude_local_hooks_dir();
-    copy_hooks_to_local(&bundled_claude, &claude_dest);
 
     let hook_defs = serde_json::json!({
         "PreToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&claude_dest, "pre-tool-use.sh") }] }],
@@ -331,45 +404,22 @@ fn setup_hooks() {
         "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&claude_dest, "stop.sh") }] }],
     });
 
-    if let Some(hooks) = hook_defs.as_object() {
-        let settings_hooks = settings
-            .as_object_mut()
-            .unwrap()
-            .entry("hooks")
-            .or_insert_with(|| serde_json::Value::Object(Default::default()));
-
-        for (event, defs) in hooks {
-            settings_hooks
-                .as_object_mut()
-                .unwrap()
-                .insert(event.clone(), defs.clone());
-        }
-    }
-
-    if let Ok(content) = serde_json::to_string_pretty(&settings) {
-        let _ = fs::write(&settings_path, content);
-    }
-
-    let _ = fs::create_dir_all(sessions_dir());
+    merge_hook_defs(&mut settings, &hook_defs, "claude")?;
+    copy_hooks_to_local(&bundled_claude, &claude_dest)?;
+    fs::create_dir_all(sessions_dir()).map_err(|e| e.to_string())?;
+    write_hook_config(&settings_path, &settings)?;
+    Ok(())
 }
 
-fn setup_codex_hooks() {
-    let codex_dir = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".codex");
+fn setup_codex_hooks() -> Result<(), String> {
+    let codex_dir = dirs::home_dir().unwrap_or_default().join(".codex");
 
     let hooks_json_path = codex_dir.join("hooks.json");
 
-    let mut codex_config: serde_json::Value = if hooks_json_path.exists() {
-        let content = fs::read_to_string(&hooks_json_path).unwrap_or_default();
-        serde_json::from_str(&content).unwrap_or(serde_json::Value::Object(Default::default()))
-    } else {
-        serde_json::Value::Object(Default::default())
-    };
+    let mut codex_config = load_hook_config(&hooks_json_path)?;
 
     let bundled_codex = get_hooks_dir().join("codex");
     let codex_dest = codex_local_hooks_dir();
-    copy_hooks_to_local(&bundled_codex, &codex_dest);
 
     let hook_defs = serde_json::json!({
         "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&codex_dest, "session_start.sh"), "statusMessage": "Code Light: Session tracking" }] }],
@@ -380,25 +430,11 @@ fn setup_codex_hooks() {
         "Stop": [{ "hooks": [{ "type": "command", "command": shell_command(&codex_dest, "stop.sh"), "timeout": 30 }] }],
     });
 
-    let config_hooks = codex_config
-        .as_object_mut()
-        .unwrap()
-        .entry("hooks")
-        .or_insert_with(|| serde_json::Value::Object(Default::default()));
-
-    for (event, defs) in hook_defs.as_object().unwrap() {
-        config_hooks
-            .as_object_mut()
-            .unwrap()
-            .insert(event.clone(), defs.clone());
-    }
-
-    let _ = fs::create_dir_all(&codex_dir);
-    if let Ok(content) = serde_json::to_string_pretty(&codex_config) {
-        let _ = fs::write(&hooks_json_path, content);
-    }
-
-    let _ = fs::create_dir_all(sessions_dir());
+    merge_hook_defs(&mut codex_config, &hook_defs, "codex")?;
+    copy_hooks_to_local(&bundled_codex, &codex_dest)?;
+    fs::create_dir_all(sessions_dir()).map_err(|e| e.to_string())?;
+    write_hook_config(&hooks_json_path, &codex_config)?;
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -408,8 +444,7 @@ fn make_window_transparent(window: &tauri::WebviewWindow) {
     if let Ok(ptr) = window.ns_window() {
         unsafe {
             let ns_window = ptr as *mut Object;
-            let clear: *mut Object =
-                msg_send![Class::get("NSColor").unwrap(), clearColor];
+            let clear: *mut Object = msg_send![Class::get("NSColor").unwrap(), clearColor];
             let _: () = msg_send![ns_window, setOpaque: NO];
             let _: () = msg_send![ns_window, setBackgroundColor: clear];
         }
@@ -450,8 +485,10 @@ pub fn run() {
 
             let toggle_pet_item = MenuItemBuilder::with_id("toggle_pet", "Hide Pet").build(app)?;
             let whip_item = MenuItemBuilder::with_id("whip", "Whip  \u{2318}B").build(app)?;
-            let setup_claude_item = MenuItemBuilder::with_id("setup_claude", "Setup Claude Hooks").build(app)?;
-            let setup_codex_item = MenuItemBuilder::with_id("setup_codex", "Setup Codex Hooks").build(app)?;
+            let setup_claude_item =
+                MenuItemBuilder::with_id("setup_claude", "Setup Claude Hooks").build(app)?;
+            let setup_codex_item =
+                MenuItemBuilder::with_id("setup_codex", "Setup Codex Hooks").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Code Light").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&toggle_pet_item)
@@ -467,6 +504,8 @@ pub fn run() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let toggle_item = toggle_pet_item.clone();
+            let claude_setup_item = setup_claude_item.clone();
+            let codex_setup_item = setup_codex_item.clone();
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(initial_icon)
                 .menu(&menu)
@@ -489,18 +528,26 @@ pub fn run() {
                     "whip" => {
                         let _ = app.emit("whip", ());
                     }
-                    "setup_claude" => {
-                        setup_hooks();
-                        if let Some(tray) = app.tray_by_id("main") {
-                            let _ = tray.set_tooltip(Some("code-light: Claude hooks configured!"));
+                    "setup_claude" => match setup_hooks() {
+                        Ok(()) => {
+                            let _ = claude_setup_item.set_text("Claude hooks: installed");
                         }
-                    }
-                    "setup_codex" => {
-                        setup_codex_hooks();
-                        if let Some(tray) = app.tray_by_id("main") {
-                            let _ = tray.set_tooltip(Some("code-light: Codex hooks configured!"));
+                        Err(error) => {
+                            eprintln!("Code Light Claude hook setup failed: {error}");
+                            let _ = claude_setup_item
+                                .set_text(format!("Claude hooks: failed ({error})"));
                         }
-                    }
+                    },
+                    "setup_codex" => match setup_codex_hooks() {
+                        Ok(()) => {
+                            let _ = codex_setup_item.set_text("Codex hooks: installed");
+                        }
+                        Err(error) => {
+                            eprintln!("Code Light Codex hook setup failed: {error}");
+                            let _ =
+                                codex_setup_item.set_text(format!("Codex hooks: failed ({error})"));
+                        }
+                    },
                     "quit" => {
                         app.exit(0);
                     }
@@ -519,63 +566,62 @@ pub fn run() {
 
             // Register global shortcut: Cmd+B (macOS) / Ctrl+B (others) → whip
             let shortcut_app = app.handle().clone();
-            app.global_shortcut().on_shortcut("CmdOrCtrl+B", move |_app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    let _ = shortcut_app.emit("whip", ());
-                }
-            }).ok();
+            app.global_shortcut()
+                .on_shortcut("CmdOrCtrl+B", move |_app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        let _ = shortcut_app.emit("whip", ());
+                    }
+                })
+                .ok();
 
             // Poll thread
             let poll_app = app.handle().clone();
             let poll_state = app_state.clone();
-            std::thread::spawn(move || {
-                loop {
-                    std::thread::sleep(POLL_INTERVAL);
-                    let (state, message, ts, count) = read_all_sessions();
-                    let mut s = poll_state.lock().unwrap();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(POLL_INTERVAL);
+                let (state, message, ts, count) = read_all_sessions();
+                let mut s = poll_state.lock().unwrap();
 
-                    if s.state == State::Completed {
-                        if let Some(since) = s.completed_since {
-                            if now_secs() - since > COMPLETED_DISPLAY_SECS {
-                                s.state = State::Idle;
-                                s.completed_since = None;
-                                drop(s);
-                                cleanup_completed_sessions();
-                                s = poll_state.lock().unwrap();
-                            }
+                if s.state == State::Completed {
+                    if let Some(since) = s.completed_since {
+                        if now_secs() - since > COMPLETED_DISPLAY_SECS {
+                            s.state = State::Idle;
+                            s.completed_since = None;
+                            drop(s);
+                            cleanup_completed_sessions();
+                            s = poll_state.lock().unwrap();
                         }
                     }
+                }
 
-                    if state != s.state {
-                        s.state = state;
-                        s.message = message;
-                        s.timestamp = ts;
-                        s.active_count = count;
-                        s.blink_on = true;
-                        s.completed_since = if state == State::Completed {
-                            Some(now_secs())
-                        } else {
-                            None
-                        };
+                if state != s.state {
+                    s.state = state;
+                    s.message = message;
+                    s.timestamp = ts;
+                    s.active_count = count;
+                    s.blink_on = true;
+                    s.completed_since = if state == State::Completed {
+                        Some(now_secs())
+                    } else {
+                        None
+                    };
 
-                        let payload = serde_json::json!({
-                            "state": s.state.key(),
-                            "message": s.message,
-                            "timestamp": s.timestamp,
-                            "activeCount": s.active_count,
-                        });
-                        let _ = poll_app.emit("state-changed", payload);
-                    } else if ts != s.timestamp || count != s.active_count {
-                        s.message = message;
-                        s.timestamp = ts;
-                        s.active_count = count;
-                    }
+                    let payload = serde_json::json!({
+                        "state": s.state.key(),
+                        "message": s.message,
+                        "timestamp": s.timestamp,
+                        "activeCount": s.active_count,
+                    });
+                    let _ = poll_app.emit("state-changed", payload);
+                } else if ts != s.timestamp || count != s.active_count {
+                    s.message = message;
+                    s.timestamp = ts;
+                    s.active_count = count;
+                }
 
-                    let text =
-                        build_status_text(s.state, &s.message, s.timestamp, s.active_count);
-                    if let Some(tray) = poll_app.tray_by_id("main") {
-                        let _ = tray.set_tooltip(Some(&text));
-                    }
+                let text = build_status_text(s.state, &s.message, s.timestamp, s.active_count);
+                if let Some(tray) = poll_app.tray_by_id("main") {
+                    let _ = tray.set_tooltip(Some(&text));
                 }
             });
 
@@ -609,4 +655,152 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::fs::{File, FileTimes};
+
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
+
+    struct TestHome {
+        path: PathBuf,
+        old: Option<OsString>,
+    }
+
+    impl TestHome {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "code-light-hooks-test-{}-{}",
+                std::process::id(),
+                now_secs()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            let old = std::env::var_os("HOME");
+            std::env::set_var("HOME", &path);
+            Self { path, old }
+        }
+    }
+
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            if let Some(old) = &self.old {
+                std::env::set_var("HOME", old);
+            } else {
+                std::env::remove_var("HOME");
+            }
+            fs::remove_dir_all(&self.path).unwrap();
+        }
+    }
+
+    #[test]
+    fn long_running_and_waiting_sessions_are_not_assumed_finished() {
+        let home =
+            std::env::temp_dir().join(format!("code-light-state-test-{}", std::process::id()));
+        let dir = home.join(".code-light/sessions");
+        fs::create_dir_all(&dir).unwrap();
+
+        let now = now_secs();
+        let working = dir.join("working.json");
+        fs::write(
+            &working,
+            format!(r#"{{"state":"working","timestamp":{now}}}"#),
+        )
+        .unwrap();
+        File::options()
+            .write(true)
+            .open(&working)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(now - 61)))
+            .unwrap();
+        assert_eq!(read_all_sessions_in(&dir, now).0, State::Working);
+
+        fs::remove_file(&working).unwrap();
+        let waiting = dir.join("waiting.json");
+        fs::write(
+            &waiting,
+            format!(r#"{{"state":"waiting","timestamp":{now}}}"#),
+        )
+        .unwrap();
+        File::options()
+            .write(true)
+            .open(&waiting)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(now - 31)))
+            .unwrap();
+        assert_eq!(read_all_sessions_in(&dir, now).0, State::Waiting);
+
+        fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn inactive_session_is_unknown_and_file_is_retained() {
+        let home =
+            std::env::temp_dir().join(format!("code-light-unknown-test-{}", std::process::id()));
+        fs::create_dir_all(&home).unwrap();
+        let path = home.join("working.json");
+        let now = now_secs();
+        fs::write(&path, format!(r#"{{"state":"working","timestamp":{now}}}"#)).unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(now - 301)))
+            .unwrap();
+
+        assert_eq!(read_all_sessions_in(&home, now).0.key(), "unknown");
+        assert!(
+            path.exists(),
+            "session file must remain available for later events"
+        );
+
+        fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn setup_preserves_other_hooks_and_does_not_duplicate_own_hooks() {
+        let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = TestHome::new();
+        for agent in [".claude/settings.json", ".codex/hooks.json"] {
+            let path = home.path.join(agent);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, r#"{"theme":"dark","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo existing"}]}],"Custom":[{"hooks":[{"type":"command","command":"echo custom"}]}]}}"#).unwrap();
+        }
+
+        setup_hooks().unwrap();
+        setup_codex_hooks().unwrap();
+        setup_hooks().unwrap();
+        setup_codex_hooks().unwrap();
+
+        for agent in [".claude/settings.json", ".codex/hooks.json"] {
+            let path = home.path.join(agent);
+            let config: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+            assert_eq!(config["theme"], "dark");
+            assert_eq!(
+                config["hooks"]["Custom"][0]["hooks"][0]["command"],
+                "echo custom"
+            );
+            assert_eq!(config["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
+            assert_eq!(
+                config["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+                "echo existing"
+            );
+        }
+    }
+
+    #[test]
+    fn setup_does_not_replace_invalid_existing_config() {
+        let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = TestHome::new();
+        let path = home.path.join(".claude/settings.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "{ broken json").unwrap();
+
+        assert!(setup_hooks().is_err());
+
+        assert_eq!(fs::read_to_string(path).unwrap(), "{ broken json");
+    }
 }

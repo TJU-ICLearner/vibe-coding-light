@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { PhysicalPosition } from "@tauri-apps/api/dpi";
 
 interface StatePayload {
-  state: "idle" | "working" | "waiting" | "error" | "completed";
+  state: "idle" | "unknown" | "working" | "waiting" | "error" | "completed";
   message: string;
   timestamp: number;
   activeCount: number;
@@ -26,11 +26,12 @@ let beatIndex = 0;
 function setPetState(state: string) {
   const pet = document.getElementById("pet-sprite");
   if (!pet) return;
+  const visualState = state === "unknown" ? "idle" : state;
   if (isHurting) {
-    pendingState = state;
+    pendingState = visualState;
     return;
   }
-  pet.className = `pet-sprite state-${state}`;
+  pet.className = `pet-sprite state-${visualState}`;
 }
 
 /** Remove all "striking" classes and cancel running whip animation */

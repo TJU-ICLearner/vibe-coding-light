@@ -82,9 +82,9 @@ make_message() {
     [ -n "$tool_name" ] && printf 'Using %s' "$tool_name"
 }
 
-# Write session data only if current state is NOT completed
+# Write the latest event, including events from a new turn in the same session.
 # Args: state [message] [tool_name] [file_path] [command] [query]
-write_state_unless_done() {
+write_state() {
     local state="$1"
     local message="${2:-}"
     local tool_name="${3:-}"
@@ -94,15 +94,6 @@ write_state_unless_done() {
 
     ensure_dir
     local sf="$(session_file)"
-
-    # Don't overwrite completed state
-    local current=""
-    if [ -f "$sf" ]; then
-        current=$(grep -o '"state":"[^"]*"' "$sf" 2>/dev/null | head -1 | cut -d'"' -f4)
-    fi
-    if [ "$current" = "completed" ]; then
-        return
-    fi
 
     local session_id="$(get_session_id)"
     local ts="$(date +%s)"

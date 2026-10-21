@@ -19,6 +19,7 @@ Currently supports **[Claude Code](https://docs.anthropic.com/en/docs/claude-cod
 | Color | State | Description |
 |:---:|---|---|
 | Gray | Idle | No active sessions |
+| Gray | Unknown | No agent event for 5 minutes; the session may still be running |
 | Green (blinking) | Working | Agent is executing tool calls |
 | Yellow (blinking) | Waiting | Agent is waiting for user confirmation |
 | Red (blinking) | Error | An error has occurred |
@@ -105,13 +106,12 @@ Then open it by **right-clicking** the app and selecting **Open** → **Open** a
 
 ### Multi-session support
 
-If you run multiple sessions (Claude Code and/or Codex) in different terminals, Code Light tracks all of them simultaneously. The icon reflects the highest-priority state across all active sessions (Error > Waiting > Working > Completed > Idle).
+If you run multiple sessions (Claude Code and/or Codex) in different terminals, Code Light tracks all of them simultaneously. The icon reflects the highest-priority state across all sessions (Error > Waiting > Working > Completed > Unknown > Idle).
 
 ### Automatic cleanup
 
-- Sessions with no activity for 5 minutes are automatically removed
-- Sessions stuck in "waiting" for 30+ seconds are promoted to "working"
-- Sessions stuck in "working" for 60+ seconds are auto-completed
+- Sessions with no activity for 5 minutes show "Status unknown"; their files are removed after 24 hours
+- Only a `Stop` hook reports completion, and a later event can reactivate the same session
 - Completed sessions are cleaned up after the 10-second display window
 
 ## Development
