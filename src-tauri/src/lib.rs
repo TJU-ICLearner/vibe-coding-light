@@ -1,4 +1,6 @@
+mod pet_commands;
 mod pet_image;
+mod pet_store;
 #[cfg(target_os = "macos")]
 mod pet_vision;
 
@@ -483,8 +485,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(app_state.clone())
-        .invoke_handler(tauri::generate_handler![get_current_state])
+        .invoke_handler(tauri::generate_handler![
+            get_current_state,
+            pet_commands::prepare_pet_preview,
+            pet_commands::save_photo_pet,
+            pet_commands::list_photo_pets,
+            pet_commands::select_pet,
+            pet_commands::delete_photo_pet,
+            pet_commands::get_active_pet
+        ])
         .setup(move |app| {
+            let pet_data_dir = app.path().app_data_dir()?;
+            app.manage(pet_store::PetStore::new(pet_data_dir));
             let initial_icon = icons.lock().unwrap().get("idle").unwrap().clone();
 
             let toggle_pet_item = MenuItemBuilder::with_id("toggle_pet", "Hide Pet").build(app)?;

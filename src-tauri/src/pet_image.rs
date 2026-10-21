@@ -8,7 +8,8 @@ const MAX_INPUT_SIDE: u32 = 4096;
 const OUTPUT_SIDE: u32 = 256;
 const CONTENT_SIDE: u32 = 224;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PetImageMode {
     RemoveBackground,
     KeepAlpha,
