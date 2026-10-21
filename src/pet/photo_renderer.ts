@@ -27,7 +27,7 @@ export class PhotoRenderer {
     const isPhoto = pet.kind === "photo";
     this.wrapper.classList.toggle("photo-active", isPhoto);
     if (isPhoto) {
-      this.image.src = pet.image_data_url;
+      this.image.src = pet.assets.default?.data_url ?? "";
       this.frame.style.transform = `translate(${pet.offset_x}px, ${pet.offset_y}px) scale(${pet.scale})`;
     } else {
       this.image.removeAttribute("src");

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActivePet, AgentVisualState, ImportCapabilities, PetImageMode, PetManifest } from "./pet/types";
+import type { ActivePet, AgentVisualState, ImportCapabilities, PetImageMode, PetManifest, PreparedAssetPayload } from "./pet/types";
 import "./settings.css";
 
 export function availableModes(capabilities: ImportCapabilities): PetImageMode[] {
@@ -142,7 +142,7 @@ export class SettingsController {
 }
 
 const api: SettingsApi = {
-  prepare: (bytes, mode) => invoke("prepare_pet_preview", { input: Array.from(bytes), mode }),
+  prepare: async (bytes, mode) => (await invoke<PreparedAssetPayload>("prepare_pet_preview", { input: Array.from(bytes), mode })).data_url,
   save: (name, png, scale, offsetX, offsetY) => invoke("save_photo_pet", { name, pngDataUrl: png, scale, offsetX, offsetY }),
   list: () => invoke("list_photo_pets"),
   select: (id) => invoke("select_pet", { id }),

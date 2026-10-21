@@ -520,6 +520,7 @@ pub fn run() {
             get_current_state,
             pet_commands::prepare_pet_preview,
             pet_commands::save_photo_pet,
+            pet_commands::save_pet_profile,
             pet_commands::list_photo_pets,
             pet_commands::select_pet,
             pet_commands::delete_photo_pet,

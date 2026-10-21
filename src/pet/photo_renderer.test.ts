@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { PhotoRenderer } from "./photo_renderer";
 
-const photo = { kind: "photo" as const, id: "p1", image_data_url: "data:image/png;base64,YQ==", scale: 0.8, offset_x: 4, offset_y: -3 };
+const photo = { kind: "photo" as const, id: "p1", assets: { default: { kind: "png" as const, data_url: "data:image/png;base64,YQ==" } }, invalid_slots: [], scale: 0.8, offset_x: 4, offset_y: -3 };
 
 function fixture() {
   document.body.innerHTML = `<div id="pet-wrapper"><div id="pet-sprite"></div><div id="photo-frame"><img id="photo-pet"></div><div id="whip-overlay"></div></div>`;

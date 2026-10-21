@@ -37,7 +37,7 @@ describe("settings preview", () => {
 
   it("updates the visible preview and save availability as controls change", () => {
     vi.mocked(invoke).mockImplementation(async (command) => {
-      if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true };
+      if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true, transparent_gif: true };
       if (command === "get_active_pet") return { kind: "builtin" };
       return [];
     });
@@ -78,7 +78,7 @@ describe("settings preview", () => {
   });
 
   it("offers alpha PNG on older macOS", () => {
-    expect(availableModes({ automatic: false, transparent_png: true })).toEqual(["keep_alpha"]);
+    expect(availableModes({ automatic: false, transparent_png: true, transparent_gif: true })).toEqual(["keep_alpha"]);
   });
 });
 
