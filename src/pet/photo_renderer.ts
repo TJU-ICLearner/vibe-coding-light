@@ -1,9 +1,18 @@
-import type { ActivePet, AgentVisualState } from "./types";
+import type { ActivePet, AgentVisualState, PetSlot, PreparedAssetPayload } from "./types";
+
+function slotForState(state: AgentVisualState): PetSlot {
+  return state === "working" || state === "waiting" || state === "error" || state === "completed" ? state : "default";
+}
+
+function assetForState(pet: Extract<ActivePet, { kind: "photo" }>, state: AgentVisualState): PreparedAssetPayload | undefined {
+  return pet.assets[slotForState(state)] ?? pet.assets.default;
+}
 
 export class PhotoRenderer {
   private active: ActivePet = { kind: "builtin" };
   private state: AgentVisualState = "idle";
   private completedPlayed = false;
+  private currentSource: string | null = null;
 
   constructor(
     private readonly wrapper: HTMLElement,
@@ -23,11 +32,12 @@ export class PhotoRenderer {
 
   applyPet(pet: ActivePet): void {
     this.active = pet;
+    this.currentSource = null;
+    this.completedPlayed = false;
     this.image.classList.remove("reacting");
     const isPhoto = pet.kind === "photo";
     this.wrapper.classList.toggle("photo-active", isPhoto);
     if (isPhoto) {
-      this.image.src = pet.assets.default?.data_url ?? "";
       this.frame.style.transform = `translate(${pet.offset_x}px, ${pet.offset_y}px) scale(${pet.scale})`;
     } else {
       this.image.removeAttribute("src");
@@ -45,7 +55,24 @@ export class PhotoRenderer {
   private renderState(): void {
     const visual = this.state === "unknown" ? "idle" : this.state;
     this.sprite.className = `pet-sprite state-${visual}`;
-    this.image.className = `motion-${visual === "completed" && this.completedPlayed ? "idle" : visual}`;
+    if (this.active.kind !== "photo") {
+      this.image.className = "";
+      return;
+    }
+    const asset = assetForState(this.active, this.state);
+    if (!asset) {
+      this.image.removeAttribute("src");
+      this.currentSource = null;
+      this.image.className = "";
+      return;
+    }
+    if (this.currentSource !== asset.data_url) {
+      this.image.src = asset.data_url;
+      this.currentSource = asset.data_url;
+    }
+    this.image.className = asset.kind === "gif"
+      ? "animated"
+      : `motion-${visual === "completed" && this.completedPlayed ? "idle" : visual}`;
   }
 
   react(): boolean {

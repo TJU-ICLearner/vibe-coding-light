@@ -37,6 +37,7 @@ html, body {
 #photo-pet.motion-waiting { animation: pet-photo-waiting 1.7s ease-in-out infinite; }
 #photo-pet.motion-error { animation: pet-photo-error .34s ease-in-out infinite; }
 #photo-pet.motion-completed { animation: pet-photo-completed .7s ease-out 1; }
+#photo-pet.animated { animation: none; }
 #photo-pet.reacting { animation: pet-photo-react .55s ease-in-out 1 !important; }
 @keyframes pet-photo-idle { 50% { transform: translateY(-3px); } }
 @keyframes pet-photo-working { 50% { transform: rotate(-5deg) translateY(-2px); } }

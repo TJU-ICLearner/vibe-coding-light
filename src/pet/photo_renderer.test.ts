@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PhotoRenderer } from "./photo_renderer";
 
 const photo = { kind: "photo" as const, id: "p1", assets: { default: { kind: "png" as const, data_url: "data:image/png;base64,YQ==" } }, invalid_slots: [], scale: 0.8, offset_x: 4, offset_y: -3 };
+const statePhoto = { ...photo, assets: { ...photo.assets, working: { kind: "gif" as const, data_url: "data:image/gif;base64,R0lG" } } };
 
 function fixture() {
   document.body.innerHTML = `<div id="pet-wrapper"><div id="pet-sprite"></div><div id="photo-frame"><img id="photo-pet"></div><div id="whip-overlay"></div></div>`;
@@ -46,5 +47,43 @@ describe("photo pet renderer", () => {
     expect(renderer.react()).toBe(true);
     expect(document.querySelector("#pet-wrapper")?.classList.contains("photo-active")).toBe(true);
     expect(document.querySelector("#photo-pet")?.classList.contains("reacting")).toBe(true);
+  });
+
+  it("selects state asset or default", () => {
+    const renderer = fixture();
+    const image = document.querySelector<HTMLImageElement>("#photo-pet")!;
+    renderer.applyPet(statePhoto);
+    renderer.applyState("working");
+    expect(image.getAttribute("src")).toBe("data:image/gif;base64,R0lG");
+    renderer.applyState("waiting");
+    expect(image.getAttribute("src")).toBe("data:image/png;base64,YQ==");
+    renderer.applyState("unknown");
+    expect(image.getAttribute("src")).toBe("data:image/png;base64,YQ==");
+  });
+
+  it("does not restart same state GIF", () => {
+    const renderer = fixture();
+    const image = document.querySelector<HTMLImageElement>("#photo-pet")!;
+    renderer.applyPet(statePhoto);
+    const setter = vi.spyOn(image, "src", "set");
+    renderer.applyState("working");
+    expect(setter).toHaveBeenCalledTimes(1);
+    renderer.applyState("working");
+    expect(setter).toHaveBeenCalledTimes(1);
+    renderer.applyState("waiting");
+    renderer.applyState("working");
+    expect(setter).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps static motion only", () => {
+    const renderer = fixture();
+    const image = document.querySelector<HTMLImageElement>("#photo-pet")!;
+    renderer.applyPet(statePhoto);
+    renderer.applyState("working");
+    expect(image.className).not.toContain("motion-");
+    renderer.applyState("waiting");
+    expect(image.className).toBe("motion-waiting");
+    renderer.applyPet({ kind: "builtin" });
+    expect(image.hasAttribute("src")).toBe(false);
   });
 });
