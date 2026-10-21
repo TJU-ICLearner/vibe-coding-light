@@ -71,7 +71,7 @@ Zero network ports, zero APIs, zero configuration — just files on disk.
 
 ### Download for Mac
 
-Download the Apple Silicon DMG from the [v1.0.0 release](https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.0.0), then drag **Vibe Coding Light.app** into Applications. This first downloadable build is for Apple Silicon; Intel Mac users can build from source. The build is unsigned, so macOS may require the extra opening step below.
+Download the Apple Silicon DMG from the [latest release](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest), then drag **Vibe Coding Light.app** into Applications. This first downloadable build is for Apple Silicon; Intel Mac users can build from source. The build is unsigned, so macOS may require the extra opening step below.
 
 The app keeps the existing `com.cuihuapeng.code-light` bundle identifier and `~/.code-light` hook data directory so previous local settings remain available after the rename.
 
