@@ -9,7 +9,7 @@ use uuid::Uuid;
 pub const BUILTIN_CAT_ID: &str = "builtin-cat";
 const SCHEMA_VERSION: u32 = 1;
 const MIN_SCALE: f32 = 0.5;
-const MAX_SCALE: f32 = 1.0;
+const MAX_SCALE: f32 = 0.95;
 const MAX_OFFSET: i16 = 32;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -64,10 +64,14 @@ fn io_error(error: std::io::Error) -> PetStoreError {
 }
 
 fn valid_transform(scale: f32, offset_x: i16, offset_y: i16) -> bool {
+    // The 224px subject is displayed at most 112px wide. Leave room for the
+    // working rotation and the completed jump inside the 128px pet window.
+    let side_margin = ((64.0 - scale * 61.0).floor() as i16).min(MAX_OFFSET);
+    let top_margin = (scale * 72.0 - 64.0).ceil() as i16;
     scale.is_finite()
         && (MIN_SCALE..=MAX_SCALE).contains(&scale)
-        && (-MAX_OFFSET..=MAX_OFFSET).contains(&offset_x)
-        && (-MAX_OFFSET..=MAX_OFFSET).contains(&offset_y)
+        && (-side_margin.max(0)..=side_margin).contains(&offset_x)
+        && (top_margin.max(-MAX_OFFSET)..=side_margin).contains(&offset_y)
 }
 
 fn valid_photo_id(id: &str) -> bool {
@@ -239,10 +243,21 @@ impl PetStore {
             return Err(PetStoreError::InvalidId);
         }
         self.read_photo(id)?;
+        let directory = self.pets_dir().join(id);
+        let tombstone = self
+            .pets_dir()
+            .join(format!(".deleting-{}", Uuid::new_v4()));
+        fs::rename(&directory, &tombstone).map_err(io_error)?;
         if self.selected_id().as_deref() == Some(id) {
-            self.select(BUILTIN_CAT_ID)?;
+            if let Err(error) = self.select(BUILTIN_CAT_ID) {
+                fs::rename(&tombstone, &directory).map_err(io_error)?;
+                return Err(error);
+            }
         }
-        fs::remove_dir_all(self.pets_dir().join(id)).map_err(io_error)
+        // The package is no longer selectable. Cleanup failure leaves only
+        // an ignored tombstone; selection and event delivery stay consistent.
+        let _ = fs::remove_dir_all(tombstone);
+        Ok(())
     }
 
     pub fn active(&self) -> ActivePet {
@@ -335,6 +350,42 @@ mod tests {
         assert!(store.delete("../../outside").is_err());
         assert!(store.save("bad", &processed_png(), f32::NAN, 0, 0).is_err());
         assert!(store.save("bad", &processed_png(), 0.8, 100, 0).is_err());
+        assert!(store.save("clipped", &processed_png(), 1.0, 32, 0).is_err());
+        assert!(store.save("clipped", &processed_png(), 0.95, 0, 0).is_err());
+        assert!(store.save("fits", &processed_png(), 0.95, 5, 5).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pet_store_preserves_selection_when_delete_cannot_move_package() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let store = PetStore::new(root.path().to_path_buf());
+        let saved = store.save("photo", &processed_png(), 0.8, 0, 0).unwrap();
+        store.select(&saved.id).unwrap();
+        let pets = root.path().join("pets");
+        fs::set_permissions(&pets, fs::Permissions::from_mode(0o500)).unwrap();
+        let result = store.delete(&saved.id);
+        fs::set_permissions(&pets, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(result.is_err());
+        assert_eq!(store.selected_id().as_deref(), Some(saved.id.as_str()));
+        assert!(matches!(store.active(), ActivePet::Photo { .. }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pet_store_restores_package_when_selection_write_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let store = PetStore::new(root.path().to_path_buf());
+        let saved = store.save("photo", &processed_png(), 0.8, 0, 0).unwrap();
+        store.select(&saved.id).unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o500)).unwrap();
+        let result = store.delete(&saved.id);
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(result.is_err());
+        assert_eq!(store.selected_id().as_deref(), Some(saved.id.as_str()));
+        assert!(matches!(store.active(), ActivePet::Photo { .. }));
     }
 
     #[test]

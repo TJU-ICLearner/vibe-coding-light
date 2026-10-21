@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { PreviewController, SettingsController, availableModes } from "./settings";
+import { invoke } from "@tauri-apps/api/core";
+import { PreviewController, SettingsController, availableModes, validatePetFile, applyPreviewTransform, mountSettings } from "./settings";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -12,6 +15,45 @@ const photo = (id: string) => ({ schema_version: 1, id, name: id, scale: 0.8, of
 const file = (name: string) => new File([name], `${name}.png`, { type: "image/png" });
 
 describe("settings preview", () => {
+  it("rejects oversized and unsupported files before reading", async () => {
+    const huge = file("huge");
+    Object.defineProperty(huge, "size", { value: 10 * 1024 * 1024 + 1 });
+    const read = vi.spyOn(huge, "arrayBuffer");
+    const prepare = vi.fn();
+    const controller = new SettingsController({ prepare, save: vi.fn(), list: vi.fn(), select: vi.fn(), delete: vi.fn(), active: vi.fn() });
+    await controller.load(huge, "keep_alpha");
+    expect(controller.error).toContain("10 MiB");
+    expect(read).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(validatePetFile(new File(["x"], "x.gif", { type: "image/gif" }), "remove_background")).toContain("PNG");
+  });
+
+  it("renders saved placement in the 128px window", () => {
+    const frame = document.createElement("div");
+    expect(applyPreviewTransform(frame, 0.8, 3, -2)).toBe(true);
+    expect(frame.style.transform).toBe("translate(3px, -2px) scale(0.8)");
+    expect(applyPreviewTransform(frame, 1, 32, 0)).toBe(false);
+  });
+
+  it("updates the visible preview and save availability as controls change", () => {
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true };
+      if (command === "get_active_pet") return { kind: "builtin" };
+      return [];
+    });
+    document.body.innerHTML = `<main id="settings-app"><input id="photo-file"><select id="photo-mode"></select>
+      <img id="original-preview"><div id="processed-frame"><img id="processed-preview"></div>
+      <button id="save-pet"></button><input id="pet-name"><input id="pet-scale" value="0.8">
+      <input id="pet-offset-x" value="0"><input id="pet-offset-y" value="0">
+      <div id="saved-pets"></div><p id="status"></p><div id="state-buttons"></div></main>`;
+    mountSettings();
+    const x = document.querySelector<HTMLInputElement>("#pet-offset-x")!;
+    x.value = "12";
+    x.dispatchEvent(new Event("input"));
+    expect(document.querySelector<HTMLElement>("#processed-frame")!.style.transform).toBe("translate(12px, 0px) scale(0.8)");
+    expect(x.max).toBe("15");
+    expect(document.querySelector<HTMLInputElement>("#pet-offset-y")!.min).toBe("-6");
+  });
   it("keeps the newest selection when an older request finishes late", async () => {
     const a = deferred<string>(); const b = deferred<string>();
     const seen: string[] = [];

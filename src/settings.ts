@@ -9,6 +9,36 @@ export function availableModes(capabilities: ImportCapabilities): PetImageMode[]
   return modes;
 }
 
+const MAX_INPUT_BYTES = 10 * 1024 * 1024;
+
+export function validatePetFile(file: File, mode: PetImageMode): string | null {
+  if (file.size > MAX_INPUT_BYTES) return "图片不能超过 10 MiB";
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  const isPng = extension === "png" && (file.type === "image/png" || file.type === "");
+  const isJpeg = (extension === "jpg" || extension === "jpeg") && (file.type === "image/jpeg" || file.type === "");
+  if (!isPng && !isJpeg) return "请选择 PNG 或 JPEG 图片";
+  if (mode === "keep_alpha" && !isPng) return "保留透明背景需要 PNG 图片";
+  return null;
+}
+
+export function validPetTransform(scale: number, offsetX: number, offsetY: number): boolean {
+  if (![scale, offsetX, offsetY].every(Number.isFinite) || scale < 0.5 || scale > 0.95 ||
+      !Number.isInteger(offsetX) || !Number.isInteger(offsetY)) return false;
+  const { side, top } = petTransformBounds(scale);
+  return offsetX >= -Math.max(side, 0) && offsetX <= side &&
+    offsetY >= Math.max(top, -32) && offsetY <= side;
+}
+
+export function petTransformBounds(scale: number): { side: number; top: number } {
+  return { side: Math.min(32, Math.floor(64 - scale * 61)), top: Math.max(-32, Math.ceil(scale * 72 - 64)) };
+}
+
+export function applyPreviewTransform(frame: HTMLElement, scale: number, offsetX: number, offsetY: number): boolean {
+  frame.style.transform = [scale, offsetX, offsetY].every(Number.isFinite)
+    ? `translate(${offsetX}px, ${offsetY}px) scale(${scale})` : "";
+  return validPetTransform(scale, offsetX, offsetY);
+}
+
 export class PreviewController {
   private requestId = 0;
   constructor(
@@ -64,10 +94,12 @@ export class SettingsController {
   private notify(): void { this.listeners.forEach((listener) => listener()); }
 
   async load(file: File, mode: PetImageMode): Promise<void> {
+    this.preview.clear();
     this.previewUrl = null;
-    this.error = "";
-    this.busy = true;
+    this.error = validatePetFile(file, mode) ?? "";
+    this.busy = !this.error;
     this.notify();
+    if (this.error) return;
     await this.preview.load(file, mode);
   }
 
@@ -122,7 +154,7 @@ const stateLabels: Record<AgentVisualState, string> = {
   idle: "休息", unknown: "未知", working: "工作", waiting: "等待", error: "出错", completed: "完成",
 };
 
-function mountSettings(): void {
+export function mountSettings(): void {
   const root = document.getElementById("settings-app");
   if (!root) return;
   const controller = new SettingsController(api);
@@ -130,6 +162,7 @@ function mountSettings(): void {
   const modeInput = document.querySelector<HTMLSelectElement>("#photo-mode")!;
   const original = document.querySelector<HTMLImageElement>("#original-preview")!;
   const processed = document.querySelector<HTMLImageElement>("#processed-preview")!;
+  const processedFrame = document.querySelector<HTMLElement>("#processed-frame")!;
   const saveButton = document.querySelector<HTMLButtonElement>("#save-pet")!;
   const nameInput = document.querySelector<HTMLInputElement>("#pet-name")!;
   const scaleInput = document.querySelector<HTMLInputElement>("#pet-scale")!;
@@ -140,13 +173,31 @@ function mountSettings(): void {
   const stateButtons = document.querySelector<HTMLElement>("#state-buttons")!;
   let originalUrl: string | null = null;
   let suggestedName = "";
+  const updateTransform = () => {
+    const scale = Number(scaleInput.value);
+    if (Number.isFinite(scale) && scale >= 0.5 && scale <= 0.95) {
+      const { side, top } = petTransformBounds(scale);
+      xInput.min = String(-side); xInput.max = String(side);
+      yInput.min = String(top); yInput.max = String(side);
+    }
+    const valid = applyPreviewTransform(processedFrame, scale, Number(xInput.value), Number(yInput.value));
+    saveButton.disabled = controller.busy || !controller.previewUrl || !valid;
+    if (!valid && controller.previewUrl) {
+      status.textContent = "大小或位置会使桌宠超出窗口，请调整参数";
+      status.classList.add("error");
+    }
+  };
 
   const render = () => {
-    processed.src = controller.previewUrl ?? "";
+    if (controller.previewUrl) {
+      if (processed.getAttribute("src") !== controller.previewUrl) processed.src = controller.previewUrl;
+    } else {
+      processed.removeAttribute("src");
+    }
     processed.style.visibility = controller.previewUrl ? "visible" : "hidden";
-    saveButton.disabled = controller.busy || !controller.previewUrl;
     status.textContent = controller.error || (controller.busy ? "正在处理图片…" : controller.previewUrl ? "预览已生成，可调整并保存" : "请选择图片");
     status.classList.toggle("error", Boolean(controller.error));
+    updateTransform();
     list.replaceChildren();
     const builtin = document.createElement("button");
     builtin.type = "button";
@@ -169,6 +220,10 @@ function mountSettings(): void {
   const chooseFile = async () => {
     const file = fileInput.files?.[0]; if (!file) return;
     if (originalUrl) URL.revokeObjectURL(originalUrl);
+    originalUrl = null;
+    original.removeAttribute("src");
+    const validationError = validatePetFile(file, modeInput.value as PetImageMode);
+    if (validationError) { await controller.load(file, modeInput.value as PetImageMode); return; }
     originalUrl = URL.createObjectURL(file); original.src = originalUrl;
     const nextName = file.name.replace(/\.[^.]+$/, "");
     if (!nameInput.value.trim() || nameInput.value === suggestedName) nameInput.value = nextName;
@@ -177,6 +232,7 @@ function mountSettings(): void {
   };
   fileInput.onchange = () => { void chooseFile(); };
   modeInput.onchange = () => { if (fileInput.files?.length) void chooseFile(); };
+  for (const input of [scaleInput, xInput, yInput]) input.addEventListener("input", render);
   saveButton.onclick = () => {
     void controller.save(nameInput.value, Number(scaleInput.value), Number(xInput.value), Number(yInput.value)).catch(() => {});
   };
@@ -186,11 +242,17 @@ function mountSettings(): void {
     button.onclick = () => {
       stateButtons.querySelectorAll("button").forEach((item) => item.classList.remove("selected"));
       button.classList.add("selected");
-      processed.dataset.state = state;
+      processed.className = "";
+      void processed.offsetWidth;
+      processed.className = `motion-${state}`;
     };
     stateButtons.append(button);
   }
   stateButtons.querySelector("button")?.classList.add("selected");
+  processed.className = "motion-idle";
+  processed.addEventListener("animationend", (event) => {
+    if (event.animationName === "pet-photo-completed") processed.className = "motion-idle";
+  });
   invoke<ImportCapabilities>("get_pet_import_capabilities").then((capabilities) => {
     const modes = availableModes(capabilities);
     modeInput.replaceChildren();
