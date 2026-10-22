@@ -26,6 +26,8 @@
               <label><span id="slot-file-label" data-i18n="default_asset">默认素材（必选，PNG、JPEG 或透明 GIF，最大 10 MiB）</span><input id="photo-file" type="file" accept="image/png,image/jpeg,image/gif" /></label>
               <p id="slot-file-name" class="file-name"></p>
               <label><span data-i18n="processing_mode">处理方式</span><select id="photo-mode"><option value="remove_background" data-i18n="remove_background">自动去背景（macOS 14+）</option><option value="keep_alpha" data-i18n="keep_alpha">保留透明 PNG</option></select></label>
+              <label><span data-i18n="motion_label">动态特效</span><select id="pet-motion"></select></label>
+              <p id="motion-hint" class="hint" hidden></p>
               <p id="slot-status" class="slot-status" role="status"></p>
               <button id="slot-clear" class="subtle-button" type="button" hidden>移除该状态素材</button>
             </div>

@@ -37,6 +37,12 @@ html, body {
 #photo-pet.motion-waiting { animation: pet-photo-waiting 1.7s ease-in-out infinite; }
 #photo-pet.motion-error { animation: pet-photo-error .34s ease-in-out infinite; }
 #photo-pet.motion-completed { animation: pet-photo-completed .7s ease-out 1; }
+#photo-pet.motion-still { animation: none; }
+#photo-pet.motion-sway { animation: pet-motion-sway 1.7s ease-in-out infinite; }
+#photo-pet.motion-float { animation: pet-motion-float 2s ease-in-out infinite; }
+#photo-pet.motion-breathe { animation: pet-motion-breathe 2.4s ease-in-out infinite; }
+#photo-pet.motion-bounce { animation: pet-motion-bounce .9s ease-in-out infinite; }
+#photo-pet.motion-wobble { animation: pet-motion-wobble 1.2s ease-in-out infinite; }
 #photo-pet.animated { animation: none; }
 #photo-pet.reacting { animation: pet-photo-react .55s ease-in-out 1 !important; }
 #photo-pet.animated.reacting { animation: pet-photo-gif-react .55s ease-in-out 1 !important; }
@@ -47,6 +53,14 @@ html, body {
 @keyframes pet-photo-completed { 50% { transform: translateY(-12px) scale(1.06); } }
 @keyframes pet-photo-react { 20% { transform: rotate(-10deg); } 55% { transform: rotate(9deg); } 80% { transform: rotate(-4deg); } }
 @keyframes pet-photo-gif-react { 20% { transform: translateX(-2px); } 55% { transform: translateX(2px); } 80% { transform: translateX(-1px); } }
+@keyframes pet-motion-sway { 50% { transform: translateX(6px); } }
+@keyframes pet-motion-float { 50% { transform: translateY(-5px); } }
+@keyframes pet-motion-breathe { 50% { transform: scale(1.035); } }
+@keyframes pet-motion-bounce { 50% { transform: translateY(-8px); } }
+@keyframes pet-motion-wobble { 25% { transform: rotate(-5deg); } 75% { transform: rotate(5deg); } }
+@media (prefers-reduced-motion: reduce) {
+  #photo-pet[class*="motion-"] { animation: none; }
+}
 
 .pet-sprite {
   width: 64px;

@@ -1,12 +1,5 @@
-import type { ActivePet, AgentVisualState, PetSlot, PreparedAssetPayload } from "./types";
-
-function slotForState(state: AgentVisualState): PetSlot {
-  return state === "working" || state === "waiting" || state === "error" || state === "completed" ? state : "default";
-}
-
-function assetForState(pet: Extract<ActivePet, { kind: "photo" }>, state: AgentVisualState): PreparedAssetPayload | undefined {
-  return pet.assets[slotForState(state)] ?? pet.assets.default;
-}
+import type { ActivePet, AgentVisualState } from "./types";
+import { imageForState, motionForState } from "./motion";
 
 export class PhotoRenderer {
   private active: ActivePet = { kind: "builtin" };
@@ -21,7 +14,7 @@ export class PhotoRenderer {
     private readonly image: HTMLImageElement,
   ) {
     image.addEventListener("animationend", (event) => {
-      if (event.animationName === "pet-photo-completed" && this.active.kind === "photo" && this.state === "completed") {
+      if (event.animationName === "pet-photo-completed" && this.image.classList.contains("motion-completed") && this.active.kind === "photo" && this.state === "completed") {
         this.completedPlayed = true;
         this.image.className = "motion-idle";
       } else if (event.animationName === "pet-photo-react") {
@@ -59,20 +52,21 @@ export class PhotoRenderer {
       this.image.className = "";
       return;
     }
-    const asset = assetForState(this.active, this.state);
-    if (!asset) {
+    const selected = imageForState(this.active, this.state);
+    if (!selected) {
       this.image.removeAttribute("src");
       this.currentSource = null;
       this.image.className = "";
       return;
     }
-    if (this.currentSource !== asset.data_url) {
-      this.image.src = asset.data_url;
-      this.currentSource = asset.data_url;
+    if (this.currentSource !== selected.asset.data_url) {
+      this.image.src = selected.asset.data_url;
+      this.currentSource = selected.asset.data_url;
     }
-    this.image.className = asset.kind === "gif"
-      ? "animated"
-      : `motion-${visual === "completed" && this.completedPlayed ? "idle" : visual}`;
+    const motion = motionForState(this.active, this.state);
+    this.image.className = motion === "gif" ? "animated"
+      : motion === "follow_state" ? `motion-${visual === "completed" && this.completedPlayed ? "idle" : visual}`
+      : `motion-${motion}`;
   }
 
   react(): boolean {

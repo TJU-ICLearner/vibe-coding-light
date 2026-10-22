@@ -116,12 +116,49 @@ describe("settings preview", () => {
     expect(document.querySelector<HTMLElement>("#slot-tabs")!.hidden).toBe(true);
     expect(document.querySelector("#slot-editor-title")?.textContent).toContain("Default");
   });
+  it("keeps separate still-image motions across state and language switches and sends them on save", async () => {
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === "get_app_locale") return "en";
+      if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true, transparent_gif: true };
+      if (command === "get_active_pet") return { kind: "builtin" };
+      if (command === "prepare_pet_preview") return { kind: "png", data_url: "data:image/png;base64,UE5H" };
+      if (command === "save_pet_profile") return { schema_version: 3, id: "saved", name: "pet", scale: 0.8, offset_x: 0, offset_y: 0, created_at: 1, assets: {}, motions: (args as { motions: object }).motions };
+      return [];
+    });
+    document.body.innerHTML = settingsMarkup(); mountSettings();
+    await vi.waitFor(() => expect(document.querySelector<HTMLSelectElement>("#photo-mode")!.options.length).toBeGreaterThan(0));
+    chooseFile(document.querySelector("#photo-file")!, file("A"));
+    await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H"));
+    const motion = document.querySelector<HTMLSelectElement>("#pet-motion")!;
+    expect(motion).not.toBeNull();
+    motion.value = "sway"; motion.dispatchEvent(new Event("change"));
+    enterStateMode();
+    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="working"]')!.click();
+    chooseFile(document.querySelector("#photo-file")!, file("B"));
+    await vi.waitFor(() => expect(document.querySelector("#slot-file-name")?.textContent).toContain("B.png"));
+    await vi.waitFor(() => expect(motion.disabled).toBe(false));
+    motion.value = "bounce"; motion.dispatchEvent(new Event("change"));
+    localeEvents.handler?.({ payload: "zh-CN" });
+    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="default"]')!.click();
+    expect(motion.value).toBe("sway");
+    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="working"]')!.click();
+    expect(motion.value).toBe("bounce");
+    document.querySelector<HTMLButtonElement>("#save-pet")!.click();
+    await vi.waitFor(() => expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "save_pet_profile")).toBe(true));
+    const saveArgs = vi.mocked(invoke).mock.calls.find(([command]) => command === "save_pet_profile")?.[1] as { motions: object };
+    expect(saveArgs.motions).toEqual({ default: "sway", working: "bounce" });
+    chooseFile(document.querySelector("#photo-file")!, file("C"));
+    await vi.waitFor(() => expect(motion.disabled).toBe(false));
+    expect(motion.value).toBe("follow_state");
+    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="default"]')!.click();
+    expect(motion.value).toBe("sway");
+  });
   it("reports a missing default preview before saving", async () => {
     const save = vi.fn();
     const controller = new SettingsController({ prepare: vi.fn(), save, list: vi.fn(), select: vi.fn(), delete: vi.fn(), active: vi.fn() });
     const changed = vi.fn();
     controller.onChange(changed);
-    await expect(controller.save("pet", 0.8, 0, 0)).rejects.toThrow();
+    await expect(controller.save("pet", 0.8, {})).rejects.toThrow();
     expect(controller.error?.code).toBe("default_required");
     expect(changed).toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
@@ -134,7 +171,7 @@ describe("settings preview", () => {
       select: async () => {}, delete: async () => {}, active: async () => ({ kind: "builtin" }),
     });
     await controller.load(file("A"), "keep_alpha");
-    await controller.save("new", 0.8, 0, 0);
+    await controller.save("new", 0.8, {});
     expect(controller.feedback).toBe("saved_success");
   });
   it("renders all built-in settings copy in English on initial load", async () => {
@@ -252,7 +289,7 @@ describe("settings preview", () => {
     });
     await controller.load(file("bad"), "keep_alpha");
     expect(controller.error).toEqual({ code: "internal_error", detail: "no subject" });
-    await expect(controller.save("bad", 0.8, 0, 0)).rejects.toThrow();
+    await expect(controller.save("bad", 0.8, {})).rejects.toThrow();
     expect(save).not.toHaveBeenCalled();
   });
 
@@ -276,13 +313,15 @@ describe("settings preview", () => {
     });
     await controller.load(file("A"), "keep_alpha");
     await controller.loadSlot("working", file("B"), "keep_alpha");
-    await controller.save("one", 0.8, 0, 0);
+    await controller.save("one", 0.8, { default: "sway", working: "bounce" });
     expect(Object.keys(save.mock.calls[0][1])).toEqual(["default"]);
+    expect(save.mock.calls[0][3]).toEqual({ default: "sway" });
     controller.setMode("states");
-    await controller.save("many", 0.8, 0, 0);
+    await controller.save("many", 0.8, { default: "sway", working: "bounce" });
     expect(Object.keys(save.mock.calls[1][1])).toEqual(["default", "working"]);
+    expect(save.mock.calls[1][3]).toEqual({ default: "sway", working: "bounce" });
     controller.setMode("single");
-    await controller.save("one-again", 0.8, 0, 0);
+    await controller.save("one-again", 0.8, {});
     expect(Object.keys(save.mock.calls[2][1])).toEqual(["default"]);
     expect(controller.draft.get("working")?.asset).toBeTruthy();
   });
@@ -315,6 +354,8 @@ describe("settings preview", () => {
     expect(document.querySelectorAll("#photo-mode option")).toHaveLength(1);
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/gif;base64,R0lG"));
     expect(document.querySelector("#processed-preview")?.classList.contains("animated")).toBe(true);
+    expect(document.querySelector<HTMLSelectElement>("#pet-motion")?.disabled).toBe(true);
+    expect(document.querySelector("#motion-hint")?.textContent).toContain("GIF");
     document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="waiting"]')!.click();
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H");
   });

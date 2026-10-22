@@ -17,6 +17,26 @@ function fixture() {
 describe("photo pet renderer", () => {
   beforeEach(() => { document.body.innerHTML = ""; });
 
+  it("uses each static image's motion and inherits default motion for missing slots", () => {
+    const renderer = fixture();
+    renderer.applyPet({ ...photo, motions: { default: "sway", working: "float" }, assets: { ...photo.assets, working: { kind: "png", data_url: "data:image/png;base64,Vw==" } } });
+    renderer.applyState("working");
+    expect(document.querySelector("#photo-pet")?.className).toBe("motion-float");
+    renderer.applyState("waiting");
+    expect(document.querySelector("#photo-pet")?.className).toBe("motion-sway");
+    for (const motion of ["still", "sway", "float", "breathe", "bounce", "wobble"] as const) {
+      renderer.applyPet({ ...photo, motions: { default: motion } });
+      expect(document.querySelector("#photo-pet")?.className).toBe(`motion-${motion}`);
+    }
+  });
+
+  it("does not apply a motion class to a GIF even with malformed motion metadata", () => {
+    const renderer = fixture();
+    renderer.applyPet({ ...statePhoto, motions: { working: "bounce" } });
+    renderer.applyState("working");
+    expect(document.querySelector("#photo-pet")?.className).toBe("animated");
+  });
+
   it("maps states to motion and unknown to idle", () => {
     const renderer = fixture(); renderer.applyPet(photo);
     renderer.applyState("working"); expect(document.querySelector("#photo-pet")?.className).toBe("motion-working");

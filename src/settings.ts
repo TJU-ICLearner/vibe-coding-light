@@ -4,7 +4,7 @@ import { AssetDraft, validatePetFile } from "./pet/asset_draft";
 import { asPetError, formatPetError, t } from "./i18n";
 import type { Locale, PetError, UiKey } from "./i18n";
 import type { DraftMode } from "./pet/asset_draft";
-import type { ActivePet, ImportCapabilities, PetImageMode, PetManifest, PetSlot, PreparedAssetPayload } from "./pet/types";
+import type { ActivePet, ImportCapabilities, PetImageMode, PetManifest, PetMotion, PetSlot, PreparedAssetPayload } from "./pet/types";
 import "./settings.css";
 export { validatePetFile } from "./pet/asset_draft";
 
@@ -66,7 +66,7 @@ export class PreviewController {
 
 interface SettingsApi {
   prepare(bytes: Uint8Array, mode: PetImageMode): Promise<PreparedAssetPayload>;
-  save(name: string, assets: Partial<Record<PetSlot, PreparedAssetPayload>>, scale: number, offsetX: number, offsetY: number): Promise<PetManifest>;
+  save(name: string, assets: Partial<Record<PetSlot, PreparedAssetPayload>>, scale: number, motions: Partial<Record<PetSlot, PetMotion>>): Promise<PetManifest>;
   list(): Promise<PetManifest[]>;
   select(id: string): Promise<void>;
   delete(id: string): Promise<void>;
@@ -129,17 +129,22 @@ export class SettingsController {
     this.notify();
   }
 
-  async save(name: string, scale: number, offsetX: number, offsetY: number): Promise<PetManifest> {
+  async save(name: string, scale: number, motions: Partial<Record<PetSlot, PetMotion>>): Promise<PetManifest> {
     const assets = this.draft.selected(this.mode);
     if (!assets.default) this.fail("default_required");
     if (this.draft.isBusy(this.mode)) this.fail("wait_processing");
     if (this.draft.blockingError(this.mode)) this.fail(this.draft.blockingError(this.mode)!.code);
-    if (!validPetTransform(scale, offsetX, offsetY, Object.values(assets).some((asset) => asset?.kind === "gif"))) {
+    if (!validPetTransform(scale, 0, 0, Object.values(assets).some((asset) => asset?.kind === "gif"))) {
       this.fail("invalid_transform");
+    }
+    const selectedMotions: Partial<Record<PetSlot, PetMotion>> = {};
+    for (const slot of ["default", "working", "waiting", "error", "completed"] as const) {
+      const motion = motions[slot];
+      if (assets[slot]?.kind === "png" && motion && motion !== "follow_state") selectedMotions[slot] = motion;
     }
     this.busy = true; this.error = null; this.feedback = null; this.notify();
     try {
-      const saved = await this.api.save(name, assets, scale, offsetX, offsetY);
+      const saved = await this.api.save(name, assets, scale, selectedMotions);
       await this.refresh();
       this.feedback = "saved_success";
       return saved;
@@ -174,7 +179,7 @@ export class SettingsController {
 
 const api: SettingsApi = {
   prepare: (bytes, mode) => invoke<PreparedAssetPayload>("prepare_pet_preview", { input: Array.from(bytes), mode }),
-  save: (name, assets, scale, offsetX, offsetY) => invoke("save_pet_profile", { name, assets, scale, offsetX, offsetY }),
+  save: (name, assets, scale, motions) => invoke("save_pet_profile", { name, assets, scale, motions }),
   list: () => invoke("list_photo_pets"),
   select: (id) => invoke("select_pet", { id }),
   delete: (id) => invoke("delete_photo_pet", { id }),
@@ -202,6 +207,8 @@ export function mountSettings(): void {
   const savedWarning = root.querySelector<HTMLElement>("#saved-warning")!;
   const fileInput = root.querySelector<HTMLInputElement>("#photo-file")!;
   const modeInput = root.querySelector<HTMLSelectElement>("#photo-mode")!;
+  const motionInput = root.querySelector<HTMLSelectElement>("#pet-motion")!;
+  const motionHint = root.querySelector<HTMLElement>("#motion-hint")!;
   const original = root.querySelector<HTMLImageElement>("#original-preview")!;
   const processed = root.querySelector<HTMLImageElement>("#processed-preview")!;
   const processedFrame = root.querySelector<HTMLElement>("#processed-frame")!;
@@ -216,6 +223,7 @@ export function mountSettings(): void {
   const originalUrls = new Map<PetSlot, string>();
   const files = new Map<PetSlot, File>();
   const modes = new Map<PetSlot, PetImageMode>();
+  const motions = new Map<PetSlot, PetMotion>();
   let selectedSlot: PetSlot = "default";
   let lastStateSlot: PetSlot = "default";
   let capabilities: ImportCapabilities = { automatic: false, transparent_png: false, transparent_gif: false };
@@ -259,6 +267,16 @@ export function mountSettings(): void {
   const selectedAsset = () =>
     controller.draft.get(selectedSlot)?.asset ?? controller.draft.get("default")?.asset ?? null;
 
+  const motionValues: PetMotion[] = ["follow_state", "still", "sway", "float", "breathe", "bounce", "wobble"];
+  const configureMotion = () => {
+    motionInput.replaceChildren(...motionValues.map((motion) => new Option(t(locale, `motion_${motion}` as UiKey), motion)));
+    motionInput.value = motions.get(selectedSlot) ?? "follow_state";
+    const ownAsset = controller.draft.get(selectedSlot)?.asset;
+    motionInput.disabled = ownAsset?.kind !== "png";
+    motionHint.hidden = ownAsset?.kind === "png";
+    motionHint.textContent = t(locale, ownAsset?.kind === "gif" ? "motion_gif_hint" : "motion_upload_hint");
+  };
+
   const selectSlot = (slot: PetSlot, focus = false) => {
     selectedSlot = slot;
     if (controller.mode === "states") lastStateSlot = slot;
@@ -299,7 +317,10 @@ export function mountSettings(): void {
       if (processed.getAttribute("src") !== asset.data_url) processed.src = asset.data_url;
     } else processed.removeAttribute("src");
     processed.style.visibility = asset ? "visible" : "hidden";
-    processed.className = asset?.kind === "gif" ? "animated" : `motion-${selectedSlot === "default" ? "idle" : selectedSlot}`;
+    const previewMotion = motions.get(selectedEntry?.asset ? selectedSlot : "default") ?? "follow_state";
+    processed.className = asset?.kind === "gif" ? "animated"
+      : `motion-${previewMotion === "follow_state" ? selectedSlot === "default" ? "idle" : selectedSlot : previewMotion}`;
+    configureMotion();
     slotTitle.textContent = t(locale, slotKeys[selectedSlot]);
     slotFileLabel.textContent = t(locale, selectedSlot === "default" ? "default_asset" : "upload_image");
     slotFileName.textContent = files.has(selectedSlot) ? t(locale, "file_selected", { name: files.get(selectedSlot)!.name }) : "";
@@ -383,6 +404,7 @@ export function mountSettings(): void {
     const file = fileInput.files?.[0];
     if (!file) return;
     files.set(selectedSlot, file);
+    motions.delete(selectedSlot);
     configureModes();
     const mode = modeInput.value as PetImageMode;
     if (!mode) { status.textContent = t(locale, "mode_unsupported"); return; }
@@ -405,6 +427,11 @@ export function mountSettings(): void {
     modes.set(selectedSlot, mode);
     if (file) void controller.loadSlot(selectedSlot, file, mode);
   };
+  motionInput.onchange = () => {
+    if (controller.draft.get(selectedSlot)?.asset?.kind !== "png") return;
+    motions.set(selectedSlot, motionInput.value as PetMotion);
+    render();
+  };
   slotClear.onclick = () => {
     const slot = selectedSlot;
     controller.draft.clear(slot);
@@ -414,12 +441,13 @@ export function mountSettings(): void {
     originalUrls.delete(slot);
     fileInput.value = "";
     modes.delete(slot);
+    motions.delete(slot);
     configureModes();
     render();
   };
   for (const input of [scaleInput, xInput, yInput]) input.addEventListener("input", render);
   saveButton.onclick = () => {
-    void controller.save(nameInput.value, Number(scaleInput.value), Number(xInput.value), Number(yInput.value)).catch(() => {});
+    void controller.save(nameInput.value, Number(scaleInput.value), Object.fromEntries(motions) as Partial<Record<PetSlot, PetMotion>>).catch(() => {});
   };
   processed.addEventListener("animationend", (event) => {
     if (event.animationName === "pet-photo-completed" && !processed.classList.contains("animated")) processed.className = "motion-idle";
