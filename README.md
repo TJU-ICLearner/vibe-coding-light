@@ -21,11 +21,13 @@ Currently supports **[Claude Code](https://docs.anthropic.com/en/docs/claude-cod
 | Gray | Idle | No active sessions |
 | Gray | Unknown | No agent event for 5 minutes; the session may still be running |
 | Green (blinking) | Working | Agent is executing tool calls |
-| Yellow (blinking) | Waiting | Agent is waiting for user confirmation |
+| Yellow (blinking) | Waiting | Claude Code or Codex requested approval or interactive input |
 | Red (blinking) | Error | An error has occurred |
 | Blue | Completed | Task finished (displays for 10 seconds, then returns to idle) |
 
 Active states blink every 500ms to catch your attention. The tray tooltip shows the current state, active session count, and last update time.
+
+**When does Waiting appear?** Claude Code permission or interactive notifications and Codex `PermissionRequest` hooks trigger it. Ordinary work without an approval prompt can go directly from Working to Completed, then return to Idle. It does not mean that the app detects every moment an agent is waiting for a free-form user reply.
 
 ## Desktop Pet 🐱
 
@@ -41,13 +43,15 @@ Vibe Coding Light now includes a pixel art desktop pet that reacts to your AI ag
 
 **Toggle the pet:** Right-click the tray icon and select **"Show Pet"** or **"Hide Pet"** to control visibility.
 
+**Interface language:** Open the tray menu and choose **Language → English** or **Language → Chinese**. Menu items, status tooltip, settings title, and pet settings change immediately. Your choice is saved across launches; the first launch follows your Mac's preferred language (Chinese for a Chinese system language, English otherwise).
+
 The pet window is always on top and draggable, so you can position it anywhere on your screen.
 
 ### Create a custom pet (macOS)
 
 1. Open the tray menu and choose **Customize Pet**.
    With the pet window focused, **⌘,** also opens this window.
-2. Choose **Single image** to use one asset for every state, or **By state** to set a required default plus optional Working, Waiting, Error, and Completed assets. Missing state assets use the default. Switching modes keeps your draft; saving in Single image mode stores only the default.
+2. Choose **One image for every state** to use one asset, or **Different images for each state** to edit five clearly separated tabs: required Default / Rest plus optional Working, Waiting, Error, and Completed. The preview stays next to the editor on wide windows and above it on narrow windows. Missing state assets use the default. Switching modes keeps your draft; saving in single image mode stores only the default.
 3. Each slot accepts PNG, JPEG, or a transparent GIF (up to 10 MiB). Static images can be cut out locally with **Remove Background** on macOS 14+; transparent PNG and GIF work on macOS 12–13. GIFs retain their original animation and must already have a transparent background. Static images may be up to 4096 pixels per side; GIFs may be up to 1024 pixels per side and 120 frames.
 4. Preview each state, choose a name, size, and position, then click **Save and Use**. Previewing alone does not replace the active pet. You can select or delete saved pets and return to the built-in pixel cat in the same window.
 
@@ -102,7 +106,7 @@ Built artifacts:
 ## Usage
 
 1. **Launch** Vibe Coding Light — a gray dot appears in your system tray
-2. **Right-click** the icon and select **"Setup Claude Hooks"** to register hooks for Claude Code, or **"Setup Codex Hooks"** for Codex CLI
+2. **Right-click** the icon, choose your interface language, then select **"Setup Claude Hooks"** to register hooks for Claude Code, or **"Setup Codex Hooks"** for Codex CLI
 3. **Start your AI agent** in the terminal — the tray icon changes color as the agent works
 
 That's it. On macOS the app runs as a pure menu bar accessory with no dock icon.
