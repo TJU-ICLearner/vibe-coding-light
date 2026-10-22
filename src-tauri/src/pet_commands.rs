@@ -1,5 +1,7 @@
 use crate::pet_image::{prepare_pet_asset, PetAsset, PetAssetKind, PetImageError, PetImageMode};
-use crate::pet_store::{ActivePet, PetAssets, PetManifest, PetSlot, PetStore, PetStoreError};
+use crate::pet_store::{
+    ActivePet, PetAssets, PetManifest, PetMotion, PetSlot, PetStore, PetStoreError,
+};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -53,6 +55,7 @@ impl From<PetStoreError> for PetCommandError {
             PetStoreError::InvalidId => Self::new("invalid_id"),
             PetStoreError::InvalidName => Self::new("invalid_name"),
             PetStoreError::InvalidTransform => Self::new("invalid_transform"),
+            PetStoreError::InvalidMotion => Self::new("invalid_motion"),
             PetStoreError::InvalidImage(_) => Self::new("invalid_image"),
             PetStoreError::InvalidManifest => Self::new("invalid_manifest"),
             PetStoreError::NotFound => Self::new("not_found"),
@@ -199,6 +202,7 @@ pub enum ActivePetPayload {
         scale: f32,
         offset_x: i16,
         offset_y: i16,
+        motions: BTreeMap<PetSlot, PetMotion>,
     },
 }
 
@@ -219,6 +223,7 @@ fn active_payload(active: ActivePet) -> ActivePetPayload {
             scale: manifest.scale,
             offset_x: manifest.offset_x,
             offset_y: manifest.offset_y,
+            motions: manifest.motions,
         },
     }
 }
@@ -252,19 +257,18 @@ pub fn save_pet_profile(
     name: String,
     assets: BTreeMap<PetSlot, PreparedAssetPayload>,
     scale: f32,
-    offset_x: i16,
-    offset_y: i16,
+    motions: BTreeMap<PetSlot, PetMotion>,
 ) -> Result<PetManifest, PetCommandError> {
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (app, store, name, assets, scale, offset_x, offset_y);
+        let _ = (app, store, name, assets, scale, motions);
         return Err(PetCommandError::new("unsupported_platform"));
     }
     #[cfg(target_os = "macos")]
     {
         let decoded = decode_profile_assets(&assets)?;
         let manifest = store
-            .save_profile(&name, &decoded, scale, offset_x, offset_y)
+            .save_profile(&name, &decoded, scale, &motions)
             .map_err(PetCommandError::from)?;
         store.select(&manifest.id).map_err(PetCommandError::from)?;
         let _ = app.emit("pet-changed", ());
@@ -279,19 +283,17 @@ pub fn save_photo_pet(
     name: String,
     png_data_url: String,
     scale: f32,
-    offset_x: i16,
-    offset_y: i16,
 ) -> Result<PetManifest, PetCommandError> {
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (app, store, name, png_data_url, scale, offset_x, offset_y);
+        let _ = (app, store, name, png_data_url, scale);
         return Err(PetCommandError::new("unsupported_platform"));
     }
     #[cfg(target_os = "macos")]
     {
         let png = decode_png_data_url(&png_data_url)?;
         let manifest = store
-            .save(&name, &png, scale, offset_x, offset_y)
+            .save(&name, &png, scale)
             .map_err(PetCommandError::from)?;
         store.select(&manifest.id).map_err(PetCommandError::from)?;
         let _ = app.emit("pet-changed", ());
@@ -441,6 +443,7 @@ mod tests {
             offset_y: 0,
             created_at: 1,
             assets: BTreeMap::new(),
+            motions: BTreeMap::new(),
         };
         let active = ActivePet::Photo {
             manifest,
