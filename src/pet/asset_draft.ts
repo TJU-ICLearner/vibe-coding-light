@@ -1,9 +1,11 @@
 import type { PetImageMode, PetSlot, PreparedAssetPayload } from "./types";
+import { asPetError } from "../i18n";
+import type { PetError } from "../i18n";
 
 export type DraftMode = "single" | "states";
 export interface DraftSlot {
   asset: PreparedAssetPayload | null;
-  error: string;
+  error: PetError | null;
   busy: boolean;
   filename: string;
 }
@@ -11,16 +13,18 @@ export interface DraftSlot {
 const slots: PetSlot[] = ["default", "working", "waiting", "error", "completed"];
 const MAX_INPUT_BYTES = 10 * 1024 * 1024;
 
-export function validatePetFile(file: File, mode: PetImageMode): string | null {
-  if (file.size > MAX_INPUT_BYTES) return "图片不能超过 10 MiB";
+export type ValidationCode = "too_large" | "gif_requires_animation" | "animation_requires_gif" | "unsupported_format" | "alpha_requires_png";
+
+export function validatePetFile(file: File, mode: PetImageMode): ValidationCode | null {
+  if (file.size > MAX_INPUT_BYTES) return "too_large";
   const extension = file.name.split(".").pop()?.toLowerCase();
   const isPng = extension === "png" && (file.type === "image/png" || file.type === "");
   const isJpeg = (extension === "jpg" || extension === "jpeg") && (file.type === "image/jpeg" || file.type === "");
   const isGif = extension === "gif" && (file.type === "image/gif" || file.type === "");
-  if (isGif) return mode === "keep_animation" ? null : "GIF 仅支持保留透明背景";
-  if (mode === "keep_animation") return "保留动图需要透明 GIF";
-  if (!isPng && !isJpeg) return "请选择 PNG、JPEG 或透明 GIF 图片";
-  if (mode === "keep_alpha" && !isPng) return "保留透明背景需要 PNG 图片";
+  if (isGif) return mode === "keep_animation" ? null : "gif_requires_animation";
+  if (mode === "keep_animation") return "animation_requires_gif";
+  if (!isPng && !isJpeg) return "unsupported_format";
+  if (mode === "keep_alpha" && !isPng) return "alpha_requires_png";
   return null;
 }
 
@@ -47,7 +51,7 @@ export class AssetDraft {
     const generation = (this.generations.get(slot) ?? 0) + 1;
     this.generations.set(slot, generation);
     const validation = validatePetFile(file, mode);
-    this.entries.set(slot, { asset: null, error: validation ?? "", busy: !validation, filename: file.name });
+    this.entries.set(slot, { asset: null, error: validation ? { code: validation } : null, busy: !validation, filename: file.name });
     this.onChange();
     if (validation) return;
     try {
@@ -55,11 +59,11 @@ export class AssetDraft {
       if (this.generations.get(slot) !== generation) return;
       const asset = await prepare(bytes, mode);
       if (this.generations.get(slot) !== generation) return;
-      this.entries.set(slot, { asset, error: "", busy: false, filename: file.name });
+      this.entries.set(slot, { asset, error: null, busy: false, filename: file.name });
     } catch (error) {
       if (this.generations.get(slot) !== generation) return;
       this.entries.set(slot, {
-        asset: null, error: String(error instanceof Error ? error.message : error), busy: false, filename: file.name,
+        asset: null, error: asPetError(error), busy: false, filename: file.name,
       });
     }
     this.onChange();
@@ -75,13 +79,13 @@ export class AssetDraft {
     return result;
   }
 
-  blockingError(mode: DraftMode): string {
+  blockingError(mode: DraftMode): PetError | null {
     for (const slot of slots) {
       if (mode === "single" && slot !== "default") break;
       const entry = this.entries.get(slot);
       if (entry?.error) return entry.error;
     }
-    return "";
+    return null;
   }
 
   isBusy(mode: DraftMode): boolean {

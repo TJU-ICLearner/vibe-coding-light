@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AssetDraft } from "./asset_draft";
+import { AssetDraft, validatePetFile } from "./asset_draft";
 import type { PreparedAssetPayload } from "./types";
 
 const png = (value: string): PreparedAssetPayload => ({ kind: "png", data_url: `data:image/png;base64,${value}` });
@@ -13,6 +13,15 @@ function deferred<T>() {
 }
 
 describe("asset draft", () => {
+  it("returns stable validation codes for size, format and transparent modes", () => {
+    const huge = file("huge");
+    Object.defineProperty(huge, "size", { value: 10 * 1024 * 1024 + 1 });
+    expect(validatePetFile(huge, "keep_alpha")).toBe("too_large");
+    expect(validatePetFile(new File(["x"], "x.gif", { type: "image/gif" }), "keep_alpha")).toBe("gif_requires_animation");
+    expect(validatePetFile(file("still"), "keep_animation")).toBe("animation_requires_gif");
+    expect(validatePetFile(new File(["x"], "x.webp", { type: "image/webp" }), "remove_background")).toBe("unsupported_format");
+    expect(validatePetFile(new File(["x"], "x.jpg", { type: "image/jpeg" }), "keep_alpha")).toBe("alpha_requires_png");
+  });
   it("selects only default in single mode and optional images in state mode", async () => {
     const draft = new AssetDraft();
     await draft.load("default", file("base"), "keep_alpha", async () => png("BASE"));
@@ -41,7 +50,7 @@ describe("asset draft", () => {
     await draft.load("default", file("base"), "keep_alpha", async () => png("BASE"));
     await draft.load("working", file("bad"), "keep_alpha", async () => { throw new Error("broken GIF"); });
     expect(draft.get("default")?.asset).toEqual(png("BASE"));
-    expect(draft.get("working")?.error).toContain("broken GIF");
+    expect(draft.get("working")?.error).toEqual({ code: "internal_error", detail: "broken GIF" });
     expect(draft.selected("states")).toEqual({ default: png("BASE") });
   });
 });
