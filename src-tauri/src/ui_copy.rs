@@ -10,7 +10,7 @@ pub enum HookFeedback {
 
 pub struct MenuLabels {
     pub toggle_pet: String,
-    pub whip: String,
+    pub pet_action: String,
     pub customize_pet: String,
     pub setup_claude: String,
     pub setup_codex: String,
@@ -43,14 +43,14 @@ pub fn menu_labels(
     claude: &HookFeedback,
     codex: &HookFeedback,
 ) -> MenuLabels {
-    let (toggle_pet, whip, customize_pet, language, chinese, english, quit) = match locale {
+    let (toggle_pet, pet_action, customize_pet, language, chinese, english, quit) = match locale {
         AppLocale::ZhCn => (
             if pet_visible {
                 "隐藏桌宠"
             } else {
                 "显示桌宠"
             },
-            "鞭策  ⌘B",
+            "摸摸  ⌘B",
             "自定义桌宠",
             "语言",
             "中文",
@@ -59,7 +59,7 @@ pub fn menu_labels(
         ),
         AppLocale::En => (
             if pet_visible { "Hide Pet" } else { "Show Pet" },
-            "Whip  ⌘B",
+            "Pet the Pet  ⌘B",
             "Customize Pet",
             "Language",
             "Chinese",
@@ -69,7 +69,7 @@ pub fn menu_labels(
     };
     MenuLabels {
         toggle_pet: toggle_pet.into(),
-        whip: whip.into(),
+        pet_action: pet_action.into(),
         customize_pet: customize_pet.into(),
         setup_claude: hook_label(locale, "Claude", &HookFeedback::Initial),
         setup_codex: hook_label(locale, "Codex", &HookFeedback::Initial),
@@ -191,6 +191,7 @@ mod tests {
         assert_eq!(en.chinese, "Chinese");
         assert_eq!(en.english, "English");
         assert_eq!(en.codex_hooks, "Codex hooks: installed");
+        assert_eq!(en.pet_action, "Pet the Pet  ⌘B");
         let zh = menu_labels(
             AppLocale::ZhCn,
             false,
@@ -202,6 +203,7 @@ mod tests {
         assert_eq!(zh.chinese, "中文");
         assert_eq!(zh.english, "英文");
         assert_eq!(zh.claude_hooks, "Claude 钩子：安装失败（disk）");
+        assert_eq!(zh.pet_action, "摸摸  ⌘B");
         assert!(settings_title(AppLocale::ZhCn).contains("桌宠"));
         assert!(!settings_title(AppLocale::En).contains("桌宠"));
     }

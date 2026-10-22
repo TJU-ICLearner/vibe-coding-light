@@ -5,7 +5,7 @@ const photo = { kind: "photo" as const, id: "p1", assets: { default: { kind: "pn
 const statePhoto = { ...photo, assets: { ...photo.assets, working: { kind: "gif" as const, data_url: "data:image/gif;base64,R0lG" } } };
 
 function fixture() {
-  document.body.innerHTML = `<div id="pet-wrapper"><div id="pet-sprite"></div><div id="photo-frame"><img id="photo-pet"></div><div id="whip-overlay"></div></div>`;
+  document.body.innerHTML = `<div id="pet-wrapper"><div id="pet-sprite"></div><div id="photo-reaction"><div id="photo-frame"><img id="photo-pet"></div></div><div id="pat-overlay"></div></div>`;
   return new PhotoRenderer(
     document.querySelector<HTMLElement>("#pet-wrapper")!,
     document.querySelector<HTMLElement>("#pet-sprite")!,
@@ -67,15 +67,6 @@ describe("photo pet renderer", () => {
     expect(document.querySelector<HTMLElement>("#photo-frame")?.style.transform).toBe("translate(4px, -3px) scale(0.875)");
     renderer.setFitScale(null);
     expect(document.querySelector<HTMLElement>("#photo-frame")?.style.transform).toBe("translate(4px, -3px) scale(3)");
-  });
-
-  it("uses a photo reaction without enabling fixed cat overlays", () => {
-    const renderer = fixture();
-    expect(renderer.react()).toBe(false);
-    renderer.applyPet(photo);
-    expect(renderer.react()).toBe(true);
-    expect(document.querySelector("#pet-wrapper")?.classList.contains("photo-active")).toBe(true);
-    expect(document.querySelector("#photo-pet")?.classList.contains("reacting")).toBe(true);
   });
 
   it("selects state asset or default", () => {

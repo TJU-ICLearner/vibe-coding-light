@@ -28,7 +28,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 #[derive(Clone)]
 struct TrayUi {
     toggle_pet: MenuItem<tauri::Wry>,
-    whip: MenuItem<tauri::Wry>,
+    pet_action: MenuItem<tauri::Wry>,
     customize_pet: Option<MenuItem<tauri::Wry>>,
     setup_claude: MenuItem<tauri::Wry>,
     setup_codex: MenuItem<tauri::Wry>,
@@ -53,7 +53,7 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
         &ui.codex_feedback,
     );
     let _ = ui.toggle_pet.set_text(labels.toggle_pet);
-    let _ = ui.whip.set_text(labels.whip);
+    let _ = ui.pet_action.set_text(labels.pet_action);
     if let Some(item) = &ui.customize_pet {
         let _ = item.set_text(labels.customize_pet);
     }
@@ -651,7 +651,7 @@ pub fn run() {
             );
             let toggle_pet_item =
                 MenuItemBuilder::with_id("toggle_pet", &labels.toggle_pet).build(app)?;
-            let whip_item = MenuItemBuilder::with_id("whip", &labels.whip).build(app)?;
+            let pet_action_item = MenuItemBuilder::with_id("pet_action", &labels.pet_action).build(app)?;
             #[cfg(target_os = "macos")]
             let customize_item =
                 MenuItemBuilder::with_id("customize_pet", &labels.customize_pet).build(app)?;
@@ -672,7 +672,7 @@ pub fn run() {
             let quit_item = MenuItemBuilder::with_id("quit", &labels.quit).build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&toggle_pet_item)
-                .item(&whip_item);
+                .item(&pet_action_item);
             #[cfg(target_os = "macos")]
             let menu = menu.item(&customize_item);
             let menu = menu
@@ -690,7 +690,7 @@ pub fn run() {
 
             app.manage(Arc::new(Mutex::new(TrayUi {
                 toggle_pet: toggle_pet_item,
-                whip: whip_item,
+                pet_action: pet_action_item,
                 customize_pet: {
                     #[cfg(target_os = "macos")]
                     {
@@ -733,8 +733,8 @@ pub fn run() {
                             }
                         }
                     }
-                    "whip" => {
-                        let _ = app.emit("whip", ());
+                    "pet_action" => {
+                        let _ = app.emit("pet", ());
                     }
                     #[cfg(target_os = "macos")]
                     "customize_pet" => {
@@ -804,12 +804,12 @@ pub fn run() {
                 make_window_transparent(&window);
             }
 
-            // Register global shortcut: Cmd+B (macOS) / Ctrl+B (others) → whip
+            // Register global shortcut: Cmd+B (macOS) / Ctrl+B (others) → pat
             let shortcut_app = app.handle().clone();
             app.global_shortcut()
                 .on_shortcut("CmdOrCtrl+B", move |_app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        let _ = shortcut_app.emit("whip", ());
+                        let _ = shortcut_app.emit("pet", ());
                     }
                 })
                 .ok();

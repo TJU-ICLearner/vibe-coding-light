@@ -18,8 +18,6 @@ export class PhotoRenderer {
       if (event.animationName === "pet-photo-completed" && this.image.classList.contains("motion-completed") && this.active.kind === "photo" && this.state === "completed") {
         this.completedPlayed = true;
         this.image.className = "motion-idle";
-      } else if (event.animationName === "pet-photo-react") {
-        this.image.classList.remove("reacting");
       }
     });
   }
@@ -29,7 +27,6 @@ export class PhotoRenderer {
     this.fitScale = null;
     this.currentSource = null;
     this.completedPlayed = false;
-    this.image.classList.remove("reacting");
     const isPhoto = pet.kind === "photo";
     this.wrapper.classList.toggle("photo-active", isPhoto);
     if (isPhoto) {
@@ -82,11 +79,4 @@ export class PhotoRenderer {
       : `motion-${motion}`;
   }
 
-  react(): boolean {
-    if (this.active.kind !== "photo") return false;
-    this.image.classList.remove("reacting");
-    void this.image.offsetWidth;
-    this.image.classList.add("reacting");
-    return true;
-  }
 }
