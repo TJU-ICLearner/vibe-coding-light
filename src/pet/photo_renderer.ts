@@ -1,5 +1,6 @@
 import type { ActivePet, AgentVisualState } from "./types";
 import { imageForState, motionForState } from "./motion";
+import { applyPetMotionMetrics } from "./window_size";
 
 export class PhotoRenderer {
   private active: ActivePet = { kind: "builtin" };
@@ -46,7 +47,9 @@ export class PhotoRenderer {
   private updateTransform(): void {
     if (this.active.kind !== "photo") return;
     const pet = this.active;
-    this.frame.style.transform = `translate(${pet.offset_x}px, ${pet.offset_y}px) scale(${this.fitScale ?? pet.scale})`;
+    const effectiveScale = this.fitScale ?? pet.scale;
+    this.frame.style.transform = `translate(${pet.offset_x}px, ${pet.offset_y}px) scale(${effectiveScale})`;
+    applyPetMotionMetrics(this.image, effectiveScale);
   }
 
   applyState(state: AgentVisualState): void {

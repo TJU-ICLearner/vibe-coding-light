@@ -5,7 +5,7 @@ import { asPetError, formatPetError, t } from "./i18n";
 import type { Locale, PetError, UiKey } from "./i18n";
 import type { DraftMode } from "./pet/asset_draft";
 import type { ActivePet, ImportCapabilities, PetImageMode, PetManifest, PetMotion, PetSlot, PreparedAssetPayload } from "./pet/types";
-import { petWindowSide, validPetScale } from "./pet/window_size";
+import { applyPetMotionMetrics, petWindowSide, validPetScale } from "./pet/window_size";
 import "./settings.css";
 export { validatePetFile } from "./pet/asset_draft";
 
@@ -277,6 +277,7 @@ export function mountSettings(): void {
       previewWindow.style.height = `${side}px`;
       previewWindow.style.transform = `scale(${displaySide / side})`;
       processedFrame.style.transform = `scale(${scale})`;
+      applyPetMotionMetrics(processed, scale);
       previewSize.textContent = `${side} × ${side}`;
     }
     saveButton.disabled = controller.busy || controller.draft.isBusy(controller.mode) ||

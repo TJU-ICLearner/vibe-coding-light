@@ -79,16 +79,16 @@ button:disabled { opacity: .52; cursor: default; }
 #processed-preview.motion-wobble { animation: pet-motion-wobble 1.2s ease-in-out infinite; }
 #processed-preview.motion-idle { animation: pet-photo-idle 2.6s ease-in-out infinite; }
 #processed-preview.animated { animation: none; }
-@keyframes pet-photo-idle { 50% { transform: translateY(-3px); } }
-@keyframes pet-photo-working { 50% { transform: rotate(-5deg) translateY(-2px); } }
-@keyframes pet-photo-waiting { 50% { transform: scale(1.035); } }
-@keyframes pet-photo-error { 50% { transform: translateX(3px); } }
-@keyframes pet-photo-completed { 50% { transform: translateY(-12px) scale(1.06); } }
-@keyframes pet-motion-sway { 50% { transform: translateX(6px); } }
-@keyframes pet-motion-float { 50% { transform: translateY(-5px); } }
-@keyframes pet-motion-breathe { 50% { transform: scale(1.035); } }
-@keyframes pet-motion-bounce { 50% { transform: translateY(-8px); } }
-@keyframes pet-motion-wobble { 25% { transform: rotate(-5deg); } 75% { transform: rotate(5deg); } }
+@keyframes pet-photo-idle { 50% { transform: translateY(var(--pet-motion-idle-rise)); } }
+@keyframes pet-photo-working { 50% { transform: rotate(var(--pet-motion-angle-left)); } }
+@keyframes pet-photo-waiting { 50% { transform: scale(var(--pet-motion-expand)); } }
+@keyframes pet-photo-error { 50% { transform: translateX(var(--pet-motion-error-shift)); } }
+@keyframes pet-photo-completed { 50% { transform: translateY(var(--pet-motion-complete-rise)) scale(var(--pet-motion-complete-expand)); } }
+@keyframes pet-motion-sway { 25% { transform: translateX(var(--pet-motion-left)); } 75% { transform: translateX(var(--pet-motion-shift)); } }
+@keyframes pet-motion-float { 50% { transform: translateY(var(--pet-motion-idle-rise)); } }
+@keyframes pet-motion-breathe { 50% { transform: scale(var(--pet-motion-expand)); } }
+@keyframes pet-motion-bounce { 50% { transform: translateY(var(--pet-motion-bounce-rise)); } }
+@keyframes pet-motion-wobble { 25% { transform: rotate(var(--pet-motion-angle-left)); } 75% { transform: rotate(var(--pet-motion-angle)); } }
 @media (prefers-reduced-motion: reduce) {
   #processed-preview[class*="motion-"] { animation: none; }
 }

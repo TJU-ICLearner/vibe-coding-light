@@ -257,6 +257,7 @@ describe("settings preview", () => {
     expect(document.querySelector<HTMLElement>(".preview-viewport")!.style.width).toBe("160px");
     expect(document.querySelector<HTMLElement>("#processed-frame")!.style.transform).toBe("scale(3)");
     expect(document.querySelector<HTMLElement>(".preview-size")!.textContent).toBe("400 × 400");
+    expect(Number.parseFloat(document.querySelector<HTMLImageElement>("#processed-preview")!.style.getPropertyValue("--pet-motion-shift"))).toBeLessThan(3);
   });
   it("keeps the newest selection when an older request finishes late", async () => {
     const a = deferred<string>(); const b = deferred<string>();

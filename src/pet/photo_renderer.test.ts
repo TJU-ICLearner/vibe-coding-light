@@ -69,6 +69,17 @@ describe("photo pet renderer", () => {
     expect(document.querySelector<HTMLElement>("#photo-frame")?.style.transform).toBe("translate(4px, -3px) scale(3)");
   });
 
+  it("reduces animation travel at 3x and restores it after a smaller pet is selected", () => {
+    const renderer = fixture();
+    const image = document.querySelector<HTMLImageElement>("#photo-pet")!;
+    renderer.applyPet({ ...photo, scale: 3 });
+    const largeShift = Number.parseFloat(image.style.getPropertyValue("--pet-motion-shift"));
+    expect(largeShift).toBeGreaterThan(0);
+    expect(largeShift).toBeLessThan(3);
+    renderer.applyPet(photo);
+    expect(Number.parseFloat(image.style.getPropertyValue("--pet-motion-shift"))).toBeGreaterThan(largeShift);
+  });
+
   it("selects state asset or default", () => {
     const renderer = fixture();
     const image = document.querySelector<HTMLImageElement>("#photo-pet")!;
