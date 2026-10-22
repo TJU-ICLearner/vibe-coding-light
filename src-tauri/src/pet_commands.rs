@@ -1,5 +1,5 @@
-use crate::pet_image::{prepare_pet_asset, PetAsset, PetAssetKind, PetImageMode};
-use crate::pet_store::{ActivePet, PetAssets, PetManifest, PetSlot, PetStore};
+use crate::pet_image::{prepare_pet_asset, PetAsset, PetAssetKind, PetImageError, PetImageMode};
+use crate::pet_store::{ActivePet, PetAssets, PetManifest, PetSlot, PetStore, PetStoreError};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -9,6 +9,57 @@ const PNG_DATA_URL_PREFIX: &str = "data:image/png;base64,";
 const GIF_DATA_URL_PREFIX: &str = "data:image/gif;base64,";
 const MAX_ASSET_BYTES: usize = 10 * 1024 * 1024;
 const MAX_PROFILE_BYTES: usize = 25 * 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+pub struct PetCommandError {
+    code: String,
+    detail: Option<String>,
+}
+
+impl PetCommandError {
+    fn new(code: &str) -> Self {
+        Self {
+            code: code.into(),
+            detail: None,
+        }
+    }
+    fn internal(detail: impl Into<String>) -> Self {
+        Self {
+            code: "internal_error".into(),
+            detail: Some(detail.into()),
+        }
+    }
+}
+
+impl From<PetImageError> for PetCommandError {
+    fn from(error: PetImageError) -> Self {
+        let code = match error {
+            PetImageError::TooLarge => "too_large",
+            PetImageError::UnsupportedFormat => "unsupported_format",
+            PetImageError::Decode(_) => "invalid_image",
+            PetImageError::NoSubject => "no_subject",
+            PetImageError::NoTransparency => "no_transparency",
+            PetImageError::InvalidAnimation => "invalid_animation",
+            PetImageError::UnsupportedPlatform => "unsupported_platform",
+        };
+        Self::new(code)
+    }
+}
+
+impl From<PetStoreError> for PetCommandError {
+    fn from(error: PetStoreError) -> Self {
+        match error {
+            PetStoreError::Io(detail) => Self::internal(detail),
+            PetStoreError::InvalidId => Self::new("invalid_id"),
+            PetStoreError::InvalidName => Self::new("invalid_name"),
+            PetStoreError::InvalidTransform => Self::new("invalid_transform"),
+            PetStoreError::InvalidImage(_) => Self::new("invalid_image"),
+            PetStoreError::InvalidManifest => Self::new("invalid_manifest"),
+            PetStoreError::NotFound => Self::new("not_found"),
+            PetStoreError::CannotDeleteBuiltin => Self::new("cannot_delete_builtin"),
+        }
+    }
+}
 
 #[derive(Serialize)]
 pub struct ImportCapabilities {
@@ -58,7 +109,7 @@ fn asset_payload(asset: &PetAsset) -> PreparedAssetPayload {
     }
 }
 
-fn decode_asset_data(payload: &PreparedAssetPayload) -> Result<PetAsset, String> {
+fn decode_asset_data(payload: &PreparedAssetPayload) -> Result<PetAsset, PetCommandError> {
     let prefix = match payload.kind {
         PetAssetKind::Png => PNG_DATA_URL_PREFIX,
         PetAssetKind::Gif => GIF_DATA_URL_PREFIX,
@@ -66,15 +117,15 @@ fn decode_asset_data(payload: &PreparedAssetPayload) -> Result<PetAsset, String>
     let encoded = payload
         .data_url
         .strip_prefix(prefix)
-        .ok_or("Image MIME does not match type")?;
+        .ok_or_else(|| PetCommandError::new("mime_mismatch"))?;
     if encoded.len() > 14 * 1024 * 1024 {
-        return Err("Image preview is too large".into());
+        return Err(PetCommandError::new("too_large"));
     }
     let bytes = STANDARD
         .decode(encoded)
-        .map_err(|_| "Invalid image preview data")?;
+        .map_err(|_| PetCommandError::new("invalid_preview"))?;
     if bytes.len() > MAX_ASSET_BYTES {
-        return Err("Image preview exceeds 10 MiB".into());
+        return Err(PetCommandError::new("too_large"));
     }
     Ok(PetAsset {
         kind: payload.kind,
@@ -82,29 +133,30 @@ fn decode_asset_data(payload: &PreparedAssetPayload) -> Result<PetAsset, String>
     })
 }
 
-fn decode_asset_payload(payload: &PreparedAssetPayload) -> Result<PetAsset, String> {
+fn decode_asset_payload(payload: &PreparedAssetPayload) -> Result<PetAsset, PetCommandError> {
     let asset = decode_asset_data(payload)?;
     verify_asset_kind(&asset)?;
     Ok(asset)
 }
 
-fn verify_asset_kind(asset: &PetAsset) -> Result<(), String> {
-    let actual = image::guess_format(&asset.bytes).map_err(|_| "Invalid image format")?;
+fn verify_asset_kind(asset: &PetAsset) -> Result<(), PetCommandError> {
+    let actual =
+        image::guess_format(&asset.bytes).map_err(|_| PetCommandError::new("invalid_image"))?;
     let expected = match asset.kind {
         PetAssetKind::Png => image::ImageFormat::Png,
         PetAssetKind::Gif => image::ImageFormat::Gif,
     };
     if actual != expected {
-        return Err("Image MIME does not match bytes".into());
+        return Err(PetCommandError::new("mime_mismatch"));
     }
     Ok(())
 }
 
 fn decode_profile_assets(
     payloads: &BTreeMap<PetSlot, PreparedAssetPayload>,
-) -> Result<PetAssets, String> {
+) -> Result<PetAssets, PetCommandError> {
     if !payloads.contains_key(&PetSlot::Default) {
-        return Err("Default image is required".into());
+        return Err(PetCommandError::new("default_required"));
     }
     let mut total = 0usize;
     let mut assets = BTreeMap::new();
@@ -112,9 +164,9 @@ fn decode_profile_assets(
         let asset = decode_asset_data(payload)?;
         total = total
             .checked_add(asset.bytes.len())
-            .ok_or("Pet assets exceed 25 MiB")?;
+            .ok_or_else(|| PetCommandError::new("profile_too_large"))?;
         if total > MAX_PROFILE_BYTES {
-            return Err("Pet assets exceed 25 MiB".into());
+            return Err(PetCommandError::new("profile_too_large"));
         }
         assets.insert(*slot, asset);
     }
@@ -124,16 +176,16 @@ fn decode_profile_assets(
     Ok(assets)
 }
 
-fn decode_png_data_url(data_url: &str) -> Result<Vec<u8>, String> {
+fn decode_png_data_url(data_url: &str) -> Result<Vec<u8>, PetCommandError> {
     let encoded = data_url
         .strip_prefix(PNG_DATA_URL_PREFIX)
-        .ok_or("Expected a PNG preview")?;
+        .ok_or_else(|| PetCommandError::new("mime_mismatch"))?;
     if encoded.len() > 14 * 1024 * 1024 {
-        return Err("PNG preview is too large".into());
+        return Err(PetCommandError::new("too_large"));
     }
     STANDARD
         .decode(encoded)
-        .map_err(|_| "Invalid PNG preview data".into())
+        .map_err(|_| PetCommandError::new("invalid_preview"))
 }
 
 #[derive(Serialize)]
@@ -175,21 +227,21 @@ fn active_payload(active: ActivePet) -> ActivePetPayload {
 pub async fn prepare_pet_preview(
     input: Vec<u8>,
     mode: PetImageMode,
-) -> Result<PreparedAssetPayload, String> {
+) -> Result<PreparedAssetPayload, PetCommandError> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (input, mode);
-        return Err("Photo import is available on macOS".into());
+        return Err(PetCommandError::new("unsupported_platform"));
     }
     #[cfg(target_os = "macos")]
     {
         tauri::async_runtime::spawn_blocking(move || {
             prepare_pet_asset(&input, mode)
                 .map(|asset| asset_payload(&asset))
-                .map_err(|error| error.to_string())
+                .map_err(PetCommandError::from)
         })
         .await
-        .map_err(|error| format!("Image processing failed: {error}"))?
+        .map_err(|error| PetCommandError::internal(error.to_string()))?
     }
 }
 
@@ -202,21 +254,19 @@ pub fn save_pet_profile(
     scale: f32,
     offset_x: i16,
     offset_y: i16,
-) -> Result<PetManifest, String> {
+) -> Result<PetManifest, PetCommandError> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (app, store, name, assets, scale, offset_x, offset_y);
-        return Err("Photo import is available on macOS".into());
+        return Err(PetCommandError::new("unsupported_platform"));
     }
     #[cfg(target_os = "macos")]
     {
         let decoded = decode_profile_assets(&assets)?;
         let manifest = store
             .save_profile(&name, &decoded, scale, offset_x, offset_y)
-            .map_err(|error| error.to_string())?;
-        store
-            .select(&manifest.id)
-            .map_err(|error| error.to_string())?;
+            .map_err(PetCommandError::from)?;
+        store.select(&manifest.id).map_err(PetCommandError::from)?;
         let _ = app.emit("pet-changed", ());
         Ok(manifest)
     }
@@ -231,34 +281,36 @@ pub fn save_photo_pet(
     scale: f32,
     offset_x: i16,
     offset_y: i16,
-) -> Result<PetManifest, String> {
+) -> Result<PetManifest, PetCommandError> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (app, store, name, png_data_url, scale, offset_x, offset_y);
-        return Err("Photo import is available on macOS".into());
+        return Err(PetCommandError::new("unsupported_platform"));
     }
     #[cfg(target_os = "macos")]
     {
         let png = decode_png_data_url(&png_data_url)?;
         let manifest = store
             .save(&name, &png, scale, offset_x, offset_y)
-            .map_err(|error| error.to_string())?;
-        store
-            .select(&manifest.id)
-            .map_err(|error| error.to_string())?;
+            .map_err(PetCommandError::from)?;
+        store.select(&manifest.id).map_err(PetCommandError::from)?;
         let _ = app.emit("pet-changed", ());
         Ok(manifest)
     }
 }
 
 #[tauri::command]
-pub fn list_photo_pets(store: State<'_, PetStore>) -> Result<Vec<PetManifest>, String> {
-    store.list().map_err(|error| error.to_string())
+pub fn list_photo_pets(store: State<'_, PetStore>) -> Result<Vec<PetManifest>, PetCommandError> {
+    store.list().map_err(PetCommandError::from)
 }
 
 #[tauri::command]
-pub fn select_pet(app: AppHandle, store: State<'_, PetStore>, id: String) -> Result<(), String> {
-    store.select(&id).map_err(|error| error.to_string())?;
+pub fn select_pet(
+    app: AppHandle,
+    store: State<'_, PetStore>,
+    id: String,
+) -> Result<(), PetCommandError> {
+    store.select(&id).map_err(PetCommandError::from)?;
     let _ = app.emit("pet-changed", ());
     Ok(())
 }
@@ -268,8 +320,8 @@ pub fn delete_photo_pet(
     app: AppHandle,
     store: State<'_, PetStore>,
     id: String,
-) -> Result<(), String> {
-    store.delete(&id).map_err(|error| error.to_string())?;
+) -> Result<(), PetCommandError> {
+    store.delete(&id).map_err(PetCommandError::from)?;
     let _ = app.emit("pet-changed", ());
     Ok(())
 }
@@ -284,6 +336,33 @@ mod tests {
     use super::*;
     use crate::pet_image::{PetAsset, PetAssetKind};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn serializes_known_pet_error_codes() {
+        let gif = PetCommandError::from(crate::pet_image::PetImageError::InvalidAnimation);
+        assert_eq!(
+            serde_json::to_value(gif).unwrap(),
+            serde_json::json!({"code":"invalid_animation","detail":null})
+        );
+        let transform = PetCommandError::from(crate::pet_store::PetStoreError::InvalidTransform);
+        assert_eq!(
+            serde_json::to_value(transform).unwrap()["code"],
+            "invalid_transform"
+        );
+        let missing = PetCommandError::from(crate::pet_store::PetStoreError::NotFound);
+        assert_eq!(serde_json::to_value(missing).unwrap()["code"], "not_found");
+    }
+
+    #[test]
+    fn retains_unknown_io_detail() {
+        let error = PetCommandError::from(crate::pet_store::PetStoreError::Io(
+            "permission denied".into(),
+        ));
+        assert_eq!(
+            serde_json::to_value(error).unwrap(),
+            serde_json::json!({"code":"internal_error","detail":"permission denied"})
+        );
+    }
 
     #[test]
     fn commands_reject_non_png_data_urls() {
@@ -348,9 +427,7 @@ mod tests {
             (PetSlot::Working, large.clone()),
             (PetSlot::Waiting, large),
         ]);
-        assert!(decode_profile_assets(&over_budget)
-            .unwrap_err()
-            .contains("25 MiB"));
+        assert!(decode_profile_assets(&over_budget).unwrap_err().code == "profile_too_large");
     }
 
     #[test]
