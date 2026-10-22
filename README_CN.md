@@ -71,7 +71,7 @@ Agent 事件 → 钩子脚本 → ~/.code-light/sessions/*.json → 托盘图标
 
 ### 在 Mac 上下载
 
-从[最新发布页](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest)下载 Apple Silicon 版 DMG，然后将 **Vibe Coding Light.app** 拖入“应用程序”。Intel Mac 可从源码构建。安装包尚未签名，macOS 可能需要按下文操作后才能打开。
+从[最新发布页](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest)下载 Apple Silicon 版 DMG，然后将 **Vibe Coding Light.app** 拖入“应用程序”。Intel Mac 可从源码构建。安装包使用 ad-hoc 签名，尚未通过 Apple Developer ID 签名或公证；首次打开可能需要在“系统设置 → 隐私与安全性”点击“仍要打开”。
 
 更名后继续使用原有 `com.cuihuapeng.code-light` 应用标识和 `~/.code-light` 钩子数据目录，便于保留已有本地设置。
 
@@ -111,13 +111,13 @@ pnpm tauri build
 
 ### macOS 提示"已损坏"或"无法打开"
 
-从源码构建或下载未签名版本时，macOS 可能会阻止打开。解决方法：
+先从发布页重新下载，并对照同页的 `SHA256SUMS.txt` 核对 DMG 摘要。确认文件完整且来源可信后，将应用拖入“应用程序”，尝试在“系统设置 → 隐私与安全性”点击“仍要打开”。如果仍提示“已损坏”，可在终端只移除这个应用的隔离属性：
 
 ```bash
 xattr -cr "/Applications/Vibe Coding Light.app"
 ```
 
-然后**右键点击**应用，选择**打开** → 再次点击**打开**即可。只需操作一次。
+然后重新打开应用。不要对来源或校验结果不明的文件执行此命令。
 
 ### 多会话支持
 

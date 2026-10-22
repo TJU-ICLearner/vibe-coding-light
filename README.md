@@ -71,7 +71,7 @@ Zero network ports, zero APIs, zero configuration — just files on disk.
 
 ### Download for Mac
 
-Download the Apple Silicon DMG from the [latest release](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest), then drag **Vibe Coding Light.app** into Applications. Intel Mac users can build from source. The build is unsigned, so macOS may require the extra opening step below.
+Download the Apple Silicon DMG from the [latest release](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest), then drag **Vibe Coding Light.app** into Applications. Intel Mac users can build from source. The build is ad-hoc signed but has no Apple Developer ID signature or notarization; first launch may require **Open Anyway** in System Settings → Privacy & Security.
 
 The app keeps the existing `com.cuihuapeng.code-light` bundle identifier and `~/.code-light` hook data directory so previous local settings remain available after the rename.
 
@@ -111,13 +111,13 @@ That's it. On macOS the app runs as a pure menu bar accessory with no dock icon.
 
 ### macOS: "App is damaged" or "cannot be opened" error
 
-If you build from source or download an unsigned build, macOS may block the app. To fix this:
+Download the DMG again and compare its digest with `SHA256SUMS.txt` on the release page. After confirming its integrity and source, drag the app into Applications and try **Open Anyway** in System Settings → Privacy & Security. If macOS still reports it as damaged, remove quarantine only from this app:
 
 ```bash
 xattr -cr "/Applications/Vibe Coding Light.app"
 ```
 
-Then open it by **right-clicking** the app and selecting **Open** → **Open** again in the dialog. You only need to do this once.
+Then reopen the app. Do not run this command on files whose source or checksum you cannot verify.
 
 ### Multi-session support
 
