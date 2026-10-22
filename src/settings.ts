@@ -4,7 +4,7 @@ import { AssetDraft, validatePetFile } from "./pet/asset_draft";
 import { asPetError, formatPetError, t } from "./i18n";
 import type { Locale, PetError, UiKey } from "./i18n";
 import type { DraftMode } from "./pet/asset_draft";
-import type { ActivePet, AgentVisualState, ImportCapabilities, PetImageMode, PetManifest, PetSlot, PreparedAssetPayload } from "./pet/types";
+import type { ActivePet, ImportCapabilities, PetImageMode, PetManifest, PetSlot, PreparedAssetPayload } from "./pet/types";
 import "./settings.css";
 export { validatePetFile } from "./pet/asset_draft";
 
@@ -181,9 +181,6 @@ const api: SettingsApi = {
   active: () => invoke("get_active_pet"),
 };
 
-const stateKeys: Record<AgentVisualState, UiKey> = {
-  idle: "state_default", unknown: "state_unknown", working: "state_working", waiting: "state_waiting", error: "state_error", completed: "state_completed",
-};
 const slotKeys: Record<PetSlot, UiKey> = {
   default: "state_default", working: "state_working", waiting: "state_waiting", error: "state_error", completed: "state_completed",
 };
@@ -192,50 +189,56 @@ export function mountSettings(): void {
   const root = document.getElementById("settings-app");
   if (!root) return;
   const controller = new SettingsController(api);
-  const styleInput = document.querySelector<HTMLSelectElement>("#pet-style");
-  const stateAssets = document.querySelector<HTMLElement>("#state-assets");
-  const modeHint = document.querySelector<HTMLElement>("#mode-hint");
-  const savedWarning = document.querySelector<HTMLElement>("#saved-warning");
-  const fileInput = document.querySelector<HTMLInputElement>("#photo-file")!;
-  const modeInput = document.querySelector<HTMLSelectElement>("#photo-mode")!;
-  const original = document.querySelector<HTMLImageElement>("#original-preview")!;
-  const processed = document.querySelector<HTMLImageElement>("#processed-preview")!;
-  const processedFrame = document.querySelector<HTMLElement>("#processed-frame")!;
-  const saveButton = document.querySelector<HTMLButtonElement>("#save-pet")!;
-  const nameInput = document.querySelector<HTMLInputElement>("#pet-name")!;
-  const scaleInput = document.querySelector<HTMLInputElement>("#pet-scale")!;
-  const xInput = document.querySelector<HTMLInputElement>("#pet-offset-x")!;
-  const yInput = document.querySelector<HTMLInputElement>("#pet-offset-y")!;
-  const list = document.querySelector<HTMLElement>("#saved-pets")!;
-  const status = document.querySelector<HTMLElement>("#status")!;
-  const stateButtons = document.querySelector<HTMLElement>("#state-buttons")!;
+  const styleInput = root.querySelector<HTMLSelectElement>("#pet-style")!;
+  const tabs = root.querySelector<HTMLElement>("#slot-tabs")!;
+  const waitingHelp = root.querySelector<HTMLElement>("#waiting-help")!;
+  const modeHint = root.querySelector<HTMLElement>("#mode-hint")!;
+  const slotTitle = root.querySelector<HTMLElement>("#slot-editor-title")!;
+  const slotCompletion = root.querySelector<HTMLElement>("#slot-completion")!;
+  const slotFileLabel = root.querySelector<HTMLElement>("#slot-file-label")!;
+  const slotFileName = root.querySelector<HTMLElement>("#slot-file-name")!;
+  const slotStatus = root.querySelector<HTMLElement>("#slot-status")!;
+  const slotClear = root.querySelector<HTMLButtonElement>("#slot-clear")!;
+  const savedWarning = root.querySelector<HTMLElement>("#saved-warning")!;
+  const fileInput = root.querySelector<HTMLInputElement>("#photo-file")!;
+  const modeInput = root.querySelector<HTMLSelectElement>("#photo-mode")!;
+  const original = root.querySelector<HTMLImageElement>("#original-preview")!;
+  const processed = root.querySelector<HTMLImageElement>("#processed-preview")!;
+  const processedFrame = root.querySelector<HTMLElement>("#processed-frame")!;
+  const saveButton = root.querySelector<HTMLButtonElement>("#save-pet")!;
+  const nameInput = root.querySelector<HTMLInputElement>("#pet-name")!;
+  const scaleInput = root.querySelector<HTMLInputElement>("#pet-scale")!;
+  const xInput = root.querySelector<HTMLInputElement>("#pet-offset-x")!;
+  const yInput = root.querySelector<HTMLInputElement>("#pet-offset-y")!;
+  const list = root.querySelector<HTMLElement>("#saved-pets")!;
+  const status = root.querySelector<HTMLElement>("#status")!;
+  const slots: PetSlot[] = ["default", "working", "waiting", "error", "completed"];
   const originalUrls = new Map<PetSlot, string>();
-  const slotControls = new Map<PetSlot, { card: HTMLElement; file: HTMLInputElement; mode: HTMLSelectElement; original: HTMLImageElement; preview: HTMLImageElement; status: HTMLElement }>();
-  const stateSlots: PetSlot[] = ["working", "waiting", "error", "completed"];
+  const files = new Map<PetSlot, File>();
+  const modes = new Map<PetSlot, PetImageMode>();
+  let selectedSlot: PetSlot = "default";
+  let lastStateSlot: PetSlot = "default";
   let capabilities: ImportCapabilities = { automatic: false, transparent_png: false, transparent_gif: false };
-  let selectedState: AgentVisualState = "idle";
+  let capabilitiesLoaded = false;
   let suggestedName = "";
   let locale: Locale = "zh-CN";
   let localeEventSeen = false;
-  let capabilitiesLoaded = false;
 
   const renderStaticCopy = () => {
     document.documentElement.lang = locale;
     document.title = `${t(locale, "settings_title")} · Vibe Coding Light`;
     root.querySelectorAll<HTMLElement>("[data-i18n]").forEach((element) => {
-      const key = element.dataset.i18n as UiKey;
-      element.textContent = t(locale, key);
+      element.textContent = t(locale, element.dataset.i18n as UiKey);
     });
-    root.querySelectorAll<HTMLElement>("[data-i18n-alt]").forEach((element) => element.setAttribute("alt", t(locale, element.dataset.i18nAlt as UiKey)));
-    root.querySelectorAll<HTMLInputElement>("[data-i18n-placeholder]").forEach((element) => element.placeholder = t(locale, element.dataset.i18nPlaceholder as UiKey));
-  };
-
-  const setOriginal = (slot: PetSlot, file: File, image: HTMLImageElement) => {
-    const previous = originalUrls.get(slot);
-    if (previous) URL.revokeObjectURL(previous);
-    const url = URL.createObjectURL(file);
-    originalUrls.set(slot, url);
-    image.src = url;
+    root.querySelectorAll<HTMLElement>("[data-i18n-alt]").forEach((element) => {
+      element.setAttribute("alt", t(locale, element.dataset.i18nAlt as UiKey));
+    });
+    root.querySelectorAll<HTMLElement>("[data-i18n-aria-label]").forEach((element) => {
+      element.setAttribute("aria-label", t(locale, element.dataset.i18nAriaLabel as UiKey));
+    });
+    root.querySelectorAll<HTMLInputElement>("[data-i18n-placeholder]").forEach((element) => {
+      element.placeholder = t(locale, element.dataset.i18nPlaceholder as UiKey);
+    });
   };
 
   const modesFor = (file?: File): PetImageMode[] => {
@@ -243,21 +246,26 @@ export function mountSettings(): void {
     return availableModes(capabilities).filter((mode) => mode !== "keep_animation");
   };
 
-  const configureModes = (select: HTMLSelectElement, file?: File) => {
-    const previous = select.value;
-    select.replaceChildren();
-    for (const mode of modesFor(file)) {
-      const label = t(locale, mode);
-      select.add(new Option(label, mode));
-    }
-    if (modesFor(file).includes(previous as PetImageMode)) select.value = previous;
-    select.disabled = select.options.length <= 1;
+  const configureModes = () => {
+    const available = modesFor(files.get(selectedSlot));
+    const remembered = modes.get(selectedSlot);
+    modeInput.replaceChildren();
+    for (const mode of available) modeInput.add(new Option(t(locale, mode), mode));
+    if (remembered && available.includes(remembered)) modeInput.value = remembered;
+    else if (available.length) modes.set(selectedSlot, available[0]);
+    modeInput.disabled = available.length <= 1;
   };
 
-  const chosenAsset = () => {
-    const slot: PetSlot = controller.mode === "states" && selectedState !== "idle" && selectedState !== "unknown"
-      ? selectedState : "default";
-    return controller.draft.get(slot)?.asset ?? controller.draft.get("default")?.asset ?? null;
+  const selectedAsset = () =>
+    controller.draft.get(selectedSlot)?.asset ?? controller.draft.get("default")?.asset ?? null;
+
+  const selectSlot = (slot: PetSlot, focus = false) => {
+    selectedSlot = slot;
+    if (controller.mode === "states") lastStateSlot = slot;
+    fileInput.value = "";
+    configureModes();
+    render();
+    if (focus) tabs.querySelector<HTMLButtonElement>(`[data-slot="${slot}"]`)?.focus();
   };
 
   const updateTransform = () => {
@@ -279,49 +287,54 @@ export function mountSettings(): void {
 
   const render = () => {
     renderStaticCopy();
-    const asset = chosenAsset();
+    tabs.hidden = controller.mode !== "states";
+    waitingHelp.hidden = controller.mode !== "states";
+    modeHint.textContent = t(locale, controller.mode === "single" ? "single_hint" : "states_hint");
+    const selectedEntry = controller.draft.get(selectedSlot);
+    const asset = selectedAsset();
+    const originalUrl = originalUrls.get(selectedSlot) ?? originalUrls.get("default");
+    if (originalUrl) original.src = originalUrl;
+    else original.removeAttribute("src");
     if (asset) {
       if (processed.getAttribute("src") !== asset.data_url) processed.src = asset.data_url;
-    } else {
-      processed.removeAttribute("src");
-    }
+    } else processed.removeAttribute("src");
     processed.style.visibility = asset ? "visible" : "hidden";
-    processed.className = asset?.kind === "gif" ? "animated" : `motion-${selectedState}`;
-    const slotError = controller.draft.blockingError(controller.mode);
+    processed.className = asset?.kind === "gif" ? "animated" : `motion-${selectedSlot === "default" ? "idle" : selectedSlot}`;
+    slotTitle.textContent = t(locale, slotKeys[selectedSlot]);
+    slotFileLabel.textContent = t(locale, selectedSlot === "default" ? "default_asset" : "upload_image");
+    slotFileName.textContent = files.has(selectedSlot) ? t(locale, "file_selected", { name: files.get(selectedSlot)!.name }) : "";
+    slotCompletion.textContent = t(locale, selectedEntry?.asset ? "slot_set" : selectedSlot === "default" ? "slot_required" : "slot_fallback");
+    slotCompletion.classList.toggle("complete", Boolean(selectedEntry?.asset));
+    slotStatus.textContent = selectedEntry?.error ? formatPetError(locale, selectedEntry.error)
+      : selectedEntry?.busy ? t(locale, "processing_short")
+      : selectedEntry?.asset ? t(locale, "preview_ready_short")
+      : selectedSlot === "default" ? t(locale, "select_default") : t(locale, "fallback_default");
+    slotStatus.classList.toggle("error", Boolean(selectedEntry?.error));
+    slotClear.hidden = selectedSlot === "default" || !files.has(selectedSlot);
+    slotClear.textContent = t(locale, "remove_slot");
+    tabs.querySelectorAll<HTMLButtonElement>("[role=tab]").forEach((tab) => {
+      const slot = tab.dataset.slot as PetSlot;
+      const active = slot === selectedSlot;
+      tab.setAttribute("aria-selected", String(active));
+      tab.tabIndex = active ? 0 : -1;
+      tab.classList.toggle("selected", active);
+      tab.replaceChildren();
+      const label = document.createElement("span"); label.className = "tab-label"; label.textContent = t(locale, slotKeys[slot]);
+      const detail = document.createElement("span"); detail.className = "tab-detail";
+      detail.textContent = t(locale, controller.draft.get(slot)?.asset ? "slot_set" : slot === "default" ? "slot_required" : "slot_fallback");
+      tab.append(label, detail);
+    });
+    const blocking = controller.draft.blockingError(controller.mode);
     status.textContent = controller.error ? formatPetError(locale, controller.error)
-      : slotError ? formatPetError(locale, slotError)
+      : blocking ? formatPetError(locale, blocking)
       : capabilitiesLoaded && fileInput.disabled ? t(locale, "mac_only")
       : controller.busy || controller.draft.isBusy(controller.mode) ? t(locale, "processing")
       : controller.feedback ? t(locale, controller.feedback)
       : asset ? t(locale, "preview_ready") : t(locale, "select_default");
-    status.classList.toggle("error", Boolean(controller.error || slotError));
-    if (stateAssets) stateAssets.hidden = controller.mode !== "states";
-    if (modeHint) modeHint.textContent = t(locale, controller.mode === "single" ? "single_hint" : "states_hint");
-    for (const slot of stateSlots) {
-      const controls = slotControls.get(slot);
-      if (!controls) continue;
-      const slotLabel = t(locale, slotKeys[slot]);
-      controls.card.querySelector("h3")!.textContent = `${slotLabel} · ${t(locale, "optional_asset")}`;
-      controls.card.querySelector("label")!.firstChild!.textContent = t(locale, "upload_image");
-      controls.card.querySelectorAll("label")[1].firstChild!.textContent = t(locale, "processing_mode");
-      controls.file.setAttribute("aria-label", `${slotLabel} · ${t(locale, "optional_asset")}`);
-      controls.mode.setAttribute("aria-label", `${slotLabel} · ${t(locale, "processing_mode")}`);
-      controls.original.alt = `${slotLabel} · ${t(locale, "original_alt")}`;
-      controls.preview.alt = `${slotLabel} · ${t(locale, "processed_alt")}`;
-      controls.card.querySelector("button")!.textContent = t(locale, "remove_slot");
-      const entry = controller.draft.get(slot);
-      if (entry?.asset) {
-        if (controls.preview.getAttribute("src") !== entry.asset.data_url) controls.preview.src = entry.asset.data_url;
-      } else controls.preview.removeAttribute("src");
-      controls.status.textContent = entry?.error ? formatPetError(locale, entry.error)
-        : entry?.busy ? t(locale, "processing_short") : entry?.asset ? t(locale, "preview_ready_short") : t(locale, "fallback_default");
-      controls.status.classList.toggle("error", Boolean(entry?.error));
-    }
-    if (savedWarning) {
-      savedWarning.hidden = controller.invalidSlots.length === 0;
-      savedWarning.textContent = controller.invalidSlots.length
-        ? t(locale, "invalid_saved_slots", { slots: controller.invalidSlots.map((slot) => t(locale, slotKeys[slot])).join(locale === "en" ? ", " : "、") }) : "";
-    }
+    status.classList.toggle("error", Boolean(controller.error || blocking));
+    savedWarning.hidden = controller.invalidSlots.length === 0;
+    savedWarning.textContent = controller.invalidSlots.length
+      ? t(locale, "invalid_saved_slots", { slots: controller.invalidSlots.map((slot) => t(locale, slotKeys[slot])).join(locale === "en" ? ", " : "、") }) : "";
     updateTransform();
     list.replaceChildren();
     const builtin = document.createElement("button");
@@ -340,82 +353,82 @@ export function mountSettings(): void {
       remove.onclick = () => { void controller.delete(pet.id).catch(() => {}); };
       row.append(choose, remove); list.append(row);
     }
-    stateButtons.querySelectorAll<HTMLButtonElement>("button[data-state]").forEach((button) => {
-      button.textContent = t(locale, stateKeys[button.dataset.state as AgentVisualState]);
-    });
   };
+
+  for (const slot of slots) {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.role = "tab";
+    tab.dataset.slot = slot;
+    tab.onclick = () => selectSlot(slot);
+    tab.onkeydown = (event) => {
+      let next = slots.indexOf(slot);
+      if (event.key === "ArrowRight") next = (next + 1) % slots.length;
+      else if (event.key === "ArrowLeft") next = (next + slots.length - 1) % slots.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = slots.length - 1;
+      else return;
+      event.preventDefault();
+      selectSlot(slots[next], true);
+    };
+    tabs.append(tab);
+  }
   controller.onChange(render);
-  const chooseFile = async (slot: PetSlot, input: HTMLInputElement, mode: HTMLSelectElement, image: HTMLImageElement) => {
-    const file = input.files?.[0]; if (!file) return;
-    configureModes(mode, file);
-    const selectedMode = mode.value as PetImageMode;
-    if (!selectedMode) {
-      status.textContent = t(locale, "mode_unsupported");
-      return;
-    }
-    if (!validatePetFile(file, selectedMode)) setOriginal(slot, file, image);
-    if (slot === "default") {
+  styleInput.onchange = () => {
+    const nextMode = styleInput.value as DraftMode;
+    controller.setMode(nextMode);
+    selectSlot(nextMode === "single" ? "default" : lastStateSlot);
+  };
+  fileInput.onchange = () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    files.set(selectedSlot, file);
+    configureModes();
+    const mode = modeInput.value as PetImageMode;
+    if (!mode) { status.textContent = t(locale, "mode_unsupported"); return; }
+    modes.set(selectedSlot, mode);
+    const previous = originalUrls.get(selectedSlot);
+    if (previous && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(previous);
+    if (!validatePetFile(file, mode) && typeof URL.createObjectURL === "function") {
+      originalUrls.set(selectedSlot, URL.createObjectURL(file));
+    } else originalUrls.delete(selectedSlot);
+    if (selectedSlot === "default") {
       const nextName = file.name.replace(/\.[^.]+$/, "");
       if (!nameInput.value.trim() || nameInput.value === suggestedName) nameInput.value = nextName;
       suggestedName = nextName;
     }
-    await controller.loadSlot(slot, file, selectedMode);
+    void controller.loadSlot(selectedSlot, file, mode);
   };
-  fileInput.onchange = () => { void chooseFile("default", fileInput, modeInput, original); };
-  modeInput.onchange = () => { if (fileInput.files?.length) void chooseFile("default", fileInput, modeInput, original); };
-  if (styleInput) styleInput.onchange = () => controller.setMode(styleInput.value as DraftMode);
-
-  if (stateAssets) for (const slot of stateSlots) {
-    const card = document.createElement("div"); card.className = "slot-card"; card.dataset.slot = slot;
-    const title = document.createElement("h3"); title.textContent = `${t(locale, slotKeys[slot])} · ${t(locale, "optional_asset")}`;
-    const label = document.createElement("label"); label.textContent = t(locale, "upload_image");
-    const input = document.createElement("input"); input.type = "file"; input.accept = "image/png,image/jpeg,image/gif";
-    input.setAttribute("aria-label", `${t(locale, slotKeys[slot])} · ${t(locale, "optional_asset")}`); label.append(input);
-    const modeLabel = document.createElement("label"); modeLabel.textContent = t(locale, "processing_mode");
-    const mode = document.createElement("select"); mode.setAttribute("aria-label", `${t(locale, slotKeys[slot])} · ${t(locale, "processing_mode")}`); modeLabel.append(mode);
-    const previewGrid = document.createElement("div"); previewGrid.className = "slot-preview-grid";
-    const originalImage = document.createElement("img"); originalImage.alt = `${t(locale, slotKeys[slot])} · ${t(locale, "original_alt")}`;
-    const previewImage = document.createElement("img"); previewImage.alt = `${t(locale, slotKeys[slot])} · ${t(locale, "processed_alt")}`;
-    previewGrid.append(originalImage, previewImage);
-    const message = document.createElement("p"); message.className = "slot-status"; message.setAttribute("role", "status");
-    const clear = document.createElement("button"); clear.type = "button"; clear.textContent = t(locale, "remove_slot");
-    clear.onclick = () => {
-      controller.draft.clear(slot); input.value = "";
-      const url = originalUrls.get(slot); if (url) URL.revokeObjectURL(url);
-      originalUrls.delete(slot); originalImage.removeAttribute("src");
-      configureModes(mode);
-    };
-    input.onchange = () => { void chooseFile(slot, input, mode, originalImage); };
-    mode.onchange = () => { if (input.files?.length) void chooseFile(slot, input, mode, originalImage); };
-    card.append(title, label, modeLabel, previewGrid, message, clear); stateAssets.append(card);
-    slotControls.set(slot, { card, file: input, mode, original: originalImage, preview: previewImage, status: message });
-  }
+  modeInput.onchange = () => {
+    const file = files.get(selectedSlot);
+    const mode = modeInput.value as PetImageMode;
+    modes.set(selectedSlot, mode);
+    if (file) void controller.loadSlot(selectedSlot, file, mode);
+  };
+  slotClear.onclick = () => {
+    const slot = selectedSlot;
+    controller.draft.clear(slot);
+    files.delete(slot);
+    const url = originalUrls.get(slot);
+    if (url && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(url);
+    originalUrls.delete(slot);
+    fileInput.value = "";
+    modes.delete(slot);
+    configureModes();
+    render();
+  };
   for (const input of [scaleInput, xInput, yInput]) input.addEventListener("input", render);
   saveButton.onclick = () => {
     void controller.save(nameInput.value, Number(scaleInput.value), Number(xInput.value), Number(yInput.value)).catch(() => {});
   };
-  for (const state of Object.keys(stateKeys) as AgentVisualState[]) {
-    if (state === "unknown") continue;
-    const button = document.createElement("button"); button.type = "button"; button.dataset.state = state; button.textContent = t(locale, stateKeys[state]);
-    button.onclick = () => {
-      selectedState = state;
-      stateButtons.querySelectorAll("button").forEach((item) => item.classList.remove("selected"));
-      button.classList.add("selected");
-      render();
-    };
-    stateButtons.append(button);
-  }
-  stateButtons.querySelector("button")?.classList.add("selected");
   processed.addEventListener("animationend", (event) => {
     if (event.animationName === "pet-photo-completed" && !processed.classList.contains("animated")) processed.className = "motion-idle";
   });
-  invoke<ImportCapabilities>("get_pet_import_capabilities").then((result) => {
+  void invoke<ImportCapabilities>("get_pet_import_capabilities").then((result) => {
     capabilities = result;
     capabilitiesLoaded = true;
-    configureModes(modeInput, fileInput.files?.[0]);
-    for (const controls of slotControls.values()) configureModes(controls.mode, controls.file.files?.[0]);
+    configureModes();
     fileInput.disabled = availableModes(capabilities).length === 0;
-    for (const controls of slotControls.values()) controls.file.disabled = fileInput.disabled;
     render();
   }).catch((error) => { status.textContent = formatPetError(locale, error); });
   let unlisten: (() => void) | undefined;
@@ -423,18 +436,21 @@ export function mountSettings(): void {
     if (event.payload !== "zh-CN" && event.payload !== "en") return;
     localeEventSeen = true;
     locale = event.payload;
-    configureModes(modeInput, fileInput.files?.[0]);
-    for (const controls of slotControls.values()) configureModes(controls.mode, controls.file.files?.[0]);
+    configureModes();
+    root.classList.add("ready");
     render();
   }).then((stop) => { unlisten = stop; }).catch(() => {});
   void invoke<Locale>("get_app_locale").then((current) => {
     if (localeEventSeen || (current !== "zh-CN" && current !== "en")) return;
     locale = current;
-    configureModes(modeInput, fileInput.files?.[0]);
-    for (const controls of slotControls.values()) configureModes(controls.mode, controls.file.files?.[0]);
+    configureModes();
+    root.classList.add("ready");
     render();
-  }).catch(() => {});
-  window.addEventListener("beforeunload", () => { unlisten?.(); for (const url of originalUrls.values()) URL.revokeObjectURL(url); }, { once: true });
+  }).catch(() => { root.classList.add("ready"); });
+  window.addEventListener("beforeunload", () => {
+    unlisten?.();
+    for (const url of originalUrls.values()) if (typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(url);
+  }, { once: true });
   void controller.refresh().catch((error) => { status.textContent = formatPetError(locale, error); });
   render();
 }
