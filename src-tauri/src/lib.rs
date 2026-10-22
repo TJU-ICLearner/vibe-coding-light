@@ -1,6 +1,7 @@
 mod pet_commands;
 mod pet_image;
 mod pet_store;
+mod ui_locale;
 #[cfg(target_os = "macos")]
 mod pet_vision;
 
