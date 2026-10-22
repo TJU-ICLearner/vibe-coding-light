@@ -46,6 +46,7 @@ Vibe Coding Light now includes a pixel art desktop pet that reacts to your AI ag
 **Interface language:** Open the tray menu and choose **Language → English** or **Language → Chinese**. Menu items, status tooltip, settings title, and pet settings change immediately. Your choice is saved across launches; the first launch follows your Mac's preferred language (Chinese for a Chinese system language, English otherwise).
 
 The pet window is always on top and draggable, so you can position it anywhere on your screen.
+Choose **Pet the Pet** in the tray menu, or press **⌘B**, to see a hand gently pat the active pet twice. The action works with the built-in cat and custom pets.
 
 ### Create a custom pet (macOS)
 
@@ -53,9 +54,10 @@ The pet window is always on top and draggable, so you can position it anywhere o
    With the pet window focused, **⌘,** also opens this window.
 2. Choose **One image for every state** to use one asset, or **Different images for each state** to edit five clearly separated tabs: required Default / Rest plus optional Working, Waiting, Error, and Completed. The preview stays next to the editor on wide windows and above it on narrow windows. Missing state assets use the default. Switching modes keeps your draft; saving in single image mode stores only the default.
 3. Each slot accepts PNG, JPEG, or a transparent GIF (up to 10 MiB). Static images can be cut out locally with **Remove Background** on macOS 14+; transparent PNG and GIF work on macOS 12–13. GIFs retain their original animation and must already have a transparent background. Static images may be up to 4096 pixels per side; GIFs may be up to 1024 pixels per side and 120 frames.
-4. Preview each state, choose a name, size, and position, then click **Save and Use**. Previewing alone does not replace the active pet. You can select or delete saved pets and return to the built-in pixel cat in the same window.
+4. For each static image, choose its own motion: follow the agent state, still, sway, float, breathe, bounce, or wobble. GIFs keep their own animation and do not offer an extra motion effect. An empty state uses the default image and its motion.
+5. Preview each state, choose a name and size from **0.5 to 3**, then click **Save and Use**. The pet window grows with the image, and the preview shows its actual window dimensions. Previewing alone does not replace the active pet. You can select or delete saved pets and return to the built-in pixel cat in the same window.
 
-Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop settings are kept. Everything stays in Vibe Coding Light's local app data; source photos are not uploaded. Static pets use gentle state motion, while GIFs play their own frames. Existing single-image pets remain usable. Windows and Linux continue to use the built-in cat in this version.
+Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop settings are kept. Everything stays in Vibe Coding Light's local app data; source photos are not uploaded. Existing single-image pets remain usable, including their saved placement. New pets are centered; horizontal and vertical offset controls have been removed. Windows and Linux continue to use the built-in cat in this version.
 
 ## How It Works
 
