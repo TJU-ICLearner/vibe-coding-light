@@ -14,7 +14,15 @@ pub enum AppLocale {
 impl AppLocale {
     pub fn from_system_tag(tag: Option<&str>) -> Self {
         match tag {
-            Some(tag) if tag.split(['-', '_']).next().unwrap_or_default().eq_ignore_ascii_case("zh") => Self::ZhCn,
+            Some(tag)
+                if tag
+                    .split(['-', '_'])
+                    .next()
+                    .unwrap_or_default()
+                    .eq_ignore_ascii_case("zh") =>
+            {
+                Self::ZhCn
+            }
             _ => Self::En,
         }
     }
@@ -47,10 +55,13 @@ impl UiLocaleStore {
     pub fn set(&mut self, locale: AppLocale) -> Result<(), String> {
         let parent = self.path.parent().ok_or("Invalid preferences path")?;
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
-        serde_json::to_writer(&mut temp, &Preference { locale }).map_err(|error| error.to_string())?;
+        let mut temp =
+            tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+        serde_json::to_writer(&mut temp, &Preference { locale })
+            .map_err(|error| error.to_string())?;
         temp.flush().map_err(|error| error.to_string())?;
-        temp.persist(&self.path).map_err(|error| error.to_string())?;
+        temp.persist(&self.path)
+            .map_err(|error| error.to_string())?;
         self.locale = locale;
         Ok(())
     }
@@ -75,10 +86,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let corrupt = dir.path().join("corrupt.json");
         fs::write(&corrupt, b"{broken").unwrap();
-        assert_eq!(UiLocaleStore::load(corrupt, Some("zh-HK")).get(), AppLocale::ZhCn);
+        assert_eq!(
+            UiLocaleStore::load(corrupt, Some("zh-HK")).get(),
+            AppLocale::ZhCn
+        );
         let unreadable = dir.path().join("as-directory.json");
         fs::create_dir(&unreadable).unwrap();
-        assert_eq!(UiLocaleStore::load(unreadable, Some("en-US")).get(), AppLocale::En);
+        assert_eq!(
+            UiLocaleStore::load(unreadable, Some("en-US")).get(),
+            AppLocale::En
+        );
     }
 
     #[test]
@@ -88,7 +105,10 @@ mod tests {
         let mut store = UiLocaleStore::load(path.clone(), Some("zh-HK"));
         store.set(AppLocale::En).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "{\"locale\":\"en\"}");
-        assert_eq!(UiLocaleStore::load(path, Some("zh-HK")).get(), AppLocale::En);
+        assert_eq!(
+            UiLocaleStore::load(path, Some("zh-HK")).get(),
+            AppLocale::En
+        );
     }
 
     #[test]

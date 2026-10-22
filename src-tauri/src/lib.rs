@@ -1,9 +1,10 @@
 mod pet_commands;
 mod pet_image;
 mod pet_store;
-mod ui_locale;
 #[cfg(target_os = "macos")]
 mod pet_vision;
+mod ui_copy;
+mod ui_locale;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -13,13 +14,116 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{
     image::Image,
-    menu::{MenuBuilder, MenuItemBuilder},
+    menu::{
+        CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder, Submenu,
+        SubmenuBuilder,
+    },
     tray::TrayIconBuilder,
     Emitter, Manager,
 };
 #[cfg(target_os = "macos")]
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+struct TrayUi {
+    toggle_pet: MenuItem<tauri::Wry>,
+    whip: MenuItem<tauri::Wry>,
+    customize_pet: Option<MenuItem<tauri::Wry>>,
+    setup_claude: MenuItem<tauri::Wry>,
+    setup_codex: MenuItem<tauri::Wry>,
+    language: Submenu<tauri::Wry>,
+    chinese: CheckMenuItem<tauri::Wry>,
+    english: CheckMenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
+    pet_visible: bool,
+    claude_feedback: ui_copy::HookFeedback,
+    codex_feedback: ui_copy::HookFeedback,
+}
+
+fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
+    let Some(ui) = app.try_state::<Arc<Mutex<TrayUi>>>() else {
+        return;
+    };
+    let ui = ui.lock().unwrap();
+    let labels = ui_copy::menu_labels(
+        locale,
+        ui.pet_visible,
+        &ui.claude_feedback,
+        &ui.codex_feedback,
+    );
+    let _ = ui.toggle_pet.set_text(labels.toggle_pet);
+    let _ = ui.whip.set_text(labels.whip);
+    if let Some(item) = &ui.customize_pet {
+        let _ = item.set_text(labels.customize_pet);
+    }
+    let _ = ui.setup_claude.set_text(labels.claude_hooks);
+    let _ = ui.setup_codex.set_text(labels.codex_hooks);
+    let _ = ui.language.set_text(labels.language);
+    let _ = ui.chinese.set_text(labels.chinese);
+    let _ = ui.english.set_text(labels.english);
+    let _ = ui.chinese.set_checked(locale == ui_locale::AppLocale::ZhCn);
+    let _ = ui.english.set_checked(locale == ui_locale::AppLocale::En);
+    let _ = ui.quit.set_text(labels.quit);
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.set_title(ui_copy::settings_title(locale));
+    }
+    if let Some(state) = app.try_state::<Arc<Mutex<AppState>>>() {
+        let state = state.lock().unwrap();
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_tooltip(Some(&ui_copy::status_text(
+                locale,
+                state.state,
+                &state.message,
+                state.timestamp,
+                state.active_count,
+            )));
+        }
+    }
+}
+
+fn current_locale(app: &tauri::AppHandle) -> ui_locale::AppLocale {
+    app.state::<Arc<Mutex<ui_locale::UiLocaleStore>>>()
+        .lock()
+        .unwrap()
+        .get()
+}
+
+#[tauri::command]
+fn get_app_locale(app: tauri::AppHandle) -> ui_locale::AppLocale {
+    current_locale(&app)
+}
+
+fn set_app_locale_impl(
+    app: &tauri::AppHandle,
+    requested: ui_locale::AppLocale,
+) -> Result<ui_locale::AppLocale, String> {
+    let store = app.state::<Arc<Mutex<ui_locale::UiLocaleStore>>>();
+    let updated = {
+        let mut store = store.lock().unwrap();
+        change_locale(&mut store, requested, |_| {})?
+    };
+    refresh_tray_ui(app, updated);
+    let _ = app.emit("locale-changed", updated);
+    Ok(updated)
+}
+
+#[tauri::command]
+fn set_app_locale(
+    app: tauri::AppHandle,
+    locale: ui_locale::AppLocale,
+) -> Result<ui_locale::AppLocale, String> {
+    set_app_locale_impl(&app, locale)
+}
+
+fn change_locale(
+    store: &mut ui_locale::UiLocaleStore,
+    requested: ui_locale::AppLocale,
+    publish: impl FnOnce(ui_locale::AppLocale),
+) -> Result<ui_locale::AppLocale, String> {
+    store.set(requested)?;
+    publish(requested);
+    Ok(requested)
+}
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -186,43 +290,6 @@ fn read_all_sessions_in(dir: &Path, now: u64) -> (State, String, u64, usize) {
     (best_state, best_message, best_ts, active_count)
 }
 
-fn format_time(ts: u64) -> String {
-    if ts == 0 {
-        return String::new();
-    }
-    let delta = now_secs().saturating_sub(ts);
-    if delta < 60 {
-        format!("{}s ago", delta)
-    } else if delta < 3600 {
-        format!("{}m ago", delta / 60)
-    } else {
-        format!("{}h ago", delta / 3600)
-    }
-}
-
-fn build_status_text(state: State, message: &str, ts: u64, count: usize) -> String {
-    let label = match state {
-        State::Working => "Working",
-        State::Waiting => "Waiting for confirmation",
-        State::Error => "Error",
-        State::Completed => "Task completed",
-        State::Unknown => "Status unknown",
-        State::Idle => "Idle",
-    };
-    let mut parts = vec![format!("Vibe Coding Light: {}", label)];
-    if count > 1 {
-        parts.push(format!("({} sessions)", count));
-    }
-    if !message.is_empty() {
-        parts.push(message.to_string());
-    }
-    let time_str = format_time(ts);
-    if !time_str.is_empty() {
-        parts.push(time_str);
-    }
-    parts.join(" | ")
-}
-
 fn cleanup_completed_sessions() {
     let dir = sessions_dir();
     let Ok(entries) = fs::read_dir(&dir) else {
@@ -254,7 +321,11 @@ fn get_hooks_dir() -> PathBuf {
             let search_paths: &[&str] = if cfg!(target_os = "macos") {
                 &["../Resources/hooks", "../Resources/_up_/hooks"]
             } else if cfg!(target_os = "linux") {
-                &["../lib/vibe-coding-light/hooks", "../lib/code-light/hooks", "../resources/hooks"]
+                &[
+                    "../lib/vibe-coding-light/hooks",
+                    "../lib/code-light/hooks",
+                    "../resources/hooks",
+                ]
             } else {
                 &["../resources/hooks"]
             };
@@ -478,7 +549,7 @@ fn show_pet_settings(app: &tauri::AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|error| error.to_string())?;
     } else {
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-            .title("Customize Pet · Vibe Coding Light")
+            .title(ui_copy::settings_title(current_locale(app)))
             .inner_size(760.0, 760.0)
             .min_inner_size(620.0, 540.0)
             .build()
@@ -519,6 +590,8 @@ pub fn run() {
         .manage(app_state.clone())
         .invoke_handler(tauri::generate_handler![
             get_current_state,
+            get_app_locale,
+            set_app_locale,
             pet_commands::prepare_pet_preview,
             pet_commands::save_photo_pet,
             pet_commands::save_pet_profile,
@@ -531,19 +604,40 @@ pub fn run() {
         ])
         .setup(move |app| {
             let pet_data_dir = app.path().app_data_dir()?;
+            let preferences = pet_data_dir.join("preferences.json");
+            let system_tag = sys_locale::get_locale();
+            let locale_store = ui_locale::UiLocaleStore::load(preferences, system_tag.as_deref());
+            let locale = locale_store.get();
+            app.manage(Arc::new(Mutex::new(locale_store)));
             app.manage(pet_store::PetStore::new(pet_data_dir));
             let initial_icon = icons.lock().unwrap().get("idle").unwrap().clone();
-
-            let toggle_pet_item = MenuItemBuilder::with_id("toggle_pet", "Hide Pet").build(app)?;
-            let whip_item = MenuItemBuilder::with_id("whip", "Whip  \u{2318}B").build(app)?;
+            let labels = ui_copy::menu_labels(
+                locale,
+                true,
+                &ui_copy::HookFeedback::Initial,
+                &ui_copy::HookFeedback::Initial,
+            );
+            let toggle_pet_item =
+                MenuItemBuilder::with_id("toggle_pet", &labels.toggle_pet).build(app)?;
+            let whip_item = MenuItemBuilder::with_id("whip", &labels.whip).build(app)?;
             #[cfg(target_os = "macos")]
             let customize_item =
-                MenuItemBuilder::with_id("customize_pet", "Customize Pet").build(app)?;
+                MenuItemBuilder::with_id("customize_pet", &labels.customize_pet).build(app)?;
             let setup_claude_item =
-                MenuItemBuilder::with_id("setup_claude", "Setup Claude Hooks").build(app)?;
+                MenuItemBuilder::with_id("setup_claude", &labels.setup_claude).build(app)?;
             let setup_codex_item =
-                MenuItemBuilder::with_id("setup_codex", "Setup Codex Hooks").build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "Quit Vibe Coding Light").build(app)?;
+                MenuItemBuilder::with_id("setup_codex", &labels.setup_codex).build(app)?;
+            let chinese_item = CheckMenuItemBuilder::with_id("language_zh", &labels.chinese)
+                .checked(locale == ui_locale::AppLocale::ZhCn)
+                .build(app)?;
+            let english_item = CheckMenuItemBuilder::with_id("language_en", &labels.english)
+                .checked(locale == ui_locale::AppLocale::En)
+                .build(app)?;
+            let language_menu = SubmenuBuilder::with_id(app, "language", &labels.language)
+                .item(&chinese_item)
+                .item(&english_item)
+                .build()?;
+            let quit_item = MenuItemBuilder::with_id("quit", &labels.quit).build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&toggle_pet_item)
                 .item(&whip_item);
@@ -554,31 +648,56 @@ pub fn run() {
                 .item(&setup_claude_item)
                 .item(&setup_codex_item)
                 .separator()
+                .item(&language_menu)
+                .separator()
                 .item(&quit_item)
                 .build()?;
 
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            let toggle_item = toggle_pet_item.clone();
-            let claude_setup_item = setup_claude_item.clone();
-            let codex_setup_item = setup_codex_item.clone();
+            app.manage(Arc::new(Mutex::new(TrayUi {
+                toggle_pet: toggle_pet_item,
+                whip: whip_item,
+                customize_pet: {
+                    #[cfg(target_os = "macos")]
+                    {
+                        Some(customize_item)
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        None
+                    }
+                },
+                setup_claude: setup_claude_item,
+                setup_codex: setup_codex_item,
+                language: language_menu,
+                chinese: chinese_item,
+                english: english_item,
+                quit: quit_item,
+                pet_visible: true,
+                claude_feedback: ui_copy::HookFeedback::Initial,
+                codex_feedback: ui_copy::HookFeedback::Initial,
+            })));
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(initial_icon)
                 .menu(&menu)
-                .tooltip("Vibe Coding Light: Idle")
+                .tooltip(ui_copy::status_text(locale, State::Idle, "", 0, 0))
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "toggle_pet" => {
                         if let Some(window) = app.get_webview_window("pet") {
                             if let Ok(visible) = window.is_visible() {
                                 if visible {
                                     let _ = window.hide();
-                                    let _ = toggle_item.set_text("Show Pet");
                                 } else {
                                     let _ = window.show();
                                     let _ = window.set_focus();
-                                    let _ = toggle_item.set_text("Hide Pet");
                                 }
+                                app.state::<Arc<Mutex<TrayUi>>>()
+                                    .lock()
+                                    .unwrap()
+                                    .pet_visible = !visible;
+                                refresh_tray_ui(app, current_locale(app));
                             }
                         }
                     }
@@ -593,24 +712,50 @@ pub fn run() {
                     }
                     "setup_claude" => match setup_hooks() {
                         Ok(()) => {
-                            let _ = claude_setup_item.set_text("Claude hooks: installed");
+                            app.state::<Arc<Mutex<TrayUi>>>()
+                                .lock()
+                                .unwrap()
+                                .claude_feedback = ui_copy::HookFeedback::Installed;
+                            refresh_tray_ui(app, current_locale(app));
                         }
                         Err(error) => {
                             eprintln!("Vibe Coding Light Claude hook setup failed: {error}");
-                            let _ = claude_setup_item
-                                .set_text(format!("Claude hooks: failed ({error})"));
+                            app.state::<Arc<Mutex<TrayUi>>>()
+                                .lock()
+                                .unwrap()
+                                .claude_feedback = ui_copy::HookFeedback::Failed(error);
+                            refresh_tray_ui(app, current_locale(app));
                         }
                     },
                     "setup_codex" => match setup_codex_hooks() {
                         Ok(()) => {
-                            let _ = codex_setup_item.set_text("Codex hooks: installed");
+                            app.state::<Arc<Mutex<TrayUi>>>()
+                                .lock()
+                                .unwrap()
+                                .codex_feedback = ui_copy::HookFeedback::Installed;
+                            refresh_tray_ui(app, current_locale(app));
                         }
                         Err(error) => {
                             eprintln!("Vibe Coding Light Codex hook setup failed: {error}");
-                            let _ =
-                                codex_setup_item.set_text(format!("Codex hooks: failed ({error})"));
+                            app.state::<Arc<Mutex<TrayUi>>>()
+                                .lock()
+                                .unwrap()
+                                .codex_feedback = ui_copy::HookFeedback::Failed(error);
+                            refresh_tray_ui(app, current_locale(app));
                         }
                     },
+                    "language_zh" => {
+                        if let Err(error) = set_app_locale_impl(app, ui_locale::AppLocale::ZhCn) {
+                            eprintln!("Could not save interface language: {error}");
+                        }
+                        refresh_tray_ui(app, current_locale(app));
+                    }
+                    "language_en" => {
+                        if let Err(error) = set_app_locale_impl(app, ui_locale::AppLocale::En) {
+                            eprintln!("Could not save interface language: {error}");
+                        }
+                        refresh_tray_ui(app, current_locale(app));
+                    }
                     "quit" => {
                         app.exit(0);
                     }
@@ -682,7 +827,13 @@ pub fn run() {
                     s.active_count = count;
                 }
 
-                let text = build_status_text(s.state, &s.message, s.timestamp, s.active_count);
+                let text = ui_copy::status_text(
+                    current_locale(&poll_app),
+                    s.state,
+                    &s.message,
+                    s.timestamp,
+                    s.active_count,
+                );
                 if let Some(tray) = poll_app.tray_by_id("main") {
                     let _ = tray.set_tooltip(Some(&text));
                 }
@@ -725,6 +876,31 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::fs::{File, FileTimes};
+
+    #[test]
+    fn change_locale_publishes_only_after_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preferences.json");
+        let mut store = ui_locale::UiLocaleStore::load(path, Some("zh-CN"));
+        let mut published = None;
+        change_locale(&mut store, ui_locale::AppLocale::En, |locale| {
+            published = Some(locale);
+        })
+        .unwrap();
+        assert_eq!(published, Some(ui_locale::AppLocale::En));
+        assert_eq!(store.get(), ui_locale::AppLocale::En);
+
+        let blocker = dir.path().join("blocker");
+        fs::write(&blocker, b"file").unwrap();
+        let mut failing =
+            ui_locale::UiLocaleStore::load(blocker.join("preferences.json"), Some("zh-CN"));
+        let mut published = false;
+        assert!(
+            change_locale(&mut failing, ui_locale::AppLocale::En, |_| published = true).is_err()
+        );
+        assert!(!published);
+        assert_eq!(failing.get(), ui_locale::AppLocale::ZhCn);
+    }
 
     static HOME_LOCK: Mutex<()> = Mutex::new(());
 
