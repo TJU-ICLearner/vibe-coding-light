@@ -54,7 +54,7 @@ const en = {
   selected_success: "Pet selected.",
   deleted_success: "Pet deleted.",
   saved_heading: "My pets",
-  builtin_cat: "Default pixel cat",
+  builtin_cat: "Default Bubu",
   delete: "Delete",
   delete_named: "Delete {name}",
   mode_unsupported: "This image import mode is unavailable on this system.",
@@ -88,7 +88,7 @@ const en = {
   invalid_id: "Invalid pet ID.",
   invalid_manifest: "Pet settings are invalid.",
   not_found: "Pet was not found.",
-  cannot_delete_builtin: "The built-in cat cannot be deleted.",
+  cannot_delete_builtin: "The built-in Bubu pet cannot be deleted.",
   unsupported_platform: "This feature is unavailable on this system.",
   internal_error: "Operation failed",
 } as const;
@@ -105,7 +105,7 @@ const zh: Record<keyof typeof en, string> = {
   adjust_heading: "2. 调整并保存", name: "名称", name_placeholder: "给桌宠起个名字", scale: "大小", offset_x: "水平偏移", offset_y: "垂直偏移",
   motion_label: "动态特效", motion_follow_state: "跟随工作状态", motion_still: "静止", motion_sway: "左右摇摆", motion_float: "上下浮动", motion_breathe: "呼吸", motion_bounce: "弹跳", motion_wobble: "轻晃",
   motion_gif_hint: "GIF 保留原有逐帧动画。", motion_upload_hint: "选择静态图片后可设置动效。",
-  state_preview: "状态预览", save_use: "保存并使用", saved_success: "桌宠已保存并使用。", selected_success: "已切换桌宠。", deleted_success: "桌宠已删除。", saved_heading: "我的桌宠", builtin_cat: "默认像素猫", delete: "删除", delete_named: "删除 {name}",
+  state_preview: "状态预览", save_use: "保存并使用", saved_success: "桌宠已保存并使用。", selected_success: "已切换桌宠。", deleted_success: "桌宠已删除。", saved_heading: "我的桌宠", builtin_cat: "默认布布", delete: "删除", delete_named: "删除 {name}",
   mode_unsupported: "当前系统不支持这种图片导入", mac_only: "图片导入当前仅支持 macOS", invalid_saved_slots: "当前桌宠的{slots}素材不可用，已使用默认素材。请重新创建桌宠。",
   state_default: "默认／休息", state_working: "工作", state_waiting: "等待", state_error: "出错", state_completed: "完成", state_unknown: "未知",
   waiting_help: "等待表示 Claude Code 或 Codex 正在请求确认或输入；其他工作可能从工作直接进入完成。",
@@ -114,7 +114,7 @@ const zh: Record<keyof typeof en, string> = {
   invalid_animation: "请选择有 2–120 帧的透明 GIF。", no_transparency: "请选择透明背景图片。", no_subject: "没有找到可见主体。", invalid_image: "无法读取或使用这张图片。",
   invalid_preview: "图片预览无效。", mime_mismatch: "图片格式与内容不符。", default_required: "请先生成默认素材预览。", wait_processing: "请等待图片处理完成。",
   invalid_transform: "大小须在 0.5 到 3 之间。", invalid_motion: "动效与所选图片不匹配。", invalid_transform_hint: "请输入 0.5 到 3 之间的大小。", invalid_name: "桌宠名称应为 1–64 个字符。",
-  invalid_id: "桌宠 ID 无效。", invalid_manifest: "桌宠设置无效。", not_found: "找不到桌宠。", cannot_delete_builtin: "不能删除默认像素猫。",
+  invalid_id: "桌宠 ID 无效。", invalid_manifest: "桌宠设置无效。", not_found: "找不到桌宠。", cannot_delete_builtin: "不能删除默认布布。",
   unsupported_platform: "当前系统不支持此功能。", internal_error: "操作失败",
 };
 

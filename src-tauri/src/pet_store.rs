@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+// Keep the persisted ID so existing selections continue to resolve after the artwork changes.
 pub const BUILTIN_CAT_ID: &str = "builtin-cat";
 const SCHEMA_VERSION: u32 = 3;
 const PREVIOUS_SCHEMA_VERSION: u32 = 2;
@@ -109,7 +110,7 @@ impl std::fmt::Display for PetStoreError {
             Self::InvalidImage(error) => write!(f, "Invalid pet image: {error}"),
             Self::InvalidManifest => write!(f, "Pet settings are invalid"),
             Self::NotFound => write!(f, "Pet was not found"),
-            Self::CannotDeleteBuiltin => write!(f, "The built-in cat cannot be deleted"),
+            Self::CannotDeleteBuiltin => write!(f, "The built-in Bubu pet cannot be deleted"),
         }
     }
 }

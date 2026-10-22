@@ -1,6 +1,6 @@
 import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import type { ActivePet } from "./types";
-import { petFitScale, petWindowSide } from "./window_size";
+import { BUILTIN_PET_WINDOW_SIDE, petFitScale, petWindowSide } from "./window_size";
 
 interface Point { x: number; y: number }
 interface Size { width: number; height: number }
@@ -40,7 +40,7 @@ export class PetWindowSizer {
     const requestId = ++this.latest;
     this.queue = this.queue.catch(this.onError).then(async () => {
       if (requestId !== this.latest) return;
-      const side = pet.kind === "builtin" ? 128 : petWindowSide(pet.scale);
+      const side = pet.kind === "builtin" ? BUILTIN_PET_WINDOW_SIDE : petWindowSide(pet.scale);
       const [factor, oldSize, oldPosition, currentMonitor] = await Promise.all([
         this.window.scaleFactor(), this.window.innerSize(), this.window.outerPosition(), this.monitor(),
       ]);

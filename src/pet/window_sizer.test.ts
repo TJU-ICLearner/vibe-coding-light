@@ -10,7 +10,7 @@ describe("pet window resize", () => {
     expect(clampCenteredPosition({ x: 900, y: 700 }, 128, 400, { position: { x: 0, y: 0 }, size: { width: 1000, height: 800 } })).toEqual({ x: 600, y: 400 });
   });
 
-  it("serializes rapid selection and ends at the built-in window size", async () => {
+  it("serializes rapid selection and ends at Bubu's built-in window size", async () => {
     const sizes: number[] = [];
     const port = {
       scaleFactor: vi.fn(async () => 1), innerSize: vi.fn(async () => ({ width: sizes[sizes.length - 1] ?? 128, height: sizes[sizes.length - 1] ?? 128 })),
@@ -21,7 +21,7 @@ describe("pet window resize", () => {
     const fit = vi.fn();
     const sizer = new PetWindowSizer(port, async () => null, fit);
     await Promise.all([sizer.request(photo(3)), sizer.request(photo(0.8)), sizer.request({ kind: "builtin" })]);
-    expect(sizes[sizes.length - 1]).toBe(128);
+    expect(sizes[sizes.length - 1]).toBe(208);
     expect(fit).toHaveBeenLastCalledWith(null);
   });
 

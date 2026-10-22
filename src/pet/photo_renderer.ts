@@ -2,6 +2,14 @@ import type { ActivePet, AgentVisualState } from "./types";
 import { imageForState, motionForState } from "./motion";
 import { applyPetMotionMetrics } from "./window_size";
 
+const BUILTIN_GIFS = {
+  idle: "/pet/bubu/default.gif",
+  working: "/pet/bubu/working.gif",
+  waiting: "/pet/bubu/waiting.gif",
+  error: "/pet/bubu/error.gif",
+  completed: "/pet/bubu/completed.gif",
+} as const;
+
 export class PhotoRenderer {
   private active: ActivePet = { kind: "builtin" };
   private state: AgentVisualState = "idle";
@@ -11,7 +19,7 @@ export class PhotoRenderer {
 
   constructor(
     private readonly wrapper: HTMLElement,
-    private readonly sprite: HTMLElement,
+    private readonly sprite: HTMLImageElement,
     private readonly frame: HTMLElement,
     private readonly image: HTMLImageElement,
   ) {
@@ -62,9 +70,12 @@ export class PhotoRenderer {
     const visual = this.state === "unknown" ? "idle" : this.state;
     this.sprite.className = `pet-sprite state-${visual}`;
     if (this.active.kind !== "photo") {
+      const source = BUILTIN_GIFS[visual];
+      if (this.sprite.getAttribute("src") !== source) this.sprite.src = source;
       this.image.className = "";
       return;
     }
+    this.sprite.removeAttribute("src");
     const selected = imageForState(this.active, this.state);
     if (!selected) {
       this.image.removeAttribute("src");

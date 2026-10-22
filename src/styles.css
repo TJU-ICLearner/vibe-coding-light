@@ -55,75 +55,13 @@ html, body {
 }
 
 .pet-sprite {
-  width: 64px;
-  height: 64px;
-  overflow: hidden;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
-  background-repeat: no-repeat;
-  transform: scale(2);
+  display: block;
+  width: 128px;
+  height: 128px;
+  object-fit: contain;
+  transform: scale(1.5);
   transform-origin: center center;
   pointer-events: none;
-}
-
-/* Idle: 4 frames, 256x64, 1.2s */
-.pet-sprite.state-idle {
-  background-image: url('/pet/idle.png');
-  background-size: 256px 64px;
-  animation: sprite-idle 1.2s steps(4) infinite;
-}
-
-@keyframes sprite-idle {
-  from { background-position: 0 0; }
-  to { background-position: -256px 0; }
-}
-
-/* Working: 6 frames, 384x64, 0.8s */
-.pet-sprite.state-working {
-  background-image: url('/pet/working.png');
-  background-size: 384px 64px;
-  animation: sprite-working 0.8s steps(6) infinite;
-}
-
-@keyframes sprite-working {
-  from { background-position: 0 0; }
-  to { background-position: -384px 0; }
-}
-
-/* Waiting: 6 frames, 384x64, 1.0s */
-.pet-sprite.state-waiting {
-  background-image: url('/pet/waiting.png');
-  background-size: 384px 64px;
-  animation: sprite-waiting 1.0s steps(6) infinite;
-}
-
-@keyframes sprite-waiting {
-  from { background-position: 0 0; }
-  to { background-position: -384px 0; }
-}
-
-/* Error: 4 frames, 256x64, 0.4s */
-.pet-sprite.state-error {
-  background-image: url('/pet/error.png');
-  background-size: 256px 64px;
-  animation: sprite-error 0.4s steps(4) infinite;
-}
-
-@keyframes sprite-error {
-  from { background-position: 0 0; }
-  to { background-position: -256px 0; }
-}
-
-/* Completed: 6 frames, 384x64, 0.6s */
-.pet-sprite.state-completed {
-  background-image: url('/pet/completed.png');
-  background-size: 384px 64px;
-  animation: sprite-completed 0.6s steps(6) infinite;
-}
-
-@keyframes sprite-completed {
-  from { background-position: 0 0; }
-  to { background-position: -384px 0; }
 }
 
 #pat-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 10; }
@@ -137,7 +75,7 @@ html, body {
   30%, 72% { opacity: 1; transform: translate(-50%, 13%) rotate(-5deg); }
   43%, 85% { opacity: 1; transform: translate(-50%, -8%) rotate(3deg); }
 }
-@keyframes pet-sprite-pat { 0%, 100% { transform: scale(2); } 29%, 71% { transform: translateY(3px) scale(1.95); } }
+@keyframes pet-sprite-pat { 0%, 100% { transform: scale(1.5); } 29%, 71% { transform: translateY(3px) scale(1.46); } }
 @keyframes pet-photo-pat { 0%, 100% { transform: translateY(0); } 29%, 71% { transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) {
   .patting .pat-hand { animation: none; opacity: 1; transform: translate(-50%, 0); }

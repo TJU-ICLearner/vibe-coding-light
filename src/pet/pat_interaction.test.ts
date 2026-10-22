@@ -4,9 +4,9 @@ import { PatController } from "./pat_interaction";
 import { PhotoRenderer } from "./photo_renderer";
 
 function fixture() {
-  document.body.innerHTML = `<div id="pet-wrapper"><div id="pet-sprite"></div><div id="photo-reaction"><div id="photo-frame"><img id="photo-pet"></div></div><div id="pat-overlay"></div></div>`;
+  document.body.innerHTML = `<div id="pet-wrapper"><img id="pet-sprite"><div id="photo-reaction"><div id="photo-frame"><img id="photo-pet"></div></div><div id="pat-overlay"></div></div>`;
   const wrapper = document.querySelector<HTMLElement>("#pet-wrapper")!;
-  const sprite = document.querySelector<HTMLElement>("#pet-sprite")!;
+  const sprite = document.querySelector<HTMLImageElement>("#pet-sprite")!;
   const frame = document.querySelector<HTMLElement>("#photo-frame")!;
   const image = document.querySelector<HTMLImageElement>("#photo-pet")!;
   const renderer = new PhotoRenderer(wrapper, sprite, frame, image);
@@ -22,7 +22,7 @@ describe("pat interaction", () => {
     expect(petHtml).not.toMatch(/id="(?:whip|stick|car|water|egg)-overlay"/);
   });
 
-  it("pats the built-in cat twice without stacking overlays and restores the latest state", () => {
+  it("pats built-in Bubu twice without stacking overlays and restores the latest state", () => {
     vi.useFakeTimers();
     const { wrapper, sprite, pat } = fixture();
     pat.setAgentState("working");

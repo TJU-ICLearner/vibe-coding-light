@@ -5,10 +5,10 @@ const photo = { kind: "photo" as const, id: "p1", assets: { default: { kind: "pn
 const statePhoto = { ...photo, assets: { ...photo.assets, working: { kind: "gif" as const, data_url: "data:image/gif;base64,R0lG" } } };
 
 function fixture() {
-  document.body.innerHTML = `<div id="pet-wrapper"><div id="pet-sprite"></div><div id="photo-reaction"><div id="photo-frame"><img id="photo-pet"></div></div><div id="pat-overlay"></div></div>`;
+  document.body.innerHTML = `<div id="pet-wrapper"><img id="pet-sprite"><div id="photo-reaction"><div id="photo-frame"><img id="photo-pet"></div></div><div id="pat-overlay"></div></div>`;
   return new PhotoRenderer(
     document.querySelector<HTMLElement>("#pet-wrapper")!,
-    document.querySelector<HTMLElement>("#pet-sprite")!,
+    document.querySelector<HTMLImageElement>("#pet-sprite")!,
     document.querySelector<HTMLElement>("#photo-frame")!,
     document.querySelector<HTMLImageElement>("#photo-pet")!,
   );
@@ -51,13 +51,35 @@ describe("photo pet renderer", () => {
     expect(image.className).toBe("motion-idle");
   });
 
-  it("switches pet while working and restores the built-in cat", () => {
+  it("switches pet while working and restores the built-in Bubu", () => {
     const renderer = fixture(); renderer.applyState("working"); renderer.applyPet(photo);
     expect(document.querySelector("#photo-pet")?.className).toBe("motion-working");
     expect(document.querySelector<HTMLElement>("#photo-frame")?.style.transform).toContain("0.8");
     renderer.applyPet({ kind: "builtin" });
     expect(document.querySelector("#pet-wrapper")?.classList.contains("photo-active")).toBe(false);
     expect(document.querySelector("#pet-sprite")?.className).toBe("pet-sprite state-working");
+    expect(document.querySelector("#pet-sprite")?.getAttribute("src")).toBe("/pet/bubu/working.gif");
+  });
+
+  it("plays the five built-in Bubu GIFs for their states without restarting an unchanged state", () => {
+    const renderer = fixture();
+    const sprite = document.querySelector<HTMLImageElement>("#pet-sprite")!;
+    const sources = [
+      ["idle", "/pet/bubu/default.gif"],
+      ["working", "/pet/bubu/working.gif"],
+      ["waiting", "/pet/bubu/waiting.gif"],
+      ["error", "/pet/bubu/error.gif"],
+      ["completed", "/pet/bubu/completed.gif"],
+      ["unknown", "/pet/bubu/default.gif"],
+    ] as const;
+    renderer.applyPet({ kind: "builtin" });
+    for (const [state, source] of sources) {
+      renderer.applyState(state);
+      expect(sprite.getAttribute("src")).toBe(source);
+    }
+    const setter = vi.spyOn(sprite, "src", "set");
+    renderer.applyState("idle");
+    expect(setter).not.toHaveBeenCalled();
   });
 
   it("fits an enlarged photo when the native window cannot grow", () => {

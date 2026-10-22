@@ -7,10 +7,10 @@
 
   [中文文档](./README_CN.md)
 
-  <img src="./preview.gif" alt="Preview" width="480" />
+  <img src="./public/pet/bubu/default.gif" alt="Built-in Bubu desktop pet" width="240" />
 </div>
 
-It shows a colored indicator in your system tray so you can tell at a glance what your AI agent is doing — without keeping the terminal visible. Plus, an adorable pixel cat pet that reacts to your agent's status!
+It shows a colored indicator in your system tray so you can tell at a glance what your AI agent is doing — without keeping the terminal visible. Bubu, the built-in animated desktop pet, reacts to your agent's status.
 
 Currently supports **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** and **[OpenAI Codex CLI](https://github.com/openai/codex)**.
 
@@ -29,24 +29,24 @@ Active states blink every 500ms to catch your attention. The tray tooltip shows 
 
 **When does Waiting appear?** Claude Code permission or interactive notifications and Codex `PermissionRequest` hooks trigger it. Ordinary work without an approval prompt can go directly from Working to Completed, then return to Idle. It does not mean that the app detects every moment an agent is waiting for a free-form user reply.
 
-## Desktop Pet 🐱
+## Desktop Pet 🐻
 
-Vibe Coding Light now includes a pixel art desktop pet that reacts to your AI agent's status! The cat companion sits on your desktop and animates based on what your agent is doing.
+Vibe Coding Light includes Bubu as its built-in desktop pet. New installations show Bubu by default; an existing custom-pet selection stays selected after updating. The five original transparent GIFs play without extra motion effects.
 
 | State | Animation |
 |:---:|---|
-| Idle | Relaxed, sitting calmly |
-| Working | Energetic, typing away |
-| Waiting | Alert, looking around |
-| Error | Startled, ears back |
-| Completed | Happy, celebrating |
+| Idle | Sleeping |
+| Working | Working at a keyboard |
+| Waiting | Drinking bubble tea |
+| Error | Apologizing |
+| Completed | Dancing |
 
 **Toggle the pet:** Right-click the tray icon and select **"Show Pet"** or **"Hide Pet"** to control visibility.
 
 **Interface language:** Open the tray menu and choose **Language → English** or **Language → Chinese**. Menu items, status tooltip, settings title, and pet settings change immediately. Your choice is saved across launches; the first launch follows your Mac's preferred language (Chinese for a Chinese system language, English otherwise).
 
 The pet window is always on top and draggable, so you can position it anywhere on your screen.
-Choose **Pet the Pet** in the tray menu, or press **⌘B**, to see a hand gently pat the active pet twice. The action works with the built-in cat and custom pets.
+Choose **Pet the Pet** in the tray menu, or press **⌘B**, to see a hand gently pat the active pet twice. The action works with Bubu and custom pets. Some Bubu GIFs contain Chinese text as part of their original artwork, including when the interface language is English.
 
 ### Create a custom pet (macOS)
 
@@ -55,9 +55,9 @@ Choose **Pet the Pet** in the tray menu, or press **⌘B**, to see a hand gently
 2. Choose **One image for every state** to use one asset, or **Different images for each state** to edit five clearly separated tabs: required Default / Rest plus optional Working, Waiting, Error, and Completed. The preview stays next to the editor on wide windows and above it on narrow windows. Missing state assets use the default. Switching modes keeps your draft; saving in single image mode stores only the default.
 3. Each slot accepts PNG, JPEG, or a transparent GIF (up to 10 MiB). Static images can be cut out locally with **Remove Background** on macOS 14+; transparent PNG and GIF work on macOS 12–13. GIFs retain their original animation and must already have a transparent background. Static images may be up to 4096 pixels per side; GIFs may be up to 1024 pixels per side and 120 frames.
 4. For each static image, choose its own motion: follow the agent state, still, sway, float, breathe, bounce, or wobble. GIFs keep their own animation and do not offer an extra motion effect. An empty state uses the default image and its motion.
-5. Preview each state, choose a name and size from **0.5 to 3**, then click **Save and Use**. The pet window grows with the image, and the preview shows its actual window dimensions. Previewing alone does not replace the active pet. You can select or delete saved pets and return to the built-in pixel cat in the same window.
+5. Preview each state, choose a name and size from **0.5 to 3**, then click **Save and Use**. The pet window grows with the image, and the preview shows its actual window dimensions. Previewing alone does not replace the active pet. You can select or delete saved pets and return to built-in Bubu in the same window.
 
-Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop settings are kept. Everything stays in Vibe Coding Light's local app data; source photos are not uploaded. Existing single-image pets remain usable, including their saved placement. New pets are centered; horizontal and vertical offset controls have been removed. Windows and Linux continue to use the built-in cat in this version.
+Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop settings are kept. Everything stays in Vibe Coding Light's local app data; source photos are not uploaded. Existing single-image pets remain usable, including their saved placement. New pets are centered; horizontal and vertical offset controls have been removed. Windows and Linux use Bubu as the built-in pet when built from source.
 
 ## How It Works
 

@@ -1,6 +1,6 @@
 [package]
 name = "vibe-coding-light"
-version = "1.3.0"
+version = "1.4.0"
 description = "A system tray status light with a customizable desktop pet for AI coding agents"
 authors = ["you"]
 edition = "2021"

@@ -5,6 +5,7 @@ import type { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { PhotoRenderer } from "./pet/photo_renderer";
 import { PetWindowSizer } from "./pet/window_sizer";
 import { PatController } from "./pet/pat_interaction";
+import { BUILTIN_PET_SCALE } from "./pet/window_size";
 import type { ActivePet, AgentVisualState } from "./pet/types";
 
 interface StatePayload {
@@ -72,7 +73,7 @@ async function init() {
   });
   photoRenderer = new PhotoRenderer(
     document.getElementById("pet-wrapper")!,
-    document.getElementById("pet-sprite")!,
+    document.getElementById("pet-sprite") as HTMLImageElement,
     document.getElementById("photo-frame")!,
     document.getElementById("photo-pet") as HTMLImageElement,
   );
@@ -91,7 +92,7 @@ async function init() {
     const id = ++petRequestId;
     const pet = await invoke<ActivePet>("get_active_pet");
     if (id !== petRequestId) return;
-    patController?.setPetScale(pet.kind === "photo" ? pet.scale : 1);
+    patController?.setPetScale(pet.kind === "photo" ? pet.scale : BUILTIN_PET_SCALE);
     photoRenderer?.applyPet(pet);
     await petWindowSizer.request(pet);
   };
