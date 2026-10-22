@@ -60,6 +60,15 @@ describe("photo pet renderer", () => {
     expect(document.querySelector("#pet-sprite")?.className).toBe("pet-sprite state-working");
   });
 
+  it("fits an enlarged photo when the native window cannot grow", () => {
+    const renderer = fixture();
+    renderer.applyPet({ ...photo, scale: 3 });
+    renderer.setFitScale(0.875);
+    expect(document.querySelector<HTMLElement>("#photo-frame")?.style.transform).toBe("translate(4px, -3px) scale(0.875)");
+    renderer.setFitScale(null);
+    expect(document.querySelector<HTMLElement>("#photo-frame")?.style.transform).toBe("translate(4px, -3px) scale(3)");
+  });
+
   it("uses a photo reaction without enabling fixed cat overlays", () => {
     const renderer = fixture();
     expect(renderer.react()).toBe(false);

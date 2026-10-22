@@ -10,8 +10,8 @@
       <header><p class="eyebrow">VIBE CODING LIGHT</p><h1 data-i18n="settings_title">自定义桌宠</h1><p data-i18n="settings_intro">在本机用静态图片或透明 GIF 制作桌宠。</p></header>
       <div class="editor-layout">
         <aside id="preview-panel" class="preview-panel" aria-label="桌宠预览" data-i18n-aria-label="processed_alt">
-          <div class="preview-heading"><span data-i18n="processed">桌宠预览（实际 128 × 128 窗口）</span><span class="preview-size">128 × 128</span></div>
-          <div class="preview-box checker"><div class="preview-window"><div id="processed-frame"><img id="processed-preview" alt="透明桌宠预览" data-i18n-alt="processed_alt" /></div></div></div>
+          <div class="preview-heading"><span data-i18n="processed">桌宠预览（实际窗口尺寸）</span><span class="preview-size">128 × 128</span></div>
+          <div class="preview-box checker"><div class="preview-viewport"><div class="preview-window"><div id="processed-frame"><img id="processed-preview" alt="透明桌宠预览" data-i18n-alt="processed_alt" /></div></div></div></div>
           <div class="original-row"><span data-i18n="original">原图</span><div class="original-thumb"><img id="original-preview" alt="原图预览" data-i18n-alt="original_alt" /></div></div>
         </aside>
         <div class="editor-main">
@@ -36,9 +36,7 @@
             <h2 data-i18n="adjust_heading">2. 调整并保存</h2>
             <div class="controls">
               <label><span data-i18n="name">名称</span><input id="pet-name" maxlength="64" placeholder="给桌宠起个名字" data-i18n-placeholder="name_placeholder" /></label>
-              <label><span data-i18n="scale">大小</span><input id="pet-scale" type="number" min="0.5" max="0.95" step="0.05" value="0.8" /></label>
-              <label><span data-i18n="offset_x">水平偏移</span><input id="pet-offset-x" type="number" min="-32" max="32" value="0" /></label>
-              <label><span data-i18n="offset_y">垂直偏移</span><input id="pet-offset-y" type="number" min="-32" max="32" value="0" /></label>
+              <label><span data-i18n="scale">大小</span><input id="pet-scale" type="number" min="0.5" max="3" step="0.1" value="0.8" /></label>
             </div>
             <p id="status" role="status">请选择图片</p>
             <button id="save-pet" class="primary" type="button" disabled data-i18n="save_use">保存并使用</button>

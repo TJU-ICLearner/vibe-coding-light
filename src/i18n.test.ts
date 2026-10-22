@@ -11,8 +11,8 @@ describe("interface language", () => {
   it("translates known validation and Rust errors while preserving unknown detail", () => {
     expect(formatPetError("en", { code: "gif_requires_animation" })).toContain("GIF");
     expect(formatPetError("zh-CN", { code: "gif_requires_animation" })).toContain("动图");
-    expect(formatPetError("en", { code: "invalid_transform" })).toContain("position");
-    expect(formatPetError("zh-CN", { code: "invalid_transform" })).toContain("位置");
+    expect(formatPetError("en", { code: "invalid_transform" })).toContain("0.5 and 3");
+    expect(formatPetError("zh-CN", { code: "invalid_transform" })).toContain("0.5 到 3");
     expect(formatPetError("en", { code: "internal_error", detail: "disk denied" })).toContain("disk denied");
   });
 });

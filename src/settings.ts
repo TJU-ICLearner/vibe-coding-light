@@ -5,6 +5,7 @@ import { asPetError, formatPetError, t } from "./i18n";
 import type { Locale, PetError, UiKey } from "./i18n";
 import type { DraftMode } from "./pet/asset_draft";
 import type { ActivePet, ImportCapabilities, PetImageMode, PetManifest, PetMotion, PetSlot, PreparedAssetPayload } from "./pet/types";
+import { petWindowSide, validPetScale } from "./pet/window_size";
 import "./settings.css";
 export { validatePetFile } from "./pet/asset_draft";
 
@@ -16,29 +17,6 @@ export function availableModes(capabilities: ImportCapabilities): PetImageMode[]
   if (capabilities.transparent_png) modes.push("keep_alpha");
   if (capabilities.transparent_gif) modes.push("keep_animation");
   return modes;
-}
-
-export function validPetTransform(scale: number, offsetX: number, offsetY: number, hasGif = false): boolean {
-  if (![scale, offsetX, offsetY].every(Number.isFinite) || scale < 0.5 || scale > 0.95 ||
-      !Number.isInteger(offsetX) || !Number.isInteger(offsetY)) return false;
-  const { side, top } = petTransformBounds(scale, hasGif);
-  return offsetX >= -Math.max(side, 0) && offsetX <= side &&
-    offsetY >= Math.max(top, -32) && offsetY <= side;
-}
-
-export function petTransformBounds(scale: number, hasGif = false): { side: number; top: number } {
-  if (hasGif) {
-    // A GIF may fill its whole canvas. Reserve two source pixels for the click reaction.
-    const side = Math.min(32, Math.floor(64 - scale * 66));
-    return { side, top: -side };
-  }
-  return { side: Math.min(32, Math.floor(64 - scale * 61)), top: Math.max(-32, Math.ceil(scale * 72 - 64)) };
-}
-
-export function applyPreviewTransform(frame: HTMLElement, scale: number, offsetX: number, offsetY: number, hasGif = false): boolean {
-  frame.style.transform = [scale, offsetX, offsetY].every(Number.isFinite)
-    ? `translate(${offsetX}px, ${offsetY}px) scale(${scale})` : "";
-  return validPetTransform(scale, offsetX, offsetY, hasGif);
 }
 
 export class PreviewController {
@@ -134,7 +112,7 @@ export class SettingsController {
     if (!assets.default) this.fail("default_required");
     if (this.draft.isBusy(this.mode)) this.fail("wait_processing");
     if (this.draft.blockingError(this.mode)) this.fail(this.draft.blockingError(this.mode)!.code);
-    if (!validPetTransform(scale, 0, 0, Object.values(assets).some((asset) => asset?.kind === "gif"))) {
+    if (!validPetScale(scale)) {
       this.fail("invalid_transform");
     }
     const selectedMotions: Partial<Record<PetSlot, PetMotion>> = {};
@@ -212,11 +190,12 @@ export function mountSettings(): void {
   const original = root.querySelector<HTMLImageElement>("#original-preview")!;
   const processed = root.querySelector<HTMLImageElement>("#processed-preview")!;
   const processedFrame = root.querySelector<HTMLElement>("#processed-frame")!;
+  const previewViewport = root.querySelector<HTMLElement>(".preview-viewport")!;
+  const previewWindow = root.querySelector<HTMLElement>(".preview-window")!;
+  const previewSize = root.querySelector<HTMLElement>(".preview-size")!;
   const saveButton = root.querySelector<HTMLButtonElement>("#save-pet")!;
   const nameInput = root.querySelector<HTMLInputElement>("#pet-name")!;
   const scaleInput = root.querySelector<HTMLInputElement>("#pet-scale")!;
-  const xInput = root.querySelector<HTMLInputElement>("#pet-offset-x")!;
-  const yInput = root.querySelector<HTMLInputElement>("#pet-offset-y")!;
   const list = root.querySelector<HTMLElement>("#saved-pets")!;
   const status = root.querySelector<HTMLElement>("#status")!;
   const slots: PetSlot[] = ["default", "working", "waiting", "error", "completed"];
@@ -288,13 +267,18 @@ export function mountSettings(): void {
 
   const updateTransform = () => {
     const scale = Number(scaleInput.value);
-    const hasGif = Object.values(controller.draft.selected(controller.mode)).some((asset) => asset?.kind === "gif");
-    if (Number.isFinite(scale) && scale >= 0.5 && scale <= 0.95) {
-      const { side, top } = petTransformBounds(scale, hasGif);
-      xInput.min = String(-side); xInput.max = String(side);
-      yInput.min = String(top); yInput.max = String(side);
+    const valid = validPetScale(scale);
+    if (valid) {
+      const side = petWindowSide(scale);
+      const displaySide = Math.min(side, 160);
+      previewViewport.style.width = `${displaySide}px`;
+      previewViewport.style.height = `${displaySide}px`;
+      previewWindow.style.width = `${side}px`;
+      previewWindow.style.height = `${side}px`;
+      previewWindow.style.transform = `scale(${displaySide / side})`;
+      processedFrame.style.transform = `scale(${scale})`;
+      previewSize.textContent = `${side} × ${side}`;
     }
-    const valid = applyPreviewTransform(processedFrame, scale, Number(xInput.value), Number(yInput.value), hasGif);
     saveButton.disabled = controller.busy || controller.draft.isBusy(controller.mode) ||
       Boolean(controller.draft.blockingError(controller.mode)) || !controller.previewUrl || !valid;
     if (!valid && controller.previewUrl && !controller.error) {
@@ -445,7 +429,7 @@ export function mountSettings(): void {
     configureModes();
     render();
   };
-  for (const input of [scaleInput, xInput, yInput]) input.addEventListener("input", render);
+  scaleInput.addEventListener("input", render);
   saveButton.onclick = () => {
     void controller.save(nameInput.value, Number(scaleInput.value), Object.fromEntries(motions) as Partial<Record<PetSlot, PetMotion>>).catch(() => {});
   };

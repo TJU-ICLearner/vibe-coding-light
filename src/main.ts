@@ -1,8 +1,9 @@
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import type { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { PhotoRenderer } from "./pet/photo_renderer";
+import { PetWindowSizer } from "./pet/window_sizer";
 import type { ActivePet, AgentVisualState } from "./pet/types";
 
 interface StatePayload {
@@ -367,6 +368,7 @@ async function init() {
     document.getElementById("photo-frame")!,
     document.getElementById("photo-pet") as HTMLImageElement,
   );
+  const petWindowSizer = new PetWindowSizer(getCurrentWindow(), currentMonitor, (scale) => photoRenderer?.setFitScale(scale));
   const currentState = await invoke<StatePayload>("get_current_state");
   setPetState(currentState.state);
 
@@ -377,6 +379,7 @@ async function init() {
     if (id !== petRequestId) return;
     if (isHurting) endHurt();
     photoRenderer?.applyPet(pet);
+    await petWindowSizer.request(pet);
   };
   await refreshPet();
 

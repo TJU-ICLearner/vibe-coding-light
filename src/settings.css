@@ -33,8 +33,9 @@ button:disabled { opacity: .52; cursor: default; }
 .preview-size { color: #7a8d7e; white-space: nowrap; font-size: .67rem; }
 .preview-box { width: 100%; min-height: 174px; display: grid; place-items: center; border-radius: 10px; border: 1px solid #dde5df; overflow: hidden; }
 .preview-box.checker { background-color: #fff; background-image: linear-gradient(45deg, #e8ece8 25%, transparent 25%), linear-gradient(-45deg, #e8ece8 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e8ece8 75%), linear-gradient(-45deg, transparent 75%, #e8ece8 75%); background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0; }
-.preview-window { width: 128px; height: 128px; overflow: hidden; position: relative; }
-#processed-frame { width: 128px; height: 128px; transform-origin: center; }
+.preview-viewport { width: 128px; height: 128px; position: relative; }
+.preview-window { width: 128px; height: 128px; overflow: hidden; position: absolute; left: 0; top: 0; transform-origin: top left; border: 1px solid #cbd9cf; background: #ffffff15; }
+#processed-frame { width: 128px; height: 128px; position: absolute; left: 50%; top: 50%; margin-left: -64px; margin-top: -64px; transform-origin: center; }
 #processed-preview { width: 128px; height: 128px; object-fit: contain; }
 #processed-preview:not([src]), #original-preview:not([src]) { visibility: hidden; }
 .original-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 11px; color: #607467; font-size: .73rem; font-weight: 650; }

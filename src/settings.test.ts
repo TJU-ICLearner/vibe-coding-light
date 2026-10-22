@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import settingsHtml from "../settings.html?raw";
-import { PreviewController, SettingsController, availableModes, validatePetFile, applyPreviewTransform, mountSettings, petTransformBounds, validPetTransform } from "./settings";
+import { PreviewController, SettingsController, availableModes, validatePetFile, mountSettings } from "./settings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const localeEvents = vi.hoisted(() => ({ handler: null as null | ((event: { payload: "zh-CN" | "en" }) => void) }));
@@ -239,23 +239,7 @@ describe("settings preview", () => {
     expect(validatePetFile(new File(["x"], "x.gif", { type: "image/gif" }), "remove_background")).toBe("gif_requires_animation");
   });
 
-  it("renders saved placement in the 128px window", () => {
-    const frame = document.createElement("div");
-    expect(applyPreviewTransform(frame, 0.8, 3, -2)).toBe(true);
-    expect(frame.style.transform).toBe("translate(3px, -2px) scale(0.8)");
-    expect(applyPreviewTransform(frame, 1, 32, 0)).toBe(false);
-  });
-
-  it("keeps full-canvas GIFs inside the window at every allowed extreme", () => {
-    expect(validPetTransform(0.8, 15, 0, true)).toBe(false);
-    expect(validPetTransform(0.8, 11, 0, true)).toBe(true);
-    expect(validPetTransform(0.95, 0, 5, true)).toBe(false);
-    expect(validPetTransform(0.95, 0, 1, true)).toBe(true);
-    expect(petTransformBounds(0.95, true)).toEqual({ side: 1, top: -1 });
-    expect(validPetTransform(0.95, 5, 5)).toBe(true);
-  });
-
-  it("updates the visible preview and save availability as controls change", () => {
+  it("fits the complete 3x preview and shows the real window size without offset controls", () => {
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true, transparent_gif: true };
       if (command === "get_active_pet") return { kind: "builtin" };
@@ -263,12 +247,16 @@ describe("settings preview", () => {
     });
     document.body.innerHTML = settingsMarkup();
     mountSettings();
-    const x = document.querySelector<HTMLInputElement>("#pet-offset-x")!;
-    x.value = "12";
-    x.dispatchEvent(new Event("input"));
-    expect(document.querySelector<HTMLElement>("#processed-frame")!.style.transform).toBe("translate(12px, 0px) scale(0.8)");
-    expect(x.max).toBe("15");
-    expect(document.querySelector<HTMLInputElement>("#pet-offset-y")!.min).toBe("-6");
+    const scale = document.querySelector<HTMLInputElement>("#pet-scale")!;
+    expect(scale.max).toBe("3");
+    expect(document.querySelector("#pet-offset-x")).toBeNull();
+    expect(document.querySelector("#pet-offset-y")).toBeNull();
+    scale.value = "3";
+    scale.dispatchEvent(new Event("input"));
+    expect(document.querySelector<HTMLElement>(".preview-window")!.style.width).toBe("400px");
+    expect(document.querySelector<HTMLElement>(".preview-viewport")!.style.width).toBe("160px");
+    expect(document.querySelector<HTMLElement>("#processed-frame")!.style.transform).toBe("scale(3)");
+    expect(document.querySelector<HTMLElement>(".preview-size")!.textContent).toBe("400 × 400");
   });
   it("keeps the newest selection when an older request finishes late", async () => {
     const a = deferred<string>(); const b = deferred<string>();

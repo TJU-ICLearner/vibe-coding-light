@@ -6,6 +6,7 @@ export class PhotoRenderer {
   private state: AgentVisualState = "idle";
   private completedPlayed = false;
   private currentSource: string | null = null;
+  private fitScale: number | null = null;
 
   constructor(
     private readonly wrapper: HTMLElement,
@@ -25,18 +26,30 @@ export class PhotoRenderer {
 
   applyPet(pet: ActivePet): void {
     this.active = pet;
+    this.fitScale = null;
     this.currentSource = null;
     this.completedPlayed = false;
     this.image.classList.remove("reacting");
     const isPhoto = pet.kind === "photo";
     this.wrapper.classList.toggle("photo-active", isPhoto);
     if (isPhoto) {
-      this.frame.style.transform = `translate(${pet.offset_x}px, ${pet.offset_y}px) scale(${pet.scale})`;
+      this.updateTransform();
     } else {
       this.image.removeAttribute("src");
       this.frame.style.transform = "";
     }
     this.renderState();
+  }
+
+  setFitScale(scale: number | null): void {
+    this.fitScale = scale;
+    if (this.active.kind === "photo") this.updateTransform();
+  }
+
+  private updateTransform(): void {
+    if (this.active.kind !== "photo") return;
+    const pet = this.active;
+    this.frame.style.transform = `translate(${pet.offset_x}px, ${pet.offset_y}px) scale(${this.fitScale ?? pet.scale})`;
   }
 
   applyState(state: AgentVisualState): void {

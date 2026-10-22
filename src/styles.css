@@ -23,7 +23,7 @@ html, body {
   cursor: grabbing;
 }
 
-#photo-frame { display: none; width: 128px; height: 128px; position: absolute; inset: 0; pointer-events: none; transform-origin: center; }
+#photo-frame { display: none; width: 128px; height: 128px; position: absolute; left: 50%; top: 50%; margin-left: -64px; margin-top: -64px; pointer-events: none; transform-origin: center; }
 #photo-pet { width: 128px; height: 128px; object-fit: contain; display: block; pointer-events: none; }
 .photo-active #photo-frame { display: block; }
 .photo-active .pet-sprite,
