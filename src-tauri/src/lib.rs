@@ -25,6 +25,7 @@ use tauri::{
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+#[derive(Clone)]
 struct TrayUi {
     toggle_pet: MenuItem<tauri::Wry>,
     whip: MenuItem<tauri::Wry>,
@@ -44,7 +45,7 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
     let Some(ui) = app.try_state::<Arc<Mutex<TrayUi>>>() else {
         return;
     };
-    let ui = ui.lock().unwrap();
+    let ui = ui.lock().unwrap().clone();
     let labels = ui_copy::menu_labels(
         locale,
         ui.pet_visible,
@@ -68,16 +69,13 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
         let _ = window.set_title(ui_copy::settings_title(locale));
     }
     if let Some(state) = app.try_state::<Arc<Mutex<AppState>>>() {
-        let state = state.lock().unwrap();
-        if let Some(tray) = app.tray_by_id("main") {
-            let _ = tray.set_tooltip(Some(&ui_copy::status_text(
-                locale,
-                state.state,
-                &state.message,
-                state.timestamp,
-                state.active_count,
-            )));
-        }
+        with_status_snapshot(&state, |current, message, timestamp, count| {
+            if let Some(tray) = app.tray_by_id("main") {
+                let _ = tray.set_tooltip(Some(&ui_copy::status_text(
+                    locale, current, &message, timestamp, count,
+                )));
+            }
+        });
     }
 }
 
@@ -180,6 +178,40 @@ struct AppState {
     active_count: usize,
     blink_on: bool,
     completed_since: Option<u64>,
+}
+
+fn with_status_snapshot<R>(
+    state: &Mutex<AppState>,
+    dispatch: impl FnOnce(State, String, u64, usize) -> R,
+) -> R {
+    let (current, message, timestamp, count) = {
+        let state = state.lock().unwrap();
+        (
+            state.state,
+            state.message.clone(),
+            state.timestamp,
+            state.active_count,
+        )
+    };
+    dispatch(current, message, timestamp, count)
+}
+
+fn with_blink_icon_key<R>(state: &Mutex<AppState>, dispatch: impl FnOnce(&str) -> R) -> R {
+    let key = {
+        let mut state = state.lock().unwrap();
+        match state.state {
+            State::Working | State::Waiting | State::Error => {
+                state.blink_on = !state.blink_on;
+                if state.blink_on {
+                    state.state.key().to_string()
+                } else {
+                    "off".to_string()
+                }
+            }
+            _ => state.state.key().to_string(),
+        }
+    };
+    dispatch(&key)
 }
 
 fn sessions_dir() -> PathBuf {
@@ -788,55 +820,61 @@ pub fn run() {
             std::thread::spawn(move || loop {
                 std::thread::sleep(POLL_INTERVAL);
                 let (state, message, ts, count) = read_all_sessions();
-                let mut s = poll_state.lock().unwrap();
-
-                if s.state == State::Completed {
-                    if let Some(since) = s.completed_since {
-                        if now_secs() - since > COMPLETED_DISPLAY_SECS {
-                            s.state = State::Idle;
-                            s.completed_since = None;
-                            drop(s);
-                            cleanup_completed_sessions();
-                            s = poll_state.lock().unwrap();
+                let payload = {
+                    let mut s = poll_state.lock().unwrap();
+                    if s.state == State::Completed {
+                        if let Some(since) = s.completed_since {
+                            if now_secs() - since > COMPLETED_DISPLAY_SECS {
+                                s.state = State::Idle;
+                                s.completed_since = None;
+                                drop(s);
+                                cleanup_completed_sessions();
+                                s = poll_state.lock().unwrap();
+                            }
                         }
                     }
-                }
+                    if state != s.state {
+                        s.state = state;
+                        s.message = message;
+                        s.timestamp = ts;
+                        s.active_count = count;
+                        s.blink_on = true;
+                        s.completed_since = if state == State::Completed {
+                            Some(now_secs())
+                        } else {
+                            None
+                        };
 
-                if state != s.state {
-                    s.state = state;
-                    s.message = message;
-                    s.timestamp = ts;
-                    s.active_count = count;
-                    s.blink_on = true;
-                    s.completed_since = if state == State::Completed {
-                        Some(now_secs())
+                        Some(serde_json::json!({
+                            "state": s.state.key(),
+                            "message": s.message,
+                            "timestamp": s.timestamp,
+                            "activeCount": s.active_count,
+                        }))
                     } else {
+                        if ts != s.timestamp || count != s.active_count {
+                            s.message = message;
+                            s.timestamp = ts;
+                            s.active_count = count;
+                        }
                         None
-                    };
-
-                    let payload = serde_json::json!({
-                        "state": s.state.key(),
-                        "message": s.message,
-                        "timestamp": s.timestamp,
-                        "activeCount": s.active_count,
-                    });
+                    }
+                };
+                if let Some(payload) = payload {
                     let _ = poll_app.emit("state-changed", payload);
-                } else if ts != s.timestamp || count != s.active_count {
-                    s.message = message;
-                    s.timestamp = ts;
-                    s.active_count = count;
                 }
-
-                let text = ui_copy::status_text(
-                    current_locale(&poll_app),
-                    s.state,
-                    &s.message,
-                    s.timestamp,
-                    s.active_count,
-                );
-                if let Some(tray) = poll_app.tray_by_id("main") {
-                    let _ = tray.set_tooltip(Some(&text));
-                }
+                with_status_snapshot(&poll_state, |current, message, timestamp, count| {
+                    let text = ui_copy::status_text(
+                        current_locale(&poll_app),
+                        current,
+                        &message,
+                        timestamp,
+                        count,
+                    );
+                    if let Some(tray) = poll_app.tray_by_id("main") {
+                        let _ = tray.set_tooltip(Some(&text));
+                    }
+                });
             });
 
             // Blink thread
@@ -845,24 +883,12 @@ pub fn run() {
             let blink_icons = icons.clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(BLINK_INTERVAL);
-                let mut s = blink_state.lock().unwrap();
-
-                let key = match s.state {
-                    State::Working | State::Waiting | State::Error => {
-                        s.blink_on = !s.blink_on;
-                        if s.blink_on {
-                            s.state.key().to_string()
-                        } else {
-                            "off".to_string()
-                        }
+                with_blink_icon_key(&blink_state, |key| {
+                    let icon = blink_icons.lock().unwrap().get(key).unwrap().clone();
+                    if let Some(tray) = blink_app.tray_by_id("main") {
+                        let _ = tray.set_icon(Some(icon));
                     }
-                    _ => s.state.key().to_string(),
-                };
-
-                let icon = blink_icons.lock().unwrap().get(&key).unwrap().clone();
-                if let Some(tray) = blink_app.tray_by_id("main") {
-                    let _ = tray.set_icon(Some(icon));
-                }
+                });
             });
 
             Ok(())
@@ -900,6 +926,33 @@ mod tests {
         );
         assert!(!published);
         assert_eq!(failing.get(), ui_locale::AppLocale::ZhCn);
+    }
+
+    #[test]
+    fn native_updates_release_state_lock_before_dispatch() {
+        let state = Mutex::new(AppState {
+            state: State::Working,
+            message: "Running".into(),
+            timestamp: 1,
+            active_count: 1,
+            blink_on: true,
+            completed_since: None,
+        });
+        with_status_snapshot(&state, |current, message, _, _| {
+            assert_eq!(current, State::Working);
+            assert_eq!(message, "Running");
+            assert!(
+                state.try_lock().is_ok(),
+                "native dispatch must not hold AppState"
+            );
+        });
+        with_blink_icon_key(&state, |key| {
+            assert_eq!(key, "off");
+            assert!(
+                state.try_lock().is_ok(),
+                "native dispatch must not hold AppState"
+            );
+        });
     }
 
     static HOME_LOCK: Mutex<()> = Mutex::new(());

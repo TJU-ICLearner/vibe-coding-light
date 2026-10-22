@@ -59,6 +59,11 @@ describe("settings preview", () => {
     const preview = document.querySelector("#preview-panel")!;
     const editor = document.querySelector("#asset-editor")!;
     expect(Boolean(preview.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    const layout = document.querySelector(".editor-layout")!;
+    expect(layout.contains(preview)).toBe(true);
+    expect(layout.contains(editor)).toBe(true);
+    expect(layout.contains(document.querySelector("#pet-scale"))).toBe(true);
+    expect(layout.contains(document.querySelector("#save-pet"))).toBe(true);
   });
 
   it("uses arrow keys to move the selected slot and keyboard focus", async () => {

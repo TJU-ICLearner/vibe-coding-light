@@ -25,9 +25,10 @@ button:hover { background: #f0f7f1; }
 button.selected { border-color: #278a59; background: #e6f4ea; color: #1b6442; }
 button:disabled { opacity: .52; cursor: default; }
 .hint { margin: 6px 0 14px; color: #687b70; font-size: .75rem; line-height: 1.5; }
-.editor-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; grid-template-areas: "editor preview"; gap: 18px; align-items: start; margin-top: 15px; }
+.editor-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; grid-template-areas: "editor preview"; gap: 18px; align-items: start; }
+.editor-main { grid-area: editor; min-width: 0; }
 .asset-editor { grid-area: editor; min-width: 0; padding: 16px; border: 1px solid #e1e9e2; border-radius: 13px; background: #fbfdfb; }
-.preview-panel { grid-area: preview; position: sticky; top: 16px; min-width: 0; padding: 13px; border: 1px solid #d8e5db; border-radius: 13px; background: #f7fbf8; }
+.preview-panel { grid-area: preview; position: sticky; top: 16px; min-width: 0; margin: 14px 0; padding: 13px; border: 1px solid #d8e5db; border-radius: 13px; background: #f7fbf8; }
 .preview-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; margin: 0 0 9px; font-size: .76rem; font-weight: 700; line-height: 1.3; }
 .preview-size { color: #7a8d7e; white-space: nowrap; font-size: .67rem; }
 .preview-box { width: 100%; min-height: 174px; display: grid; place-items: center; border-radius: 10px; border: 1px solid #dde5df; overflow: hidden; }
@@ -78,7 +79,8 @@ button:disabled { opacity: .52; cursor: default; }
   main { padding: 18px 16px 32px; }
   .panel { padding: 16px; }
   .editor-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "preview" "editor"; gap: 13px; }
-  .preview-panel { position: static; display: grid; grid-template-columns: minmax(0, 1fr) 72px; column-gap: 12px; align-items: end; }
+  .preview-panel { position: static; display: grid; grid-template-columns: minmax(0, 1fr) 72px; column-gap: 12px; align-items: end; margin-bottom: 0; }
+  .editor-main > .panel:first-child { margin-top: 0; }
   .preview-heading { grid-column: 1 / -1; }
   .preview-box { min-height: 146px; }
   .original-row { flex-direction: column; align-self: stretch; justify-content: end; gap: 7px; margin: 0; text-align: center; }
