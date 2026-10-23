@@ -59,6 +59,12 @@ Choose **Pet the Pet** in the tray menu, or press **⌘B**, to see a hand gently
 
 Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop settings are kept. Everything stays in Vibe Coding Light's local app data; source photos are not uploaded. Existing single-image pets remain usable, including their saved placement. New pets are centered; horizontal and vertical offset controls have been removed. Windows and Linux use Bubu as the built-in pet when built from source.
 
+## Optional watch notifications (macOS)
+
+Open **Notification Settings** from the menu bar, save a Bark device key, turn on the master switch, then choose Claude Code, Codex, and the events you want: approval, questions, completed turns, errors, and quota alerts. Quota choices are 80%, 50%, 20%, and 0% remaining plus recovery. Each agent and quota period alerts separately; the first reading sets a baseline. Pushes contain no prompts, project paths, commands, or raw error text. Previously installed app hooks are updated on upgrade.
+
+Install Bark on your iPhone and allow its notifications, then configure Apple Watch to receive Bark notifications. Pushes reach iPhone first; Apple's routing rules determine whether they appear on the watch. The master switch is off by default, and alerts stop when the switch is off or the app exits. Quota data may be unavailable for some Claude/Codex versions or sign-in methods; the settings window shows availability.
+
 ## How It Works
 
 Vibe Coding Light uses a file-based polling mechanism:
@@ -71,7 +77,7 @@ Vibe Coding Light uses a file-based polling mechanism:
 Agent event → Hook script → ~/.code-light/sessions/*.json → Tray icon
 ```
 
-Zero network ports, zero APIs, zero configuration — just files on disk.
+The status light opens no network port. Only when you enable Bark notifications does the app send brief selected-event pushes to Bark.
 
 ## Install
 
