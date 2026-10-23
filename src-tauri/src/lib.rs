@@ -7,6 +7,10 @@ mod pet_vision;
 mod ui_copy;
 mod ui_locale;
 
+pub fn run_statusline_proxy_from_args() -> bool {
+    notifications::claude_quota::run_proxy_from_args()
+}
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
