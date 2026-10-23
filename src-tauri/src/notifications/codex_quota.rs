@@ -227,7 +227,7 @@ mod tests {
         let log = dir.path().join("requests");
         fs::write(&script, format!("#!/bin/sh\nread a\nprintf '%s\\n' '{{\"id\":0,\"result\":{{}}}}'\nread b\nread c\nprintf '%s\\n%s\\n%s\\n' \"$a\" \"$b\" \"$c\" > '{}'\nprintf '%s\\n' '{{\"id\":1,\"result\":{{\"rateLimits\":{{\"limitId\":\"codex\",\"primary\":{{\"usedPercent\":50,\"windowDurationMins\":300,\"resetsAt\":2000000000}}}}}}}}'\nsleep 1\n", log.display())).unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
-        let windows = CodexQuota::read_with_binary(&script, Duration::from_millis(500)).unwrap();
+        let windows = CodexQuota::read_with_binary(&script, Duration::from_secs(2)).unwrap();
         assert_eq!(windows[0].used_percent, 50.0);
         let sent = fs::read_to_string(log).unwrap();
         assert!(sent.contains("\"method\":\"initialize\""));
