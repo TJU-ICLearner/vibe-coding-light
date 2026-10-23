@@ -1,3 +1,4 @@
+mod notifications;
 mod pet_commands;
 mod pet_image;
 mod pet_store;
@@ -651,7 +652,8 @@ pub fn run() {
             );
             let toggle_pet_item =
                 MenuItemBuilder::with_id("toggle_pet", &labels.toggle_pet).build(app)?;
-            let pet_action_item = MenuItemBuilder::with_id("pet_action", &labels.pet_action).build(app)?;
+            let pet_action_item =
+                MenuItemBuilder::with_id("pet_action", &labels.pet_action).build(app)?;
             #[cfg(target_os = "macos")]
             let customize_item =
                 MenuItemBuilder::with_id("customize_pet", &labels.customize_pet).build(app)?;
