@@ -76,15 +76,52 @@ describe("notification settings window", () => {
     expect(root.querySelector<HTMLInputElement>("#bark-key")!.value).toBe("");
   });
 
+  it("shows sending and result beside the test button without scrolling", async () => {
+    const { root, api, controller } = setup();
+    (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), enabled: true });
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, keySaved: true });
+    let finish!: () => void;
+    (api.sendTest as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    await controller.init("zh-CN");
+
+    root.querySelector<HTMLButtonElement>("#send-test")!.click();
+    expect(api.sendTest).toHaveBeenCalledTimes(1);
+    expect(root.querySelector(".connection #feedback")?.textContent).toContain("正在发送");
+    expect(root.querySelector<HTMLButtonElement>("#send-test")!.disabled).toBe(true);
+
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(root.querySelector(".connection #feedback")?.textContent).toContain("已提交给 Bark");
+    expect(root.querySelector<HTMLButtonElement>("#send-test")!.disabled).toBe(false);
+  });
+
+  it("explains why the test button is disabled", async () => {
+    const { root, controller } = setup(); await controller.init("zh-CN");
+    expect(root.querySelector(".connection")?.textContent).toContain("开启手表通知");
+    expect(root.querySelector(".connection")?.textContent).toContain("保存 Bark 密钥");
+  });
+
+  it("shows a rejected Bark key without exposing the saved secret", async () => {
+    const { root, api, controller } = setup();
+    (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), enabled: true });
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, keySaved: true });
+    (api.sendTest as ReturnType<typeof vi.fn>).mockRejectedValue("Bark send failed: Rejected");
+    await controller.init("zh-CN");
+    root.querySelector<HTMLButtonElement>("#send-test")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(root.querySelector(".connection #feedback")?.textContent).toContain("Bark 拒绝");
+    expect(root.textContent).not.toContain("Rejected");
+  });
+
   it("fully localizes visible copy and Codex question coverage, including status errors", async () => {
     const { root, controller } = setup(); await controller.init("zh-CN");
     expect(root.textContent).toContain("Codex 的部分界面内提问");
     controller.setStatus({ ...status, lastSendError: "Bark send failed: Unsent" });
-    expect(root.textContent).toContain("发送失败");
+    expect(root.textContent).toContain("无法连接 Bark");
     controller.setLocale("en");
     expect(root.textContent).toContain("Some questions inside Codex");
-    expect(root.textContent).toContain("Send failed");
-    expect(root.textContent).not.toContain("发送失败");
+    expect(root.textContent).toContain("Could not connect to Bark");
+    expect(root.textContent).not.toContain("无法连接 Bark");
     expect(document.documentElement.lang).toBe("en");
   });
 

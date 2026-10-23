@@ -41,6 +41,8 @@ button:focus-visible, .key-entry input:focus-visible { outline: 2px solid #2a8e5
 .quota-status { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin: 6px 0; font-size: .72rem; }
 .quota-status strong { color: #768a78; font-size: .7rem; }
 .notice { padding: 10px 12px; color: #946b26; background: #fff6e8; border: 1px solid #f0ddb9; border-radius: 9px; font-size: .76rem; }
-#feedback { min-height: 1.2em; color: #28784c; font-size: .78rem; font-weight: 650; }
+#feedback { min-height: 1.2em; margin: 10px 0 0; color: #617267; font-size: .78rem; font-weight: 650; line-height: 1.45; }
+#feedback.success { color: #28784c; }
+#feedback.error { color: #a43c38; }
 footer { color: #7b897d; font-size: .7rem; line-height: 1.45; padding: 5px 0; }
 @media (max-width: 700px) { main { padding: 20px 16px 28px; } .settings-grid { grid-template-columns: 1fr; } .hero-card { align-items: flex-start; } }

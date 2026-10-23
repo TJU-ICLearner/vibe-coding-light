@@ -31,11 +31,21 @@ const api: NotificationApi = {
   sendTest: () => invoke("send_test_notification"),
 };
 
+type NotificationFeedback = "testSending" | "testSuccess" | "testFailure" | "testRejected" | "testUnsent" | "testAmbiguous" | "saveFailure" | "settingsFailure";
+
+function sendErrorFeedback(error: unknown): NotificationFeedback {
+  if (error === "Bark send failed: Rejected") return "testRejected";
+  if (error === "Bark send failed: Unsent") return "testUnsent";
+  if (error === "Bark send failed: Ambiguous") return "testAmbiguous";
+  return "testFailure";
+}
+
 export class NotificationSettingsController {
   private settings: NotificationSettings | null = null;
   private status: NotificationStatus | null = null;
   private locale: NotificationLocale = "zh-CN";
-  private feedback: "testSuccess" | "testFailure" | "saveFailure" | "settingsFailure" | null = null;
+  private feedback: NotificationFeedback | null = null;
+  private testPending = false;
   private saveQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly root: HTMLElement, private readonly api: NotificationApi) {
@@ -94,9 +104,13 @@ export class NotificationSettingsController {
       try { await this.api.deleteKey(); this.status = await this.api.getStatus(); this.feedback = null; }
       catch { this.feedback = "saveFailure"; }
     } else if (action === "send-test") {
-      if (!this.settings?.enabled || !this.status?.keySaved) return;
+      if (!this.settings?.enabled || !this.status?.keySaved || this.testPending) return;
+      this.testPending = true;
+      this.feedback = "testSending";
+      this.render();
       try { await this.api.sendTest(); this.feedback = "testSuccess"; }
-      catch { this.feedback = "testFailure"; }
+      catch (error) { this.feedback = sendErrorFeedback(error); }
+      this.testPending = false;
     }
     this.render();
   }
@@ -104,6 +118,8 @@ export class NotificationSettingsController {
   private render(): void {
     if (!this.settings || !this.status) return;
     const s = this.settings, status = this.status, t = notificationCopy(this.locale);
+    const feedback = this.feedback ?? (status.lastSendError ? sendErrorFeedback(status.lastSendError) : null);
+    const feedbackError = feedback !== null && feedback !== "testSending" && feedback !== "testSuccess";
     document.documentElement.lang = this.locale;
     const toggle = (path: string, label: string, checked: boolean) => `<label class="switch-row"><span>${label}</span><input type="checkbox" data-path="${path}" ${checked ? "checked" : ""} aria-label="${label}"><i aria-hidden="true"></i></label>`;
     const eventSelected = Object.values(s.events).some(Boolean) || Object.values(s.quota).some(Boolean);
@@ -111,13 +127,13 @@ export class NotificationSettingsController {
       <header class="page-head"><p class="eyebrow">VIBE CODING LIGHT / NOTIFICATIONS</p><h1>${t.title}</h1><p>${t.intro}</p></header>
       <section class="hero-card"><div><h2>${t.master}</h2><p>${t.masterHint}</p></div>${toggle("enabled", t.master, s.enabled)}</section>
       <div class="settings-grid">
-        <section class="card connection"><div class="card-title"><span class="card-index">01</span><h2>${t.connection}</h2></div><p class="key-status ${status.keySaved ? "good" : ""}">${status.keySaved ? t.keySaved : t.keyMissing}</p><label class="field-label" for="bark-key">${t.key}</label><div class="key-entry"><input id="bark-key" type="password" autocomplete="off" spellcheck="false" placeholder="${t.keyPlaceholder}"><button type="button" id="save-key" data-action="save-key">${t.saveKey}</button></div><div class="actions"><button type="button" data-action="delete-key" ${status.keySaved ? "" : "disabled"}>${t.deleteKey}</button><button type="button" id="send-test" data-action="send-test" ${s.enabled && status.keySaved ? "" : "disabled"}>${t.test}</button></div></section>
+        <section class="card connection"><div class="card-title"><span class="card-index">01</span><h2>${t.connection}</h2></div><p class="key-status ${status.keySaved ? "good" : ""}">${status.keySaved ? t.keySaved : t.keyMissing}</p><label class="field-label" for="bark-key">${t.key}</label><div class="key-entry"><input id="bark-key" type="password" autocomplete="off" spellcheck="false" placeholder="${t.keyPlaceholder}"><button type="button" id="save-key" data-action="save-key">${t.saveKey}</button></div><div class="actions"><button type="button" data-action="delete-key" ${status.keySaved ? "" : "disabled"}>${t.deleteKey}</button><button type="button" id="send-test" data-action="send-test" ${s.enabled && status.keySaved && !this.testPending ? "" : "disabled"}>${t.test}</button></div><p id="feedback" role="status" class="${feedbackError ? "error" : feedback === "testSuccess" ? "success" : ""}">${feedback ? t[feedback] : !s.enabled || !status.keySaved ? t.testPrerequisite : ""}</p></section>
         <section class="card sources"><div class="card-title"><span class="card-index">02</span><h2>${t.sources}</h2></div><p class="hint">${t.sourceHint}</p>${toggle("sources.claude", t.claude, s.sources.claude)}<p class="availability">${status.claudeHooksInstalled ? t.hooksInstalled : t.hooksMissing}</p>${toggle("sources.codex", t.codex, s.sources.codex)}<p class="availability">${status.codexHooksInstalled ? t.hooksInstalled : t.hooksMissing}</p></section>
         <section class="card events"><div class="card-title"><span class="card-index">03</span><h2>${t.events}</h2></div><p class="hint">${t.eventHint}</p>${toggle("events.permission", t.permission, s.events.permission)}${toggle("events.question", t.question, s.events.question)}${toggle("events.completed", t.completed, s.events.completed)}${toggle("events.error", t.error, s.events.error)}<p class="hint coverage">${t.codexQuestionHint}</p></section>
         <section class="card quotas"><div class="card-title"><span class="card-index">04</span><h2>${t.quotas}</h2></div><p class="hint">${t.quotaHint}</p><div class="quota-status"><span>${t.claudeQuota}</span><strong id="claude-quota-status">${status.claudeQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div><div class="quota-status"><span>${t.codexQuota}</span><strong id="codex-quota-status">${status.codexQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div>${toggle("quota.at80", t.at80, s.quota.at80)}${toggle("quota.at50", t.at50, s.quota.at50)}${toggle("quota.at20", t.at20, s.quota.at20)}${toggle("quota.at0", t.at0, s.quota.at0)}${toggle("quota.recovered", t.recovered, s.quota.recovered)}</section>
       </div>
       ${!eventSelected ? `<p class="notice">${t.noTypes}</p>` : ""}
-      <p id="feedback" role="status">${!status.serviceAvailable ? t.serviceUnavailable : this.feedback ? t[this.feedback] : status.lastSendError ? t.testFailure : ""}</p>
+      ${!status.serviceAvailable ? `<p class="notice" role="status">${t.serviceUnavailable}</p>` : ""}
       <footer>${t.footer}</footer>`;
   }
 }
