@@ -76,6 +76,27 @@ describe("notification settings window", () => {
     expect(root.querySelector<HTMLInputElement>("#bark-key")!.value).toBe("");
   });
 
+  it("explains that copied Bark test paths cannot be saved as device keys", async () => {
+    const { root, api, controller } = setup(); await controller.init("zh-CN");
+    (api.saveKey as ReturnType<typeof vi.fn>).mockRejectedValue("Invalid Bark device key");
+    root.querySelector<HTMLInputElement>("#bark-key")!.value = "abc123/title/body?group=example";
+    root.querySelector<HTMLButtonElement>("#save-key")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(root.querySelector(".connection #feedback")?.textContent).toContain("只填写设备密钥");
+    expect(root.textContent).not.toContain("abc123");
+  });
+
+  it("identifies a previously saved malformed device key before testing", async () => {
+    const { root, api, controller } = setup();
+    (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), enabled: true });
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, keySaved: true });
+    (api.sendTest as ReturnType<typeof vi.fn>).mockRejectedValue("Invalid Bark device key");
+    await controller.init("en");
+    root.querySelector<HTMLButtonElement>("#send-test")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(root.querySelector(".connection #feedback")?.textContent).toContain("device key only");
+  });
+
   it("shows sending and result beside the test button without scrolling", async () => {
     const { root, api, controller } = setup();
     (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), enabled: true });

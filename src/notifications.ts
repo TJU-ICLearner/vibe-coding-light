@@ -31,9 +31,10 @@ const api: NotificationApi = {
   sendTest: () => invoke("send_test_notification"),
 };
 
-type NotificationFeedback = "testSending" | "testSuccess" | "testFailure" | "testRejected" | "testUnsent" | "testAmbiguous" | "saveFailure" | "settingsFailure";
+type NotificationFeedback = "testSending" | "testSuccess" | "testFailure" | "testRejected" | "testUnsent" | "testAmbiguous" | "invalidKey" | "saveFailure" | "settingsFailure";
 
 function sendErrorFeedback(error: unknown): NotificationFeedback {
+  if (error === "Invalid Bark device key") return "invalidKey";
   if (error === "Bark send failed: Rejected") return "testRejected";
   if (error === "Bark send failed: Unsent") return "testUnsent";
   if (error === "Bark send failed: Ambiguous") return "testAmbiguous";
@@ -99,7 +100,7 @@ export class NotificationSettingsController {
       if (input) input.value = "";
       if (!key) return;
       try { await this.api.saveKey(key); this.status = await this.api.getStatus(); this.feedback = null; }
-      catch { this.feedback = "saveFailure"; }
+      catch (error) { this.feedback = error === "Invalid Bark device key" ? "invalidKey" : "saveFailure"; }
     } else if (action === "delete-key") {
       try { await this.api.deleteKey(); this.status = await this.api.getStatus(); this.feedback = null; }
       catch { this.feedback = "saveFailure"; }

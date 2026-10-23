@@ -7,13 +7,23 @@ pub trait KeyStore: Send + Sync {
 
 pub struct MacKeyStore;
 
+pub fn validate_bark_key(key: &str) -> Result<&str, &'static str> {
+    let key = key.trim();
+    if key.is_empty()
+        || key.len() > 256
+        || key.chars().any(|character| {
+            matches!(character, '/' | '?' | '#' | '\\') || character.is_whitespace()
+        })
+    {
+        return Err("Invalid Bark device key");
+    }
+    Ok(key)
+}
+
 #[cfg(target_os = "macos")]
 impl KeyStore for MacKeyStore {
     fn save(&self, key: &str) -> Result<(), String> {
-        let key = key.trim();
-        if key.is_empty() || key.len() > 256 {
-            return Err("Invalid Bark device key".into());
-        }
+        let key = validate_bark_key(key)?;
         security_framework::passwords::set_generic_password(
             "com.cuihuapeng.code-light.bark",
             "device-key",
@@ -71,6 +81,20 @@ impl KeyStore for MacKeyStore {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn device_key_rejects_copied_test_url_suffix() {
+        assert!(validate_bark_key("abc123").is_ok());
+        assert!(validate_bark_key("abc123-xyz_9").is_ok());
+        for copied in [
+            "abc123/title/body?group=example",
+            "https://api.day.app/abc123/title/body",
+            "abc123?group=example",
+            "abc123 body",
+        ] {
+            assert_eq!(validate_bark_key(copied), Err("Invalid Bark device key"));
+        }
+    }
 
     #[derive(Default)]
     struct MockStore {

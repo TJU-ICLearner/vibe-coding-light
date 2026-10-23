@@ -123,6 +123,7 @@ impl NotificationService {
             return Err("Notifications are disabled".into());
         }
         let key = self.key_store.read()?.ok_or("Bark device key not saved")?;
+        let key = super::keychain::validate_bark_key(&key).map_err(str::to_owned)?;
         let payload = crate::ui_copy::test_notification(crate::current_locale(&self.app));
         let result = self.bark.send(&key, &payload);
         self.record_send_result(&result);
@@ -208,7 +209,10 @@ impl NotificationService {
         }
         let payload =
             crate::ui_copy::notification_payload(&candidate, crate::current_locale(&self.app));
-        let result = self.bark.send(&key, &payload);
+        let result = match super::keychain::validate_bark_key(&key) {
+            Ok(valid_key) => self.bark.send(valid_key, &payload),
+            Err(_) => Err(BarkError::Rejected),
+        };
         self.record_send_result(&result);
         result
     }
