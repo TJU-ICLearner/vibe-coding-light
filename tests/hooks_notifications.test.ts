@@ -60,3 +60,43 @@ it("ignores an exit code in Codex tool input when the tool succeeds", () => {
   const events = run("codex", "post_tool_use.sh", { session_id: "codex-session", turn_id: "t1", tool_input: { exit_code: 1 }, tool_response: { exit_code: 0 } });
   expect(events.filter((event) => event.kind === "error")).toEqual([]);
 });
+
+it("records prompt transitions for repeated Claude replies and Codex turns", () => {
+  for (const agent of ["claude", "codex"] as const) {
+    const home = mkdtempSync(join(tmpdir(), "vcl-hook-")); roots.push(home);
+    const env = { ...process.env, HOME: home, CLAUDE_CODE_SESSION_ID: "claude-session" };
+    const script = agent === "claude" ? "user-prompt-submit.sh" : "user_prompt_submit.sh";
+    for (const turn_id of ["t1", "t2"]) {
+      const payload = { session_id: `${agent}-session`, turn_id, prompt: "secret" };
+      expect(spawnSync("bash", [resolve(`hooks/${agent}/${script}`)], { input: JSON.stringify(payload), encoding: "utf8", env }).status).toBe(0);
+      const stop = agent === "claude" ? "stop.sh" : "stop.sh";
+      expect(spawnSync("bash", [resolve(`hooks/${agent}/${stop}`)], { input: JSON.stringify(payload), encoding: "utf8", env }).status).toBe(0);
+    }
+    const events = readdirSync(join(home, ".code-light/events")).map((name) => JSON.parse(readFileSync(join(home, ".code-light/events", name), "utf8")));
+    expect(events.filter((item) => item.kind === "working")).toHaveLength(2);
+    expect(events.filter((item) => item.kind === "completed")).toHaveLength(2);
+    expect(JSON.stringify(events)).not.toContain("secret");
+  }
+});
+
+it("keeps Claude session state separate without an environment session id", () => {
+  const home = mkdtempSync(join(tmpdir(), "vcl-hook-")); roots.push(home);
+  for (const session_id of ["one", "two"]) {
+    const result = spawnSync("bash", [resolve("hooks/claude/pre-tool-use.sh")], {
+      input: JSON.stringify({ session_id, tool_name: "Read" }), encoding: "utf8",
+      env: { ...process.env, HOME: home, CLAUDE_CODE_SESSION_ID: "" },
+    });
+    expect(result.status).toBe(0);
+  }
+  const events = readdirSync(join(home, ".code-light/events")).map((name) => JSON.parse(readFileSync(join(home, ".code-light/events", name), "utf8")));
+  expect(events.filter((item) => item.kind === "working")).toHaveLength(2);
+});
+
+it("records nested Codex tool errors wherever the failure flag appears", () => {
+  for (const tool_response of [
+    { content: [{ type: "text", text: "failed" }], isError: true },
+    { isError: true, content: [{ type: "text", text: "failed" }] },
+  ]) {
+    expect(run("codex", "post_tool_use.sh", { session_id: "codex-session", tool_response }).some((item) => item.kind === "error")).toBe(true);
+  }
+});

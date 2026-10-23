@@ -22,6 +22,8 @@ struct QuotaState {
     alerted: bool,
     #[serde(default)]
     lowest_alerted: Option<u8>,
+    #[serde(default)]
+    observed_generation: u64,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -36,7 +38,6 @@ struct Ledger {
 struct PendingCompletion {
     source: AgentSource,
     session_id: String,
-    turn_id: Option<String>,
     candidate: PushCandidate,
 }
 
@@ -44,18 +45,40 @@ pub struct NotificationEngine {
     ledger_path: PathBuf,
     ledger: Ledger,
     pending: Vec<PendingCompletion>,
+    quota_generation: [u64; 2],
 }
 
 impl NotificationEngine {
     pub fn load(ledger_path: PathBuf) -> Self {
-        let ledger = fs::read(&ledger_path)
+        let mut ledger: Ledger = fs::read(&ledger_path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
+        for state in ledger.quotas.values_mut() {
+            state.observed_generation = 0;
+        }
         Self {
             ledger_path,
             ledger,
             pending: Vec::new(),
+            quota_generation: [1, 1],
+        }
+    }
+
+    pub fn quota_settings_changed(
+        &mut self,
+        old: &NotificationSettings,
+        new: &NotificationSettings,
+    ) {
+        for source in [AgentSource::Claude, AgentSource::Codex] {
+            let became_active = !source_enabled(old, source) && source_enabled(new, source);
+            let threshold_enabled = [80, 50, 20, 0]
+                .into_iter()
+                .any(|level| !quota_switch(old, level) && quota_switch(new, level));
+            if became_active || threshold_enabled {
+                let index = if source == AgentSource::Claude { 0 } else { 1 };
+                self.quota_generation[index] = self.quota_generation[index].saturating_add(1);
+            }
         }
     }
 
@@ -146,11 +169,7 @@ impl NotificationEngine {
                 | AgentEventKind::Error
         ) {
             self.pending.retain(|pending| {
-                pending.source != event.source
-                    || pending.session_id != event.session_id
-                    || (pending.turn_id.is_some()
-                        && event.turn_id.is_some()
-                        && pending.turn_id != event.turn_id)
+                pending.source != event.source || pending.session_id != event.session_id
             });
         }
         if !source_enabled(settings, event.source) {
@@ -184,7 +203,6 @@ impl NotificationEngine {
             self.pending.push(PendingCompletion {
                 source: event.source,
                 session_id: event.session_id,
-                turn_id: event.turn_id,
                 candidate,
             });
             return Vec::new();
@@ -241,6 +259,11 @@ impl NotificationEngine {
             return Vec::new();
         }
         let remaining = 100.0 - window.used_percent;
+        let generation = self.quota_generation[if window.source == AgentSource::Claude {
+            0
+        } else {
+            1
+        }];
         let key = format!(
             "{:?}:{}:{}",
             window.source, window.bucket_id, window.duration_mins
@@ -251,12 +274,34 @@ impl NotificationEngine {
                 QuotaState {
                     previous_remaining: remaining,
                     resets_at: window.resets_at,
+                    observed_generation: generation,
                     ..Default::default()
                 },
             );
             self.persist();
             return Vec::new();
         };
+        if state.observed_generation != generation {
+            if now_ms >= state.resets_at.saturating_mul(1_000)
+                && window.resets_at.saturating_sub(state.resets_at)
+                    >= window.duration_mins.saturating_mul(30)
+            {
+                state.crossed.clear();
+                state.alerted = false;
+                state.lowest_alerted = None;
+            }
+            state.previous_remaining = remaining;
+            state.resets_at = window.resets_at;
+            state.observed_generation = generation;
+            for level in [80, 50, 20, 0] {
+                if remaining <= level as f64 && !state.crossed.contains(&level) {
+                    state.crossed.push(level);
+                }
+            }
+            self.ledger.quotas.insert(key, state);
+            self.persist();
+            return Vec::new();
+        }
         let mut output = Vec::new();
         let reset_ready = now_ms >= state.resets_at.saturating_mul(1_000)
             && window.resets_at != state.resets_at
@@ -413,6 +458,18 @@ mod tests {
     }
 
     #[test]
+    fn new_turn_cancels_pending_completion_even_with_different_turn_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut e = NotificationEngine::load(dir.path().join("ledger.json"));
+        let s = settings();
+        e.on_event(event("a", "s", AgentEventKind::Completed, 1_000), 1_000, &s);
+        let mut next = event("b", "s", AgentEventKind::Working, 2_000);
+        next.turn_id = Some("turn-2".into());
+        e.on_event(next, 2_000, &s);
+        assert!(e.flush_due(4_000, &s).is_empty());
+    }
+
+    #[test]
     fn interleaved_sessions_do_not_mask_completion() {
         let dir = tempfile::tempdir().unwrap();
         let mut e = NotificationEngine::load(dir.path().join("ledger.json"));
@@ -464,6 +521,45 @@ mod tests {
         let mut e = NotificationEngine::load(dir.path().join("ledger.json"));
         assert!(e
             .on_quota(quota("primary", 300, 19.0, 9999), 1_000, &settings())
+            .is_empty());
+    }
+
+    #[test]
+    fn reenabled_quota_threshold_uses_next_reading_as_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut e = NotificationEngine::load(dir.path().join("ledger.json"));
+        let mut s = settings();
+        s.quota.at80 = false;
+        e.on_quota(quota("primary", 300, 90.0, 9999), 1_000, &s);
+        let old = s.clone();
+        s.quota.at80 = true;
+        e.quota_settings_changed(&old, &s);
+        assert!(e
+            .on_quota(quota("primary", 300, 70.0, 9999), 2_000, &s)
+            .is_empty());
+        assert!(e
+            .on_quota(quota("primary", 300, 55.0, 9999), 3_000, &s)
+            .is_empty());
+        assert_eq!(
+            e.on_quota(quota("primary", 300, 45.0, 9999), 4_000, &s)[0].kind,
+            PushKind::QuotaThreshold(50)
+        );
+    }
+
+    #[test]
+    fn reenabled_source_does_not_backfill_quota_crossing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut e = NotificationEngine::load(dir.path().join("ledger.json"));
+        let mut s = settings();
+        e.on_quota(quota("primary", 300, 90.0, 9999), 1_000, &s);
+        let old = s.clone();
+        s.sources.codex = false;
+        e.quota_settings_changed(&old, &s);
+        let old = s.clone();
+        s.sources.codex = true;
+        e.quota_settings_changed(&old, &s);
+        assert!(e
+            .on_quota(quota("primary", 300, 70.0, 9999), 2_000, &s)
             .is_empty());
     }
 

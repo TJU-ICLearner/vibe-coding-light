@@ -2,6 +2,7 @@
 source "$(dirname "$0")/_helpers.sh"
 
 INPUT=$(cat)
+set_input_session_id "$INPUT"
 
 notification_type=$(extract_field "$INPUT" "notification_type")
 case "$notification_type" in

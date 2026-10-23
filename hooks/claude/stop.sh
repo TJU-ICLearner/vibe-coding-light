@@ -2,6 +2,7 @@
 source "$(dirname "$0")/_helpers.sh"
 
 INPUT=$(cat)
+set_input_session_id "$INPUT"
 
 stop_reason=$(extract_field "$INPUT" "reason")
 message="Task finished"

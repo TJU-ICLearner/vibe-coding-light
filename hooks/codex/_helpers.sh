@@ -111,7 +111,7 @@ write_notification_event() {
     mkdir -p "$EVENTS_DIR" 2>/dev/null || return 0
     local id ts target tmp
     id=$(uuidgen | tr '[:upper:]' '[:lower:]')
-    ts=$(( $(date +%s) * 1000 ))
+    ts=$(perl -MTime::HiRes -e 'printf "%.0f", Time::HiRes::time() * 1000' 2>/dev/null) || ts=$(( $(date +%s) * 1000 ))
     target="$EVENTS_DIR/$id.json"
     tmp="$target.tmp.$$"
     printf '{"id":"%s","source":"codex","session_id":"%s","turn_id":%s,"kind":"%s","at_ms":%s}' \

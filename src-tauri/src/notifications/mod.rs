@@ -27,6 +27,14 @@ impl NotificationCore {
         }
     }
 
+    pub fn quota_settings_changed(
+        &mut self,
+        old: &NotificationSettings,
+        new: &NotificationSettings,
+    ) {
+        self.engine.quota_settings_changed(old, new);
+    }
+
     pub fn events<F, G>(
         &mut self,
         events: Vec<AgentEvent>,

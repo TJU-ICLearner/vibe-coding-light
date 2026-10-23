@@ -430,6 +430,55 @@ fn copy_hooks_to_local(src: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn refresh_existing_hooks() {
+    if claude_local_hooks_dir().join("stop.sh").is_file() {
+        let _ = setup_hooks();
+    }
+    if codex_local_hooks_dir().join("stop.sh").is_file() {
+        let _ = setup_codex_hooks();
+    }
+}
+
+fn hook_install_current(agent: &str) -> bool {
+    let source = get_hooks_dir().join(agent);
+    let dest = base_hooks_dir().join(agent);
+    let Ok(entries) = fs::read_dir(source) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            match (fs::read(&path), fs::read(dest.join(entry.file_name()))) {
+                (Ok(source), Ok(installed)) if source == installed => {}
+                _ => return false,
+            }
+        }
+    }
+    let config = if agent == "claude" {
+        dirs::home_dir()
+            .unwrap_or_default()
+            .join(".claude/settings.json")
+    } else {
+        dirs::home_dir()
+            .unwrap_or_default()
+            .join(".codex/hooks.json")
+    };
+    let Ok(value) = load_hook_config(&config) else {
+        return false;
+    };
+    ["Stop", "UserPromptSubmit"].iter().all(|event| {
+        value["hooks"][event].as_array().is_some_and(|groups| {
+            groups.iter().any(|group| {
+                group["hooks"].as_array().is_some_and(|handlers| {
+                    handlers
+                        .iter()
+                        .any(|handler| is_code_light_hook(handler, agent))
+                })
+            })
+        })
+    })
+}
+
 fn load_hook_config(path: &Path) -> Result<serde_json::Value, String> {
     if !path.exists() {
         return Ok(serde_json::json!({}));
@@ -526,6 +575,7 @@ fn setup_hooks() -> Result<(), String> {
         "PostToolUseFailure": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&claude_dest, "post-tool-use-failure.sh") }] }],
         "Notification": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&claude_dest, "notification.sh") }] }],
         "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": shell_command(&claude_dest, "stop.sh") }] }],
+        "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": shell_command(&claude_dest, "user-prompt-submit.sh") }] }],
     });
 
     merge_hook_defs(&mut settings, &hook_defs, "claude")?;
@@ -673,6 +723,7 @@ pub fn run() {
             open_pet_settings
         ])
         .setup(move |app| {
+            refresh_existing_hooks();
             let pet_data_dir = app.path().app_data_dir()?;
             let preferences = pet_data_dir.join("preferences.json");
             let system_tag = sys_locale::get_locale();
@@ -684,7 +735,7 @@ pub fn run() {
                 app.handle().clone(),
                 pet_data_dir,
             )
-            .map_err(std::io::Error::other)?;
+            .ok();
             app.manage(notification_service);
             let initial_icon = icons.lock().unwrap().get("idle").unwrap().clone();
             let labels = ui_copy::menu_labels(
@@ -1161,5 +1212,35 @@ mod tests {
         assert!(setup_hooks().is_err());
 
         assert_eq!(fs::read_to_string(path).unwrap(), "{ broken json");
+    }
+
+    #[test]
+    fn startup_upgrades_previously_installed_hooks_without_replacing_other_hooks() {
+        let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = TestHome::new();
+        for agent in ["claude", "codex"] {
+            let dest = home.path.join(format!(".code-light/hooks/{agent}"));
+            fs::create_dir_all(&dest).unwrap();
+            fs::write(dest.join("stop.sh"), "#!/bin/bash\n# old version\n").unwrap();
+        }
+        assert!(!hook_install_current("claude"));
+        assert!(!hook_install_current("codex"));
+        refresh_existing_hooks();
+        assert!(
+            fs::read_to_string(home.path.join(".code-light/hooks/claude/stop.sh"))
+                .unwrap()
+                .contains("write_notification_event")
+        );
+        assert!(
+            fs::read_to_string(home.path.join(".code-light/hooks/codex/stop.sh"))
+                .unwrap()
+                .contains("write_notification_event")
+        );
+        let claude: serde_json::Value =
+            serde_json::from_slice(&fs::read(home.path.join(".claude/settings.json")).unwrap())
+                .unwrap();
+        assert!(claude["hooks"]["UserPromptSubmit"].is_array());
+        assert!(hook_install_current("claude"));
+        assert!(hook_install_current("codex"));
     }
 }

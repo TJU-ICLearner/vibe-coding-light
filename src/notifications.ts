@@ -10,7 +10,7 @@ export interface NotificationSettings {
   quota: { at80: boolean; at50: boolean; at20: boolean; at0: boolean; recovered: boolean };
 }
 export interface NotificationStatus {
-  keySaved: boolean; claudeHooksInstalled: boolean; codexHooksInstalled: boolean;
+  serviceAvailable: boolean; keySaved: boolean; claudeHooksInstalled: boolean; codexHooksInstalled: boolean;
   claudeQuotaAvailable: boolean; codexQuotaAvailable: boolean; lastSendError: string | null;
 }
 export interface NotificationApi {
@@ -36,6 +36,7 @@ export class NotificationSettingsController {
   private status: NotificationStatus | null = null;
   private locale: NotificationLocale = "zh-CN";
   private feedback: "testSuccess" | "testFailure" | "saveFailure" | "settingsFailure" | null = null;
+  private saveQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly root: HTMLElement, private readonly api: NotificationApi) {
     root.addEventListener("change", (event) => { void this.onChange(event); });
@@ -63,13 +64,18 @@ export class NotificationSettingsController {
       if (!(keys[1] in group)) return;
       group[keys[1]] = input.checked;
     } else return;
-    try {
-      this.settings = await this.api.setSettings(next);
-      this.feedback = null;
-    } catch {
-      this.feedback = "settingsFailure";
-    }
+    this.settings = next;
     this.render();
+    this.saveQueue = this.saveQueue.then(async () => {
+      try {
+        await this.api.setSettings(next);
+        this.feedback = null;
+      } catch {
+        this.feedback = "settingsFailure";
+      }
+      this.render();
+    });
+    await this.saveQueue;
   }
 
   private async onClick(event: Event): Promise<void> {
@@ -111,7 +117,7 @@ export class NotificationSettingsController {
         <section class="card quotas"><div class="card-title"><span class="card-index">04</span><h2>${t.quotas}</h2></div><p class="hint">${t.quotaHint}</p><div class="quota-status"><span>${t.claudeQuota}</span><strong id="claude-quota-status">${status.claudeQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div><div class="quota-status"><span>${t.codexQuota}</span><strong id="codex-quota-status">${status.codexQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div>${toggle("quota.at80", t.at80, s.quota.at80)}${toggle("quota.at50", t.at50, s.quota.at50)}${toggle("quota.at20", t.at20, s.quota.at20)}${toggle("quota.at0", t.at0, s.quota.at0)}${toggle("quota.recovered", t.recovered, s.quota.recovered)}</section>
       </div>
       ${!eventSelected ? `<p class="notice">${t.noTypes}</p>` : ""}
-      <p id="feedback" role="status">${this.feedback ? t[this.feedback] : status.lastSendError ? t.testFailure : ""}</p>
+      <p id="feedback" role="status">${!status.serviceAvailable ? t.serviceUnavailable : this.feedback ? t[this.feedback] : status.lastSendError ? t.testFailure : ""}</p>
       <footer>${t.footer}</footer>`;
   }
 }

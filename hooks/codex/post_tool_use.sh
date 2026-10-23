@@ -10,8 +10,15 @@ command=$(extract_field "$INPUT" "command")
 message=$(make_message "$tool_name" "$file_path" "$command")
 
 if [ -n "$SESSION_ID" ]; then
-    if [[ "$INPUT" =~ \"tool_response\"[[:space:]]*:[[:space:]]*\{[^}]*\"exit_code\"[[:space:]]*:[[:space:]]*([1-9][0-9]*) ]] ||
-       [[ "$INPUT" =~ \"tool_response\"[[:space:]]*:[[:space:]]*\{[^}]*\"isError\"[[:space:]]*:[[:space:]]*true ]]; then
+    if printf '%s' "$INPUT" | perl -MJSON::PP -0777 -ne '
+        eval {
+            my $response = decode_json($_)->{tool_response};
+            exit((ref($response) eq "HASH" &&
+                (($response->{isError} // 0) eq JSON::PP::true ||
+                 ($response->{exit_code} // 0) =~ /^[1-9][0-9]*$/)) ? 0 : 1);
+        };
+        exit 1;
+    ' 2>/dev/null; then
         write_notification_event "$INPUT" error "$(extract_field "$INPUT" "turn_id")"
     fi
     write_state "$SESSION_ID" "working" "$message" "$tool_name" "$file_path" "$command"

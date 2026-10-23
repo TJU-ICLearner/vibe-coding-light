@@ -7,7 +7,15 @@ EVENTS_DIR="$CODE_LIGHT_DIR/events"
 
 # Use stable session ID from environment
 get_session_id() {
-    echo "${CLAUDE_CODE_SESSION_ID:-unknown}"
+    echo "${HOOK_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-unknown}}"
+}
+
+set_input_session_id() {
+    local candidate
+    candidate=$(extract_field "$1" "session_id")
+    if [[ "$candidate" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        HOOK_SESSION_ID="$candidate"
+    fi
 }
 
 ensure_dir() {
@@ -123,13 +131,12 @@ write_state() {
 write_notification_event() {
     local input="$1" kind="$2" turn_id="${3:-}"
     local session_id
-    session_id=$(extract_field "$input" "session_id")
-    [ -n "$session_id" ] || session_id=$(get_session_id)
+    session_id=$(get_session_id)
     [ -n "$session_id" ] && [ "$session_id" != unknown ] || return 0
     mkdir -p "$EVENTS_DIR" 2>/dev/null || return 0
     local id ts target tmp
     id=$(uuidgen | tr '[:upper:]' '[:lower:]')
-    ts=$(( $(date +%s) * 1000 ))
+    ts=$(perl -MTime::HiRes -e 'printf "%.0f", Time::HiRes::time() * 1000' 2>/dev/null) || ts=$(( $(date +%s) * 1000 ))
     target="$EVENTS_DIR/$id.json"
     tmp="$target.tmp.$$"
     printf '{"id":"%s","source":"claude","session_id":"%s","turn_id":%s,"kind":"%s","at_ms":%s}' \

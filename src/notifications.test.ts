@@ -7,7 +7,7 @@ const defaults: NotificationSettings = {
   events: { permission: true, question: true, completed: true, error: true },
   quota: { at80: false, at50: false, at20: false, at0: false, recovered: false },
 };
-const status: NotificationStatus = { keySaved: false, claudeHooksInstalled: false, codexHooksInstalled: false, claudeQuotaAvailable: false, codexQuotaAvailable: false, lastSendError: null };
+const status: NotificationStatus = { serviceAvailable: true, keySaved: false, claudeHooksInstalled: false, codexHooksInstalled: false, claudeQuotaAvailable: false, codexQuotaAvailable: false, lastSendError: null };
 
 function setup() {
   const root = document.createElement("main"); document.body.replaceChildren(root);
@@ -45,6 +45,26 @@ describe("notification settings window", () => {
     expect(api.setSettings).toHaveBeenLastCalledWith({ ...defaults, enabled: true, sources: { claude: true, codex: false }, events: { ...defaults.events, question: false }, quota: { ...defaults.quota, at20: true } });
   });
 
+  it("keeps master off when a second switch changes before the first save completes", async () => {
+    const { root, api, controller } = setup();
+    (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), enabled: true });
+    const pending: Array<{ value: NotificationSettings; resolve: (value: NotificationSettings) => void }> = [];
+    (api.setSettings as ReturnType<typeof vi.fn>).mockImplementation((value: NotificationSettings) => new Promise((resolve) => pending.push({ value, resolve })));
+    await controller.init("en");
+    const master = root.querySelector<HTMLInputElement>('[data-path="enabled"]')!;
+    master.checked = false; master.dispatchEvent(new Event("change", { bubbles: true }));
+    const quota = root.querySelector<HTMLInputElement>('[data-path="quota.at20"]')!;
+    quota.checked = true; quota.dispatchEvent(new Event("change", { bubbles: true }));
+    await Promise.resolve();
+    expect(pending[0].value.enabled).toBe(false);
+    pending[0].resolve(pending[0].value);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pending[1].value).toMatchObject({ enabled: false, quota: { at20: true } });
+    pending[1].resolve(pending[1].value);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(root.querySelector<HTMLInputElement>('[data-path="enabled"]')!.checked).toBe(false);
+  });
+
   it("masks saved key, clears input, and never receives secret from status", async () => {
     const { root, api, controller } = setup(); await controller.init("en");
     const key = root.querySelector<HTMLInputElement>("#bark-key")!;
@@ -73,5 +93,13 @@ describe("notification settings window", () => {
     expect(root.querySelector("#claude-quota-status")!.textContent).toContain("暂不可用");
     expect(root.querySelector("#codex-quota-status")!.textContent).toContain("暂不可用");
     expect(root.querySelector("#claude-quota-status")!.textContent).not.toContain("%");
+  });
+
+  it("explains when the optional notification service cannot start", async () => {
+    const { root, controller } = setup(); await controller.init("zh-CN");
+    controller.setStatus({ ...status, serviceAvailable: false });
+    expect(root.textContent).toContain("通知服务暂不可用");
+    controller.setLocale("en");
+    expect(root.textContent).toContain("Notification service is unavailable");
   });
 });

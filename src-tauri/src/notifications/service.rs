@@ -17,6 +17,7 @@ const QUOTA_POLL_MS: u64 = 300_000;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationStatus {
+    pub service_available: bool,
     pub key_saved: bool,
     pub claude_hooks_installed: bool,
     pub codex_hooks_installed: bool,
@@ -48,6 +49,7 @@ impl NotificationService {
         let store = NotificationSettingsStore::load(data_dir.join("notification-settings.json"));
         let key_store = MacKeyStore;
         let status = NotificationStatus {
+            service_available: true,
             key_saved: key_store.has_key().unwrap_or(false),
             ..Default::default()
         };
@@ -83,7 +85,12 @@ impl NotificationService {
         &self,
         value: NotificationSettings,
     ) -> Result<NotificationSettings, String> {
+        let old = self.settings();
         self.settings.lock().unwrap().set(value.clone())?;
+        self.core
+            .lock()
+            .unwrap()
+            .quota_settings_changed(&old, &value);
         *self.last_claude_poll.lock().unwrap() = 0;
         *self.last_codex_poll.lock().unwrap() = 0;
         self.update_status(|status| {
@@ -234,9 +241,8 @@ impl NotificationService {
     }
 
     fn refresh_status(&self) {
-        let home = dirs::home_dir().unwrap_or_default();
-        let claude_hooks = home.join(".code-light/hooks/claude/stop.sh").is_file();
-        let codex_hooks = home.join(".code-light/hooks/codex/stop.sh").is_file();
+        let claude_hooks = crate::hook_install_current("claude");
+        let codex_hooks = crate::hook_install_current("codex");
         let key_saved = self.key_store.has_key().unwrap_or(false);
         self.update_status(|status| {
             status.claude_hooks_installed = claude_hooks;
@@ -253,6 +259,10 @@ impl NotificationService {
             let _ = self.app.emit("notification-status-changed", status.clone());
         }
     }
+}
+
+fn status_or_unavailable(service: Option<&NotificationService>) -> NotificationStatus {
+    service.map(NotificationService::status).unwrap_or_default()
 }
 
 fn now_ms() -> u64 {
@@ -281,6 +291,17 @@ pub(crate) fn can_access_notification_commands(label: &str) -> bool {
     label == "notifications"
 }
 
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+
+    #[test]
+    fn absent_optional_service_reports_unavailable_without_a_panic() {
+        let status = status_or_unavailable(None);
+        assert!(!status.service_available);
+    }
+}
+
 fn ensure_notification_window(window: &tauri::WebviewWindow) -> Result<(), String> {
     if can_access_notification_commands(window.label()) {
         Ok(())
@@ -292,55 +313,70 @@ fn ensure_notification_window(window: &tauri::WebviewWindow) -> Result<(), Strin
 #[tauri::command]
 pub fn get_notification_settings(
     window: tauri::WebviewWindow,
-    service: tauri::State<'_, Arc<NotificationService>>,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
 ) -> Result<NotificationSettings, String> {
     ensure_notification_window(&window)?;
-    Ok(service.settings())
+    Ok(service
+        .as_deref()
+        .map(NotificationService::settings)
+        .unwrap_or_default())
 }
 
 #[tauri::command]
 pub fn set_notification_settings(
     window: tauri::WebviewWindow,
-    service: tauri::State<'_, Arc<NotificationService>>,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
     settings: NotificationSettings,
 ) -> Result<NotificationSettings, String> {
     ensure_notification_window(&window)?;
-    service.set_settings(settings)
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .set_settings(settings)
 }
 
 #[tauri::command]
 pub fn save_bark_key(
     window: tauri::WebviewWindow,
-    service: tauri::State<'_, Arc<NotificationService>>,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
     key: String,
 ) -> Result<(), String> {
     ensure_notification_window(&window)?;
-    service.save_key(&key)
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .save_key(&key)
 }
 
 #[tauri::command]
 pub fn delete_bark_key(
     window: tauri::WebviewWindow,
-    service: tauri::State<'_, Arc<NotificationService>>,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
 ) -> Result<(), String> {
     ensure_notification_window(&window)?;
-    service.delete_key()
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .delete_key()
 }
 
 #[tauri::command]
 pub fn send_test_notification(
     window: tauri::WebviewWindow,
-    service: tauri::State<'_, Arc<NotificationService>>,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
 ) -> Result<(), String> {
     ensure_notification_window(&window)?;
-    service.send_test()
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .send_test()
 }
 
 #[tauri::command]
 pub fn get_notification_status(
     window: tauri::WebviewWindow,
-    service: tauri::State<'_, Arc<NotificationService>>,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
 ) -> Result<NotificationStatus, String> {
     ensure_notification_window(&window)?;
-    Ok(service.status())
+    Ok(status_or_unavailable(service.as_deref()))
 }

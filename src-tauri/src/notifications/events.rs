@@ -47,12 +47,20 @@ impl EventSpool {
                 continue;
             }
             if let Some(event) = Self::read_one(&path, now_ms) {
-                events.push(event);
+                let written = fs::metadata(&path)
+                    .ok()
+                    .and_then(|meta| meta.modified().ok());
+                events.push((event, written));
             }
             let _ = fs::remove_file(path);
         }
-        events.sort_by(|a, b| a.at_ms.cmp(&b.at_ms).then_with(|| a.id.cmp(&b.id)));
-        events
+        events.sort_by(|(a, a_written), (b, b_written)| {
+            a.at_ms
+                .cmp(&b.at_ms)
+                .then_with(|| a_written.cmp(b_written))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        events.into_iter().map(|(event, _)| event).collect()
     }
 
     fn read_one(path: &Path, now_ms: u64) -> Option<AgentEvent> {
@@ -144,6 +152,31 @@ mod tests {
             vec!["a", "b"]
         );
         assert!(spool.drain(2000).is_empty());
+    }
+
+    #[test]
+    fn equal_timestamp_events_keep_spool_write_order() {
+        let dir = tempfile::tempdir().unwrap();
+        put(
+            dir.path(),
+            "z.json",
+            &serde_json::to_string(&event("z", 1000)).unwrap(),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        put(
+            dir.path(),
+            "a.json",
+            &serde_json::to_string(&event("a", 1000)).unwrap(),
+        );
+        let mut spool = EventSpool::new(dir.path().to_path_buf());
+        assert_eq!(
+            spool
+                .drain(2000)
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["z", "a"]
+        );
     }
 
     #[test]

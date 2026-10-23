@@ -16,6 +16,8 @@ pub struct ProxyConfig {
 struct OriginalStatusLine {
     original: Option<Value>,
     owned_command: String,
+    #[serde(default)]
+    owned_status_line: Option<Value>,
 }
 
 pub struct ClaudeQuota;
@@ -44,9 +46,11 @@ impl ClaudeQuota {
                     previous_command,
                 },
             )?;
+            let owned = status_line_with_command(settings.get("statusLine"), &command);
             record.owned_command = command.clone();
+            record.owned_status_line = Some(owned.clone());
             atomic_json(&original_path(data_dir), &record)?;
-            settings["statusLine"] = json!({"type":"command", "command":command});
+            settings["statusLine"] = owned;
             return atomic_json(settings_path, &settings);
         }
         let previous = settings.get("statusLine").cloned();
@@ -61,11 +65,13 @@ impl ClaudeQuota {
             Some(_) => return Err("Unsupported or managed status line configuration".into()),
         };
         fs::create_dir_all(data_dir).map_err(|error| error.to_string())?;
+        let owned = status_line_with_command(previous.as_ref(), &command);
         atomic_json(
             &original_path(data_dir),
             &OriginalStatusLine {
                 original: previous,
                 owned_command: command.clone(),
+                owned_status_line: Some(owned.clone()),
             },
         )?;
         atomic_json(
@@ -75,7 +81,7 @@ impl ClaudeQuota {
                 previous_command,
             },
         )?;
-        settings["statusLine"] = json!({"type":"command", "command":command});
+        settings["statusLine"] = owned;
         atomic_json(settings_path, &settings)
     }
 
@@ -91,7 +97,23 @@ impl ClaudeQuota {
             let _ = fs::remove_file(data_dir.join("claude-quota-snapshot.json"));
             return Ok(());
         }
-        if let Some(original) = record.original {
+        if let Some(mut original) = record.original {
+            if let (Some(owned), Some(current), Some(restored)) = (
+                record.owned_status_line.as_ref().and_then(Value::as_object),
+                settings["statusLine"].as_object(),
+                original.as_object_mut(),
+            ) {
+                for (key, value) in current {
+                    if key != "command" && owned.get(key) != Some(value) {
+                        restored.insert(key.clone(), value.clone());
+                    }
+                }
+                for key in owned.keys() {
+                    if key != "command" && !current.contains_key(key) {
+                        restored.remove(key);
+                    }
+                }
+            }
             settings["statusLine"] = original;
         } else {
             settings
@@ -117,6 +139,14 @@ impl ClaudeQuota {
     }
 }
 
+fn status_line_with_command(previous: Option<&Value>, command: &str) -> Value {
+    let mut value = previous
+        .cloned()
+        .unwrap_or_else(|| json!({"type":"command"}));
+    value["command"] = json!(command);
+    value
+}
+
 fn read_original(data_dir: &Path) -> Result<OriginalStatusLine, String> {
     serde_json::from_slice(&fs::read(original_path(data_dir)).map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())
@@ -138,7 +168,7 @@ pub fn run_statusline_proxy(
     if windows.is_empty() {
         let _ = fs::remove_file(&config.snapshot_path);
     } else {
-        atomic_json(&config.snapshot_path, &windows)?;
+        let _ = atomic_json(&config.snapshot_path, &windows);
     }
     if let Some(command) = &config.previous_command {
         let mut child = Command::new("sh")
@@ -345,6 +375,22 @@ mod tests {
     }
 
     #[test]
+    fn unwritable_snapshot_does_not_blank_existing_status_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("not-a-directory");
+        fs::write(&blocker, "x").unwrap();
+        let config = ProxyConfig {
+            snapshot_path: blocker.join("snapshot.json"),
+            previous_command: Some("printf original".into()),
+        };
+        let input =
+            br#"{"rate_limits":{"five_hour":{"used_percentage":25,"resets_at":1738425600}}}"#;
+        let mut output = Vec::new();
+        run_statusline_proxy(input.as_slice(), &mut output, &config).unwrap();
+        assert_eq!(output, b"original");
+    }
+
+    #[test]
     fn install_twice_is_idempotent_and_remove_restores_previous() {
         let dir = tempfile::tempdir().unwrap();
         let settings = dir.path().join("settings.json");
@@ -364,6 +410,26 @@ mod tests {
             serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
         assert_eq!(restored["statusLine"]["command"], "printf old");
         assert_eq!(restored["theme"], "dark");
+    }
+
+    #[test]
+    fn wrapper_keeps_statusline_presentation_and_later_user_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join("settings.json");
+        let exe = dir.path().join("app");
+        let data = dir.path().join("data");
+        fs::write(&settings, r#"{"statusLine":{"type":"command","command":"printf old","padding":4,"refreshInterval":500}}"#).unwrap();
+        ClaudeQuota::install(&settings, &exe, &data).unwrap();
+        let mut active: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+        assert_eq!(active["statusLine"]["padding"], 4);
+        assert_eq!(active["statusLine"]["refreshInterval"], 500);
+        active["statusLine"]["padding"] = json!(6);
+        fs::write(&settings, serde_json::to_vec(&active).unwrap()).unwrap();
+        ClaudeQuota::remove(&settings, &exe, &data).unwrap();
+        let restored: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+        assert_eq!(restored["statusLine"]["command"], "printf old");
+        assert_eq!(restored["statusLine"]["padding"], 6);
+        assert_eq!(restored["statusLine"]["refreshInterval"], 500);
     }
 
     #[test]

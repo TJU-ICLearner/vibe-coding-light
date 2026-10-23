@@ -2,6 +2,7 @@
 source "$(dirname "$0")/_helpers.sh"
 
 INPUT=$(cat)
+set_input_session_id "$INPUT"
 
 tool_name=$(extract_field "$INPUT" "tool_name")
 file_path=$(extract_field "$INPUT" "file_path")
