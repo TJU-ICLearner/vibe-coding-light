@@ -336,4 +336,11 @@ mod tests {
         );
         assert_eq!(sent, 1);
     }
+
+    #[test]
+    fn notification_commands_are_scoped_to_settings_window() {
+        assert!(service::can_access_notification_commands("notifications"));
+        assert!(!service::can_access_notification_commands("pet"));
+        assert!(!service::can_access_notification_commands("settings"));
+    }
 }

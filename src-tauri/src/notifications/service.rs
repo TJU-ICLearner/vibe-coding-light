@@ -265,44 +265,70 @@ fn snapshot_is_fresh(path: &std::path::Path) -> bool {
         .is_some_and(|age| age <= Duration::from_secs(600))
 }
 
+pub(crate) fn can_access_notification_commands(label: &str) -> bool {
+    label == "notifications"
+}
+
+fn ensure_notification_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    if can_access_notification_commands(window.label()) {
+        Ok(())
+    } else {
+        Err("Notification command unavailable from this window".into())
+    }
+}
+
 #[tauri::command]
 pub fn get_notification_settings(
+    window: tauri::WebviewWindow,
     service: tauri::State<'_, Arc<NotificationService>>,
-) -> NotificationSettings {
-    service.settings()
+) -> Result<NotificationSettings, String> {
+    ensure_notification_window(&window)?;
+    Ok(service.settings())
 }
 
 #[tauri::command]
 pub fn set_notification_settings(
+    window: tauri::WebviewWindow,
     service: tauri::State<'_, Arc<NotificationService>>,
     settings: NotificationSettings,
 ) -> Result<NotificationSettings, String> {
+    ensure_notification_window(&window)?;
     service.set_settings(settings)
 }
 
 #[tauri::command]
 pub fn save_bark_key(
+    window: tauri::WebviewWindow,
     service: tauri::State<'_, Arc<NotificationService>>,
     key: String,
 ) -> Result<(), String> {
+    ensure_notification_window(&window)?;
     service.save_key(&key)
 }
 
 #[tauri::command]
-pub fn delete_bark_key(service: tauri::State<'_, Arc<NotificationService>>) -> Result<(), String> {
+pub fn delete_bark_key(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Arc<NotificationService>>,
+) -> Result<(), String> {
+    ensure_notification_window(&window)?;
     service.delete_key()
 }
 
 #[tauri::command]
 pub fn send_test_notification(
+    window: tauri::WebviewWindow,
     service: tauri::State<'_, Arc<NotificationService>>,
 ) -> Result<(), String> {
+    ensure_notification_window(&window)?;
     service.send_test()
 }
 
 #[tauri::command]
 pub fn get_notification_status(
+    window: tauri::WebviewWindow,
     service: tauri::State<'_, Arc<NotificationService>>,
-) -> NotificationStatus {
-    service.status()
+) -> Result<NotificationStatus, String> {
+    ensure_notification_window(&window)?;
+    Ok(service.status())
 }
