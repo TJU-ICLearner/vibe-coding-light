@@ -6,6 +6,9 @@ pub mod events;
 pub mod keychain;
 pub mod model;
 pub mod service;
+
+#[cfg(test)]
+mod integration_tests;
 pub mod settings;
 
 use bark::BarkError;

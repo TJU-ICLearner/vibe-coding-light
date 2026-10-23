@@ -1,7 +1,7 @@
 use super::model::{AgentSource, QuotaWindow};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -10,7 +10,8 @@ pub struct CodexQuota;
 
 impl CodexQuota {
     pub fn read(timeout: Duration) -> Result<Vec<QuotaWindow>, String> {
-        Self::read_with_binary(Path::new("codex"), timeout)
+        let binary = locate_codex_binary().ok_or("Codex executable unavailable")?;
+        Self::read_with_binary(&binary, timeout)
     }
 
     pub fn read_with_binary(binary: &Path, timeout: Duration) -> Result<Vec<QuotaWindow>, String> {
@@ -23,15 +24,6 @@ impl CodexQuota {
             .map_err(|_| "Codex App Server unavailable".to_string())?;
         let result = (|| {
             let mut stdin = child.stdin.take().ok_or("Codex input unavailable")?;
-            for message in [
-                json!({"method":"initialize","id":0,"params":{"clientInfo":{"name":"vibe_coding_light","title":"Vibe Coding Light","version":env!("CARGO_PKG_VERSION")}}}),
-                json!({"method":"initialized","params":{}}),
-                json!({"method":"account/rateLimits/read","id":1}),
-            ] {
-                serde_json::to_writer(&mut stdin, &message).map_err(|_| "Codex request failed")?;
-                stdin.write_all(b"\n").map_err(|_| "Codex request failed")?;
-            }
-            stdin.flush().map_err(|_| "Codex request failed")?;
             let stdout = child.stdout.take().ok_or("Codex output unavailable")?;
             let (tx, rx) = mpsc::channel();
             std::thread::spawn(move || {
@@ -49,27 +41,73 @@ impl CodexQuota {
                 }
             });
             let start = Instant::now();
-            loop {
-                let remaining = timeout
-                    .checked_sub(start.elapsed())
-                    .ok_or("Codex quota request timed out")?;
-                let line = rx
-                    .recv_timeout(remaining)
-                    .map_err(|_| "Codex quota request timed out")?;
-                if line.len() > 128 * 1024 {
-                    return Err("Codex response too large".into());
-                }
-                let message: Value =
-                    serde_json::from_str(&line).map_err(|_| "Invalid Codex response")?;
-                if message.get("id") == Some(&json!(1)) {
-                    return parse_rate_limits(&message);
-                }
+            send_line(
+                &mut stdin,
+                &json!({"method":"initialize","id":0,"params":{"clientInfo":{"name":"vibe_coding_light","title":"Vibe Coding Light","version":env!("CARGO_PKG_VERSION")}}}),
+            )?;
+            let initialized = receive_response(&rx, 0, start, timeout)?;
+            if initialized.get("error").is_some() || initialized.get("result").is_none() {
+                return Err("Codex initialization failed".into());
             }
+            send_line(&mut stdin, &json!({"method":"initialized","params":{}}))?;
+            send_line(
+                &mut stdin,
+                &json!({"method":"account/rateLimits/read","id":1}),
+            )?;
+            let message = receive_response(&rx, 1, start, timeout)?;
+            parse_rate_limits(&message)
         })();
         let _ = child.kill();
         let _ = child.wait();
         result
     }
+}
+
+fn send_line(stdin: &mut impl Write, value: &Value) -> Result<(), String> {
+    serde_json::to_writer(&mut *stdin, value).map_err(|_| "Codex request failed")?;
+    stdin.write_all(b"\n").map_err(|_| "Codex request failed")?;
+    stdin.flush().map_err(|_| "Codex request failed".into())
+}
+
+fn receive_response(
+    rx: &mpsc::Receiver<String>,
+    id: u64,
+    start: Instant,
+    timeout: Duration,
+) -> Result<Value, String> {
+    loop {
+        let remaining = timeout
+            .checked_sub(start.elapsed())
+            .ok_or("Codex quota request timed out")?;
+        let line = rx
+            .recv_timeout(remaining)
+            .map_err(|_| "Codex quota request timed out")?;
+        if line.len() > 128 * 1024 {
+            return Err("Codex response too large".into());
+        }
+        let message: Value = serde_json::from_str(&line).map_err(|_| "Invalid Codex response")?;
+        if message.get("id") == Some(&json!(id)) {
+            return Ok(message);
+        }
+    }
+}
+
+fn locate_codex_binary() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join("codex"))
+                .collect()
+        })
+        .unwrap_or_default();
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/codex"),
+        PathBuf::from("/usr/local/bin/codex"),
+    ]);
+    if let Some(home) = dirs::home_dir() {
+        candidates.extend([home.join(".local/bin/codex"), home.join(".codex/bin/codex")]);
+    }
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 pub fn parse_rate_limits(value: &Value) -> Result<Vec<QuotaWindow>, String> {
@@ -187,7 +225,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("fake-server");
         let log = dir.path().join("requests");
-        fs::write(&script, format!("#!/bin/sh\nread a\nread b\nread c\nprintf '%s\\n%s\\n%s\\n' \"$a\" \"$b\" \"$c\" > '{}'\nprintf '%s\\n' '{{\"id\":0,\"result\":{{}}}}' '{{\"id\":1,\"result\":{{\"rateLimits\":{{\"limitId\":\"codex\",\"primary\":{{\"usedPercent\":50,\"windowDurationMins\":300,\"resetsAt\":2000000000}}}}}}}}'\nsleep 1\n", log.display())).unwrap();
+        fs::write(&script, format!("#!/bin/sh\nread a\nprintf '%s\\n' '{{\"id\":0,\"result\":{{}}}}'\nread b\nread c\nprintf '%s\\n%s\\n%s\\n' \"$a\" \"$b\" \"$c\" > '{}'\nprintf '%s\\n' '{{\"id\":1,\"result\":{{\"rateLimits\":{{\"limitId\":\"codex\",\"primary\":{{\"usedPercent\":50,\"windowDurationMins\":300,\"resetsAt\":2000000000}}}}}}}}'\nsleep 1\n", log.display())).unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
         let windows = CodexQuota::read_with_binary(&script, Duration::from_millis(500)).unwrap();
         assert_eq!(windows[0].used_percent, 50.0);

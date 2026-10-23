@@ -84,6 +84,16 @@ impl NotificationService {
         value: NotificationSettings,
     ) -> Result<NotificationSettings, String> {
         self.settings.lock().unwrap().set(value.clone())?;
+        *self.last_claude_poll.lock().unwrap() = 0;
+        *self.last_codex_poll.lock().unwrap() = 0;
+        self.update_status(|status| {
+            if !should_poll_quota(&value, AgentSource::Claude) {
+                status.claude_quota_available = false;
+            }
+            if !should_poll_quota(&value, AgentSource::Codex) {
+                status.codex_quota_available = false;
+            }
+        });
         self.sync_claude_proxy();
         self.refresh_status();
         Ok(value)
@@ -144,7 +154,8 @@ impl NotificationService {
             } else {
                 Err("Claude quota snapshot stale".into())
             };
-            self.update_status(|status| status.claude_quota_available = result.is_ok());
+            let active = should_poll_quota(&self.settings(), AgentSource::Claude);
+            self.update_status(|status| status.claude_quota_available = active && result.is_ok());
             if let Ok(windows) = result {
                 for window in windows {
                     let current = self.settings();
@@ -160,7 +171,8 @@ impl NotificationService {
         }
         if should_poll_quota(&settings, AgentSource::Codex) && due(&self.last_codex_poll, now) {
             let result = CodexQuota::read(Duration::from_secs(5));
-            self.update_status(|status| status.codex_quota_available = result.is_ok());
+            let active = should_poll_quota(&self.settings(), AgentSource::Codex);
+            self.update_status(|status| status.codex_quota_available = active && result.is_ok());
             if let Ok(windows) = result {
                 for window in windows {
                     let current = self.settings();

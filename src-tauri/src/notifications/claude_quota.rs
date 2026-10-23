@@ -12,17 +12,42 @@ pub struct ProxyConfig {
     pub previous_command: Option<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct OriginalStatusLine {
+    original: Option<Value>,
+    owned_command: String,
+}
+
 pub struct ClaudeQuota;
 
 impl ClaudeQuota {
     pub fn install(settings_path: &Path, executable: &Path, data_dir: &Path) -> Result<(), String> {
         let mut settings = read_settings(settings_path)?;
         let command = proxy_command(executable, data_dir);
-        if settings["statusLine"]["command"].as_str() == Some(&command) {
-            if config_path(data_dir).is_file() && original_path(data_dir).is_file() {
+        if original_path(data_dir).exists() {
+            let mut record = read_original(data_dir)?;
+            if settings["statusLine"]["command"].as_str() != Some(&record.owned_command) {
+                return Err("Status line was edited after notification setup".into());
+            }
+            if record.owned_command == command && config_path(data_dir).is_file() {
                 return Ok(());
             }
-            return Err("Owned status line configuration is incomplete".into());
+            let previous_command = record
+                .original
+                .as_ref()
+                .and_then(|value| value["command"].as_str())
+                .map(str::to_owned);
+            atomic_json(
+                &config_path(data_dir),
+                &ProxyConfig {
+                    snapshot_path: data_dir.join("claude-quota-snapshot.json"),
+                    previous_command,
+                },
+            )?;
+            record.owned_command = command.clone();
+            atomic_json(&original_path(data_dir), &record)?;
+            settings["statusLine"] = json!({"type":"command", "command":command});
+            return atomic_json(settings_path, &settings);
         }
         let previous = settings.get("statusLine").cloned();
         let previous_command = match previous.as_ref() {
@@ -36,7 +61,13 @@ impl ClaudeQuota {
             Some(_) => return Err("Unsupported or managed status line configuration".into()),
         };
         fs::create_dir_all(data_dir).map_err(|error| error.to_string())?;
-        atomic_json(&original_path(data_dir), &json!({"original": previous}))?;
+        atomic_json(
+            &original_path(data_dir),
+            &OriginalStatusLine {
+                original: previous,
+                owned_command: command.clone(),
+            },
+        )?;
         atomic_json(
             &config_path(data_dir),
             &ProxyConfig {
@@ -48,26 +79,25 @@ impl ClaudeQuota {
         atomic_json(settings_path, &settings)
     }
 
-    pub fn remove(settings_path: &Path, executable: &Path, data_dir: &Path) -> Result<(), String> {
+    pub fn remove(settings_path: &Path, _executable: &Path, data_dir: &Path) -> Result<(), String> {
         let mut settings = read_settings(settings_path)?;
-        if settings["statusLine"]["command"].as_str() != Some(&proxy_command(executable, data_dir))
-        {
+        if !original_path(data_dir).exists() {
             return Ok(());
         }
-        let original: Value = serde_json::from_slice(
-            &fs::read(original_path(data_dir)).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        let original = original
-            .get("original")
-            .ok_or("Missing original status line")?;
-        if original.is_null() {
+        let record = read_original(data_dir)?;
+        if settings["statusLine"]["command"].as_str() != Some(&record.owned_command) {
+            let _ = fs::remove_file(config_path(data_dir));
+            let _ = fs::remove_file(original_path(data_dir));
+            let _ = fs::remove_file(data_dir.join("claude-quota-snapshot.json"));
+            return Ok(());
+        }
+        if let Some(original) = record.original {
+            settings["statusLine"] = original;
+        } else {
             settings
                 .as_object_mut()
                 .ok_or("Invalid settings")?
                 .remove("statusLine");
-        } else {
-            settings["statusLine"] = original.clone();
         }
         atomic_json(settings_path, &settings)?;
         let _ = fs::remove_file(config_path(data_dir));
@@ -85,6 +115,11 @@ impl ClaudeQuota {
         }
         Ok(windows)
     }
+}
+
+fn read_original(data_dir: &Path) -> Result<OriginalStatusLine, String> {
+    serde_json::from_slice(&fs::read(original_path(data_dir)).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())
 }
 
 pub fn run_statusline_proxy(
@@ -161,11 +196,8 @@ fn parse_snapshot(value: &Value) -> Vec<QuotaWindow> {
     .filter_map(|(id, label, duration)| {
         let entry = value.get("rate_limits")?.get(id)?;
         let used = entry.get("used_percentage")?.as_f64()?;
-        let reset = entry.get("resets_at")?.as_str()?;
-        let reset_epoch = chrono::DateTime::parse_from_rfc3339(reset)
-            .ok()?
-            .timestamp();
-        if !used.is_finite() || !(0.0..=100.0).contains(&used) || reset_epoch <= 0 {
+        let reset_epoch = entry.get("resets_at")?.as_u64()?;
+        if !used.is_finite() || !(0.0..=100.0).contains(&used) || reset_epoch == 0 {
             return None;
         }
         Some(QuotaWindow {
@@ -174,7 +206,7 @@ fn parse_snapshot(value: &Value) -> Vec<QuotaWindow> {
             bucket_label: label.into(),
             duration_mins: duration,
             used_percent: used,
-            resets_at: reset_epoch as u64,
+            resets_at: reset_epoch,
             reached: used == 100.0,
         })
     })
@@ -250,13 +282,32 @@ mod tests {
     }
 
     #[test]
+    fn official_epoch_second_reset_field_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = ProxyConfig {
+            snapshot_path: dir.path().join("snapshot.json"),
+            previous_command: None,
+        };
+        run_statusline_proxy(
+            br#"{"rate_limits":{"five_hour":{"used_percentage":23.5,"resets_at":1738425600}}}"#
+                .as_slice(),
+            &mut Vec::new(),
+            &config,
+        )
+        .unwrap();
+        let windows = ClaudeQuota::read_snapshot(&config.snapshot_path).unwrap();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].resets_at, 1738425600);
+    }
+
+    #[test]
     fn five_hour_and_seven_day_normalize_independently() {
         let dir = tempfile::tempdir().unwrap();
         let config = ProxyConfig {
             snapshot_path: dir.path().join("snapshot.json"),
             previous_command: None,
         };
-        let input = r#"{"rate_limits":{"five_hour":{"used_percentage":35.5,"resets_at":"2030-01-01T05:00:00Z"},"seven_day":{"used_percentage":70,"resets_at":"2030-01-07T00:00:00Z"}}}"#;
+        let input = r#"{"rate_limits":{"five_hour":{"used_percentage":35.5,"resets_at":1893474000},"seven_day":{"used_percentage":70,"resets_at":1893974400}}}"#;
         run_statusline_proxy(input.as_bytes(), &mut Vec::new(), &config).unwrap();
         let windows = ClaudeQuota::read_snapshot(&config.snapshot_path).unwrap();
         assert_eq!(windows.len(), 2);
@@ -281,6 +332,19 @@ mod tests {
     }
 
     #[test]
+    fn previous_command_receives_exact_original_stdin() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = ProxyConfig {
+            snapshot_path: dir.path().join("snapshot.json"),
+            previous_command: Some("cat".into()),
+        };
+        let input = br#"{"model":{"display_name":"Claude"},"session_id":"abc"}"#;
+        let mut output = Vec::new();
+        run_statusline_proxy(input.as_slice(), &mut output, &config).unwrap();
+        assert_eq!(output, input);
+    }
+
+    #[test]
     fn install_twice_is_idempotent_and_remove_restores_previous() {
         let dir = tempfile::tempdir().unwrap();
         let settings = dir.path().join("settings.json");
@@ -300,6 +364,32 @@ mod tests {
             serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
         assert_eq!(restored["statusLine"]["command"], "printf old");
         assert_eq!(restored["theme"], "dark");
+    }
+
+    #[test]
+    fn app_relocation_updates_owned_wrapper_without_nesting() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join("settings.json");
+        let data = dir.path().join("data");
+        let old_exe = dir.path().join("old app");
+        let new_exe = dir.path().join("new app");
+        fs::write(
+            &settings,
+            r#"{"statusLine":{"type":"command","command":"printf original"}}"#,
+        )
+        .unwrap();
+        ClaudeQuota::install(&settings, &old_exe, &data).unwrap();
+        ClaudeQuota::install(&settings, &new_exe, &data).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+        assert!(value["statusLine"]["command"]
+            .as_str()
+            .unwrap()
+            .contains("new app"));
+        ClaudeQuota::remove(&settings, &new_exe, &data).unwrap();
+        let restored: serde_json::Value =
+            serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+        assert_eq!(restored["statusLine"]["command"], "printf original");
     }
 
     #[test]

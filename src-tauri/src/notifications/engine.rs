@@ -11,6 +11,7 @@ use std::path::PathBuf;
 const COMPLETE_DELAY_MS: u64 = 3_000;
 const ERROR_COOLDOWN_MS: u64 = 30_000;
 const CANDIDATE_TTL_MS: u64 = 120_000;
+const COMPLETION_ERROR_TTL_MS: u64 = 600_000;
 const EVENT_DEDUPE_MS: u64 = 86_400_000;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -19,6 +20,8 @@ struct QuotaState {
     resets_at: u64,
     crossed: Vec<u8>,
     alerted: bool,
+    #[serde(default)]
+    lowest_alerted: Option<u8>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -26,6 +29,8 @@ struct Ledger {
     event_ids: HashMap<String, u64>,
     error_at: HashMap<String, u64>,
     quotas: HashMap<String, QuotaState>,
+    #[serde(default)]
+    turn_categories: HashMap<String, u64>,
 }
 
 struct PendingCompletion {
@@ -87,13 +92,51 @@ impl NotificationEngine {
         now_ms: u64,
         settings: &NotificationSettings,
     ) -> Vec<PushCandidate> {
+        let age_limit = if matches!(
+            event.kind,
+            AgentEventKind::Completed | AgentEventKind::Error
+        ) {
+            COMPLETION_ERROR_TTL_MS
+        } else {
+            CANDIDATE_TTL_MS
+        };
+        if event.at_ms > now_ms.saturating_add(60_000)
+            || now_ms.saturating_sub(event.at_ms) >= age_limit
+        {
+            return Vec::new();
+        }
         self.ledger
             .event_ids
+            .retain(|_, at| now_ms.saturating_sub(*at) <= EVENT_DEDUPE_MS);
+        self.ledger
+            .turn_categories
             .retain(|_, at| now_ms.saturating_sub(*at) <= EVENT_DEDUPE_MS);
         if self.ledger.event_ids.contains_key(&event.id) {
             return Vec::new();
         }
         self.ledger.event_ids.insert(event.id.clone(), now_ms);
+        if event.kind == AgentEventKind::Working {
+            let prefix = format!("{:?}:{}:", event.source, event.session_id);
+            self.ledger
+                .turn_categories
+                .retain(|key, _| !key.starts_with(&prefix));
+        } else if matches!(
+            event.kind,
+            AgentEventKind::Permission | AgentEventKind::Question | AgentEventKind::Completed
+        ) {
+            let key = format!(
+                "{:?}:{}:{}:{:?}",
+                event.source,
+                event.session_id,
+                event.turn_id.as_deref().unwrap_or("no-turn"),
+                event.kind
+            );
+            if self.ledger.turn_categories.contains_key(&key) {
+                self.persist();
+                return Vec::new();
+            }
+            self.ledger.turn_categories.insert(key, now_ms);
+        }
         self.persist();
         if matches!(
             event.kind,
@@ -132,7 +175,7 @@ impl NotificationEngine {
             } else {
                 0
             }),
-            expires_at_ms: now_ms.saturating_add(CANDIDATE_TTL_MS),
+            expires_at_ms: event.at_ms.saturating_add(age_limit),
         };
         if kind == PushKind::Completed {
             self.pending.retain(|pending| {
@@ -215,10 +258,15 @@ impl NotificationEngine {
             return Vec::new();
         };
         let mut output = Vec::new();
-        if now_ms >= state.resets_at.saturating_mul(1_000)
+        let reset_ready = now_ms >= state.resets_at.saturating_mul(1_000)
             && window.resets_at != state.resets_at
-            && remaining > state.previous_remaining
-        {
+            && window.resets_at.saturating_sub(state.resets_at)
+                >= window.duration_mins.saturating_mul(60) / 2
+            && (!state.alerted
+                || state
+                    .lowest_alerted
+                    .is_some_and(|level| remaining > level as f64));
+        if reset_ready {
             if state.alerted && source_enabled(settings, window.source) && settings.quota.recovered
             {
                 output.push(quota_candidate(
@@ -230,6 +278,7 @@ impl NotificationEngine {
             }
             state.crossed.clear();
             state.alerted = false;
+            state.lowest_alerted = None;
         }
         let crossed: Vec<u8> = [80, 50, 20, 0]
             .into_iter()
@@ -254,10 +303,17 @@ impl NotificationEngine {
                     now_ms,
                 ));
                 state.alerted = true;
+                state.lowest_alerted = Some(
+                    state
+                        .lowest_alerted
+                        .map_or(level, |previous| previous.min(level)),
+                );
             }
         }
         state.previous_remaining = remaining;
-        state.resets_at = window.resets_at;
+        if reset_ready || window.resets_at == state.resets_at {
+            state.resets_at = window.resets_at;
+        }
         self.ledger.quotas.insert(key, state);
         self.persist();
         output
@@ -462,14 +518,15 @@ mod tests {
             e.on_quota(quota("primary", 300, 75.0, 5), 2_000, &s).len(),
             1
         );
-        let recovered = e.on_quota(quota("primary", 300, 100.0, 10), 6_000, &s);
+        let recovered = e.on_quota(quota("primary", 300, 100.0, 18_005), 6_000, &s);
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered[0].kind, PushKind::QuotaRecovered);
         assert!(e
-            .on_quota(quota("primary", 300, 100.0, 10), 7_000, &s)
+            .on_quota(quota("primary", 300, 100.0, 18_005), 7_000, &s)
             .is_empty());
         assert_eq!(
-            e.on_quota(quota("primary", 300, 75.0, 10), 8_000, &s).len(),
+            e.on_quota(quota("primary", 300, 75.0, 18_005), 8_000, &s)
+                .len(),
             1
         );
     }
@@ -526,6 +583,101 @@ mod tests {
         e.on_quota(quota("primary", 300, 85.0, 9999), 1_000, &s);
         assert!(e
             .on_quota(quota("primary", 300, 75.0, 9999), 2_000, &s)
+            .is_empty());
+    }
+
+    #[test]
+    fn duplicate_hook_in_same_turn_does_not_push_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut e = NotificationEngine::load(dir.path().join("ledger.json"));
+        let s = settings();
+        assert_eq!(
+            e.on_event(
+                event("a", "s", AgentEventKind::Permission, 1_000),
+                1_000,
+                &s
+            )
+            .len(),
+            1
+        );
+        assert!(e
+            .on_event(
+                event("b", "s", AgentEventKind::Permission, 1_001),
+                1_001,
+                &s
+            )
+            .is_empty());
+        e.on_event(event("c", "s", AgentEventKind::Working, 2_000), 2_000, &s);
+        assert_eq!(
+            e.on_event(
+                event("d", "s", AgentEventKind::Permission, 3_000),
+                3_000,
+                &s
+            )
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn stale_events_are_dropped_by_category_age() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut e = NotificationEngine::load(dir.path().join("ledger.json"));
+        let s = settings();
+        assert!(e
+            .on_event(
+                event("a", "s", AgentEventKind::Permission, 1_000),
+                122_000,
+                &s
+            )
+            .is_empty());
+        assert!(e
+            .on_event(
+                event("b", "s", AgentEventKind::Completed, 1_000),
+                602_000,
+                &s
+            )
+            .is_empty());
+        e.on_event(
+            event("c", "s", AgentEventKind::Completed, 1_000),
+            540_000,
+            &s,
+        );
+        let candidate = e.flush_due(543_000, &s);
+        assert_eq!(candidate.len(), 1);
+        assert_eq!(candidate[0].expires_at_ms, 601_000);
+    }
+
+    #[test]
+    fn reset_waits_until_remaining_exceeds_prior_alerted_level() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut e = NotificationEngine::load(dir.path().join("ledger.json"));
+        let s = settings();
+        e.on_quota(quota("primary", 300, 85.0, 5), 1_000, &s);
+        assert_eq!(
+            e.on_quota(quota("primary", 300, 75.0, 5), 2_000, &s).len(),
+            1
+        );
+        assert!(e
+            .on_quota(quota("primary", 300, 76.0, 18_005), 6_000, &s)
+            .is_empty());
+        let recovered = e.on_quota(quota("primary", 300, 85.0, 18_005), 7_000, &s);
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].kind, PushKind::QuotaRecovered);
+    }
+
+    #[test]
+    fn small_reset_timestamp_drift_does_not_rearm() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut e = NotificationEngine::load(dir.path().join("ledger.json"));
+        let s = settings();
+        e.on_quota(quota("primary", 300, 85.0, 5), 1_000, &s);
+        assert_eq!(
+            e.on_quota(quota("primary", 300, 75.0, 5), 2_000, &s).len(),
+            1
+        );
+        assert!(e
+            .on_quota(quota("primary", 300, 90.0, 6), 6_000, &s)
             .is_empty());
     }
 }

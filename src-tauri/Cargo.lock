@@ -4620,7 +4620,6 @@ version = "1.4.0"
 dependencies = [
  "base64 0.22.1",
  "cc",
- "chrono",
  "dirs 5.0.1",
  "image",
  "objc",
