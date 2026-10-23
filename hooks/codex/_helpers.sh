@@ -3,6 +3,7 @@
 
 CODE_LIGHT_DIR="$HOME/.code-light"
 SESSIONS_DIR="$CODE_LIGHT_DIR/sessions"
+EVENTS_DIR="$CODE_LIGHT_DIR/events"
 
 # Extract session_id from JSON input (handles optional whitespace)
 get_session_id_from_input() {
@@ -100,4 +101,23 @@ write_state() {
     json="${json}}"
 
     _atomic_write "$sf" "$json"
+}
+
+write_notification_event() {
+    local input="$1" kind="$2" turn_id="${3:-}"
+    local session_id
+    session_id=$(get_session_id_from_input "$input")
+    [ -n "$session_id" ] || return 0
+    mkdir -p "$EVENTS_DIR" 2>/dev/null || return 0
+    local id ts target tmp
+    id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+    ts=$(( $(date +%s) * 1000 ))
+    target="$EVENTS_DIR/$id.json"
+    tmp="$target.tmp.$$"
+    printf '{"id":"%s","source":"codex","session_id":"%s","turn_id":%s,"kind":"%s","at_ms":%s}' \
+        "$id" "$(json_escape "$session_id")" \
+        "$(if [ -n "$turn_id" ]; then printf '"%s"' "$(json_escape "$turn_id")"; else printf null; fi)" \
+        "$kind" "$ts" > "$tmp" 2>/dev/null || return 0
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv "$tmp" "$target" 2>/dev/null || true
 }

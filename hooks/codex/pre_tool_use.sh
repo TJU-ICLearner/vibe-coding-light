@@ -9,4 +9,9 @@ file_path=$(extract_field "$INPUT" "file_path")
 command=$(extract_field "$INPUT" "command")
 message=$(make_message "$tool_name" "$file_path" "$command")
 
-[ -n "$SESSION_ID" ] && write_state "$SESSION_ID" "working" "$message" "$tool_name" "$file_path" "$command"
+if [ -n "$SESSION_ID" ]; then
+    if ! grep -q '"state":"working"' "$(session_file "$SESSION_ID")" 2>/dev/null; then
+        write_notification_event "$INPUT" working "$(extract_field "$INPUT" "turn_id")"
+    fi
+    write_state "$SESSION_ID" "working" "$message" "$tool_name" "$file_path" "$command"
+fi

@@ -9,3 +9,4 @@ message="Tool execution failed"
 [ -n "$tool_name" ] && message="${tool_name} failed"
 
 write_state "error" "$message" "$tool_name" "$file_path"
+write_notification_event "$INPUT" error

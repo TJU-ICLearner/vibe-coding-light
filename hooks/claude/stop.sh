@@ -8,3 +8,4 @@ message="Task finished"
 [ -n "$stop_reason" ] && message="Finished: $stop_reason"
 
 write_state "completed" "$message"
+write_notification_event "$INPUT" completed
