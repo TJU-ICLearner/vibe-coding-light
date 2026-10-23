@@ -61,7 +61,7 @@ Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop
 
 ## Optional watch notifications (macOS)
 
-Open **Notification Settings** from the menu bar, save a Bark device key, turn on the master switch, then choose Claude Code, Codex, and the events you want: approval, questions, completed turns, errors, and quota alerts. Quota choices are 80%, 50%, 20%, and 0% remaining plus recovery. Each agent and quota period alerts separately; the first reading sets a baseline. Pushes contain no prompts, project paths, commands, or raw error text. Previously installed app hooks are updated on upgrade.
+Open **Notification Settings** from the menu bar and save only the Bark device key—the part of its test URL after the domain and before the next `/`, without `/title/body` or query parameters. Turn on the master switch, then choose Claude Code, Codex, and the events you want: approval, questions, completed turns, errors, and quota alerts. The app currently connects to Bark's official `api.day.app` server. Quota choices are 80%, 50%, 20%, and 0% remaining plus recovery. Each agent and quota period alerts separately; the first reading sets a baseline. Pushes contain no prompts, project paths, commands, or raw error text. Previously installed app hooks are updated on upgrade.
 
 Install Bark on your iPhone and allow its notifications, then configure Apple Watch to receive Bark notifications. Pushes reach iPhone first; Apple's routing rules determine whether they appear on the watch. The master switch is off by default, and alerts stop when the switch is off or the app exits. Quota data may be unavailable for some Claude/Codex versions or sign-in methods; the settings window shows availability.
 
