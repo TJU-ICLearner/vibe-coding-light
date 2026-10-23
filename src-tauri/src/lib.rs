@@ -35,6 +35,7 @@ struct TrayUi {
     toggle_pet: MenuItem<tauri::Wry>,
     pet_action: MenuItem<tauri::Wry>,
     customize_pet: Option<MenuItem<tauri::Wry>>,
+    notification_settings: Option<MenuItem<tauri::Wry>>,
     setup_claude: MenuItem<tauri::Wry>,
     setup_codex: MenuItem<tauri::Wry>,
     language: Submenu<tauri::Wry>,
@@ -62,6 +63,9 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
     if let Some(item) = &ui.customize_pet {
         let _ = item.set_text(labels.customize_pet);
     }
+    if let Some(item) = &ui.notification_settings {
+        let _ = item.set_text(labels.notification_settings);
+    }
     let _ = ui.setup_claude.set_text(labels.claude_hooks);
     let _ = ui.setup_codex.set_text(labels.codex_hooks);
     let _ = ui.language.set_text(labels.language);
@@ -72,6 +76,9 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
     let _ = ui.quit.set_text(labels.quit);
     if let Some(window) = app.get_webview_window("settings") {
         let _ = window.set_title(ui_copy::settings_title(locale));
+    }
+    if let Some(window) = app.get_webview_window("notifications") {
+        let _ = window.set_title(ui_copy::notification_settings_title(locale));
     }
     if let Some(state) = app.try_state::<Arc<Mutex<AppState>>>() {
         with_status_snapshot(&state, |current, message, timestamp, count| {
@@ -595,6 +602,26 @@ fn show_pet_settings(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn show_notification_settings(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("notifications") {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+    } else {
+        WebviewWindowBuilder::new(
+            app,
+            "notifications",
+            WebviewUrl::App("notifications.html".into()),
+        )
+        .title(ui_copy::notification_settings_title(current_locale(app)))
+        .inner_size(740.0, 780.0)
+        .min_inner_size(600.0, 600.0)
+        .build()
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn open_pet_settings(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -637,6 +664,12 @@ pub fn run() {
             pet_commands::delete_photo_pet,
             pet_commands::get_active_pet,
             pet_commands::get_pet_import_capabilities,
+            notifications::service::get_notification_settings,
+            notifications::service::set_notification_settings,
+            notifications::service::save_bark_key,
+            notifications::service::delete_bark_key,
+            notifications::service::send_test_notification,
+            notifications::service::get_notification_status,
             open_pet_settings
         ])
         .setup(move |app| {
@@ -646,7 +679,13 @@ pub fn run() {
             let locale_store = ui_locale::UiLocaleStore::load(preferences, system_tag.as_deref());
             let locale = locale_store.get();
             app.manage(Arc::new(Mutex::new(locale_store)));
-            app.manage(pet_store::PetStore::new(pet_data_dir));
+            app.manage(pet_store::PetStore::new(pet_data_dir.clone()));
+            let notification_service = notifications::service::NotificationService::start(
+                app.handle().clone(),
+                pet_data_dir,
+            )
+            .map_err(std::io::Error::other)?;
+            app.manage(notification_service);
             let initial_icon = icons.lock().unwrap().get("idle").unwrap().clone();
             let labels = ui_copy::menu_labels(
                 locale,
@@ -661,6 +700,10 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let customize_item =
                 MenuItemBuilder::with_id("customize_pet", &labels.customize_pet).build(app)?;
+            #[cfg(target_os = "macos")]
+            let notification_settings_item =
+                MenuItemBuilder::with_id("notification_settings", &labels.notification_settings)
+                    .build(app)?;
             let setup_claude_item =
                 MenuItemBuilder::with_id("setup_claude", &labels.setup_claude).build(app)?;
             let setup_codex_item =
@@ -681,6 +724,8 @@ pub fn run() {
                 .item(&pet_action_item);
             #[cfg(target_os = "macos")]
             let menu = menu.item(&customize_item);
+            #[cfg(target_os = "macos")]
+            let menu = menu.item(&notification_settings_item);
             let menu = menu
                 .separator()
                 .item(&setup_claude_item)
@@ -701,6 +746,16 @@ pub fn run() {
                     #[cfg(target_os = "macos")]
                     {
                         Some(customize_item)
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        None
+                    }
+                },
+                notification_settings: {
+                    #[cfg(target_os = "macos")]
+                    {
+                        Some(notification_settings_item)
                     }
                     #[cfg(not(target_os = "macos"))]
                     {
@@ -746,6 +801,12 @@ pub fn run() {
                     "customize_pet" => {
                         if let Err(error) = show_pet_settings(app) {
                             eprintln!("Could not open pet settings: {error}");
+                        }
+                    }
+                    #[cfg(target_os = "macos")]
+                    "notification_settings" => {
+                        if let Err(error) = show_notification_settings(app) {
+                            eprintln!("Could not open notification settings: {error}");
                         }
                     }
                     "setup_claude" => match setup_hooks() {

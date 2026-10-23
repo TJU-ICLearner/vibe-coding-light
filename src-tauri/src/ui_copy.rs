@@ -1,3 +1,5 @@
+use crate::notifications::bark::PushPayload;
+use crate::notifications::model::{AgentSource, PushCandidate, PushKind};
 use crate::ui_locale::AppLocale;
 use crate::State;
 
@@ -12,6 +14,7 @@ pub struct MenuLabels {
     pub toggle_pet: String,
     pub pet_action: String,
     pub customize_pet: String,
+    pub notification_settings: String,
     pub setup_claude: String,
     pub setup_codex: String,
     pub claude_hooks: String,
@@ -43,7 +46,16 @@ pub fn menu_labels(
     claude: &HookFeedback,
     codex: &HookFeedback,
 ) -> MenuLabels {
-    let (toggle_pet, pet_action, customize_pet, language, chinese, english, quit) = match locale {
+    let (
+        toggle_pet,
+        pet_action,
+        customize_pet,
+        notification_settings,
+        language,
+        chinese,
+        english,
+        quit,
+    ) = match locale {
         AppLocale::ZhCn => (
             if pet_visible {
                 "隐藏桌宠"
@@ -52,6 +64,7 @@ pub fn menu_labels(
             },
             "摸摸  ⌘B",
             "自定义桌宠",
+            "通知设置",
             "语言",
             "中文",
             "英文",
@@ -61,6 +74,7 @@ pub fn menu_labels(
             if pet_visible { "Hide Pet" } else { "Show Pet" },
             "Pet the Pet  ⌘B",
             "Customize Pet",
+            "Notification Settings",
             "Language",
             "Chinese",
             "English",
@@ -71,6 +85,7 @@ pub fn menu_labels(
         toggle_pet: toggle_pet.into(),
         pet_action: pet_action.into(),
         customize_pet: customize_pet.into(),
+        notification_settings: notification_settings.into(),
         setup_claude: hook_label(locale, "Claude", &HookFeedback::Initial),
         setup_codex: hook_label(locale, "Codex", &HookFeedback::Initial),
         claude_hooks: hook_label(locale, "Claude", claude),
@@ -86,6 +101,96 @@ pub fn settings_title(locale: AppLocale) -> &'static str {
     match locale {
         AppLocale::ZhCn => "自定义桌宠 · Vibe Coding Light",
         AppLocale::En => "Customize Pet · Vibe Coding Light",
+    }
+}
+
+pub fn notification_settings_title(locale: AppLocale) -> &'static str {
+    match locale {
+        AppLocale::ZhCn => "通知设置 · Vibe Coding Light",
+        AppLocale::En => "Notification Settings · Vibe Coding Light",
+    }
+}
+
+pub fn test_notification(locale: AppLocale) -> PushPayload {
+    PushPayload {
+        title: "Vibe Coding Light".into(),
+        body: match locale {
+            AppLocale::ZhCn => "测试通知：连接正常",
+            AppLocale::En => "Test notification: connection works",
+        }
+        .into(),
+        group: "Vibe Coding Light".into(),
+    }
+}
+
+pub fn notification_payload(candidate: &PushCandidate, locale: AppLocale) -> PushPayload {
+    let source = match candidate.source {
+        AgentSource::Claude => "Claude",
+        AgentSource::Codex => "Codex",
+    };
+    let body = match (&candidate.kind, locale) {
+        (PushKind::Permission, AppLocale::ZhCn) => format!("{source} · 等待权限批准"),
+        (PushKind::Permission, AppLocale::En) => format!("{source} · Permission approval needed"),
+        (PushKind::Question, AppLocale::ZhCn) => format!("{source} · 等待回答问题"),
+        (PushKind::Question, AppLocale::En) => format!("{source} · Answer needed"),
+        (PushKind::Completed, AppLocale::ZhCn) => format!("{source} · 本轮回复完成"),
+        (PushKind::Completed, AppLocale::En) => format!("{source} · Current turn completed"),
+        (PushKind::Error, AppLocale::ZhCn) => format!("{source} · 执行遇到错误"),
+        (PushKind::Error, AppLocale::En) => format!("{source} · Execution encountered an error"),
+        (PushKind::QuotaThreshold(_), _) => {
+            let period = quota_period(candidate, locale);
+            let remaining = candidate.remaining_percent.unwrap_or(0.0);
+            let amount = if remaining.fract() == 0.0 {
+                format!("{remaining:.0}")
+            } else {
+                format!("{remaining:.1}")
+            };
+            match locale {
+                AppLocale::ZhCn => format!("{source} · {period}额度剩余 {amount}%"),
+                AppLocale::En => format!("{source} · {period} quota {amount}% remaining"),
+            }
+        }
+        (PushKind::QuotaRecovered, _) => {
+            let period = quota_period(candidate, locale);
+            match locale {
+                AppLocale::ZhCn => format!("{source} · {period}额度已恢复"),
+                AppLocale::En => format!("{source} · {period} quota recovered"),
+            }
+        }
+        (PushKind::Test, _) => return test_notification(locale),
+    };
+    PushPayload {
+        title: "Vibe Coding Light".into(),
+        body,
+        group: "Vibe Coding Light".into(),
+    }
+}
+
+fn quota_period(candidate: &PushCandidate, locale: AppLocale) -> String {
+    let label = candidate.label.as_deref().unwrap_or_default();
+    let parts: Vec<&str> = label.split('·').map(str::trim).collect();
+    let minutes = parts
+        .last()
+        .and_then(|value| value.strip_suffix(" min"))
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
+    let period = match (minutes, locale) {
+        (300, AppLocale::ZhCn) => "5 小时".into(),
+        (300, AppLocale::En) => "5 hours".into(),
+        (10080, AppLocale::ZhCn) => "7 天".into(),
+        (10080, AppLocale::En) => "7 days".into(),
+        (value, AppLocale::ZhCn) if value >= 60 && value % 60 == 0 => {
+            format!("{} 小时", value / 60)
+        }
+        (value, AppLocale::En) if value >= 60 && value % 60 == 0 => format!("{} hours", value / 60),
+        (value, AppLocale::ZhCn) => format!("{value} 分钟"),
+        (value, AppLocale::En) => format!("{value} min"),
+    };
+    if candidate.source == AgentSource::Codex && parts.len() > 1 {
+        let bucket = parts[0].chars().take(40).collect::<String>();
+        format!("{bucket} · {period}")
+    } else {
+        period
     }
 }
 
@@ -177,6 +282,31 @@ mod tests {
     use super::{menu_labels, settings_title, status_text, HookFeedback};
     use crate::ui_locale::AppLocale;
     use crate::State;
+
+    #[test]
+    fn notification_copy_uses_current_locale_and_period() {
+        use crate::notifications::model::{AgentSource, PushCandidate, PushKind};
+        let candidate = PushCandidate {
+            id: "x".into(),
+            source: AgentSource::Codex,
+            kind: PushKind::QuotaThreshold(20),
+            label: Some("Coding primary · 300 min".into()),
+            remaining_percent: Some(19.5),
+            due_at_ms: 1,
+            expires_at_ms: 2,
+        };
+        let zh = super::notification_payload(&candidate, AppLocale::ZhCn);
+        let en = super::notification_payload(&candidate, AppLocale::En);
+        assert!(zh.body.contains("5 小时"));
+        assert!(zh.body.contains("19.5%"));
+        assert!(en.body.contains("5 hours"));
+        assert!(en.body.contains("19.5%"));
+        assert!(!en.body.contains("额度"));
+        assert_ne!(
+            super::test_notification(AppLocale::ZhCn).body,
+            super::test_notification(AppLocale::En).body
+        );
+    }
 
     #[test]
     fn menu_labels_follow_locale_and_feedback() {
