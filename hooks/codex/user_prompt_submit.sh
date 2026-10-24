@@ -6,5 +6,5 @@ SESSION_ID=$(get_session_id_from_input "$INPUT")
 
 if [ -n "$SESSION_ID" ]; then
     write_state "$SESSION_ID" "working" "User prompt submitted"
-    write_notification_event "$INPUT" working "$(extract_field "$INPUT" "turn_id")"
+    write_notification_event "$INPUT" working "$(extract_field "$INPUT" "turn_id")" 1
 fi

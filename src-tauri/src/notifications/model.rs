@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -53,6 +54,25 @@ pub struct NotificationSettings {
     pub sources: SourceSwitches,
     pub events: EventSwitches,
     pub quota: QuotaSwitches,
+    pub include_details: bool,
+    pub templates: HashMap<String, NotificationTemplate>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationTemplate {
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EventDetails {
+    pub task: Option<String>,
+    pub command: Option<String>,
+    pub error: Option<String>,
+    pub reply: Option<String>,
+    pub question: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -83,6 +103,10 @@ pub struct AgentEvent {
     pub turn_id: Option<String>,
     pub kind: AgentEventKind,
     pub at_ms: u64,
+    #[serde(default)]
+    pub new_turn: bool,
+    #[serde(default)]
+    pub details: EventDetails,
 }
 
 #[allow(dead_code)]
@@ -117,6 +141,7 @@ pub struct PushCandidate {
     pub kind: PushKind,
     pub label: Option<String>,
     pub remaining_percent: Option<f64>,
+    pub details: EventDetails,
     pub due_at_ms: u64,
     pub expires_at_ms: u64,
 }

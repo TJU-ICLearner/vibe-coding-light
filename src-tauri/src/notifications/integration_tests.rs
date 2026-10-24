@@ -27,6 +27,8 @@ fn hook_file(
         turn_id: Some("turn-1".into()),
         kind,
         at_ms: at,
+        new_turn: false,
+        details: Default::default(),
     };
     fs::write(
         dir.join(format!("{id}.json")),

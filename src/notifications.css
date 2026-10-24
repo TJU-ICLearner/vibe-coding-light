@@ -33,6 +33,21 @@ button { border: 1px solid #cbdacf; border-radius: 9px; padding: 9px 11px; backg
 button:hover { background: #eff7f0; }
 button:disabled { opacity: .48; cursor: default; }
 button:focus-visible, .key-entry input:focus-visible { outline: 2px solid #2a8e5d; outline-offset: 2px; }
+.templates { margin-top: 16px; }
+.templates .switch-row { max-width: 410px; }
+.detail-hint { margin: 0 0 18px; max-width: 720px; color: #805f44; background: #fff8ec; border: 1px solid #f1e1c4; border-radius: 10px; padding: 10px 12px; font-size: .73rem; line-height: 1.5; }
+.template-editor { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 680px; }
+.template-editor select, .template-editor input, .template-editor textarea { width: 100%; border: 1px solid #cbdacf; border-radius: 9px; background: #fff; color: #22352d; padding: 9px 10px; font: inherit; font-size: .8rem; }
+.template-editor textarea { resize: vertical; min-height: 76px; line-height: 1.45; }
+.template-editor .field-label { margin-top: 10px; }
+.template-editor :is(select, input, textarea):focus-visible { outline: 2px solid #2a8e5d; outline-offset: 2px; }
+.template-editor button { justify-self: start; margin-top: 8px; }
+.token-hint { color: #698272; font-size: .72rem; line-height: 1.6; margin: 10px 0 0; overflow-wrap: anywhere; }
+.template-preview { margin-top: 18px; border-radius: 12px; border: 1px solid #d7e6da; background: linear-gradient(130deg, #f3faf4, #fff); padding: 13px 15px; }
+.template-preview > span { display: block; margin-bottom: 8px; color: #5c8068; font-size: .7rem; font-weight: 800; }
+#template-preview { border-radius: 9px; background: #fff; border: 1px solid #e4ede5; padding: 10px 12px; box-shadow: 0 2px 8px #2348340a; }
+#preview-title { display: block; font-size: .82rem; }
+#preview-body { margin: 5px 0 0; color: #54665a; font-size: .76rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .key-entry button, #send-test { color: #fff; background: #2c8656; border-color: #2c8656; }
 .key-entry button:hover, #send-test:hover { background: #247348; }
 .actions { display: flex; gap: 8px; justify-content: space-between; margin-top: 10px; }

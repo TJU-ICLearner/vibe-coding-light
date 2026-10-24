@@ -8,6 +8,8 @@ export interface NotificationSettings {
   sources: { claude: boolean; codex: boolean };
   events: { permission: boolean; question: boolean; completed: boolean; error: boolean };
   quota: { at80: boolean; at50: boolean; at20: boolean; at0: boolean; recovered: boolean };
+  include_details: boolean;
+  templates: Record<string, { title: string; body: string }>;
 }
 export interface NotificationStatus {
   serviceAvailable: boolean; keySaved: boolean; claudeHooksInstalled: boolean; codexHooksInstalled: boolean;
@@ -32,6 +34,28 @@ const api: NotificationApi = {
 };
 
 type NotificationFeedback = "testSending" | "testSuccess" | "testFailure" | "testRejected" | "testUnsent" | "testAmbiguous" | "invalidKey" | "saveFailure" | "settingsFailure";
+type TemplateEvent = "permission" | "question" | "completed" | "error" | "quota80" | "quota50" | "quota20" | "quota0" | "recovered";
+const templateEvents: TemplateEvent[] = ["permission", "question", "completed", "error", "quota80", "quota50", "quota20", "quota0", "recovered"];
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
+}
+
+function defaultBody(event: TemplateEvent, locale: NotificationLocale): string {
+  const zh = locale === "zh-CN";
+  const bodies: Record<TemplateEvent, string> = {
+    permission: zh ? "{source} · 等待权限批准" : "{source} · Permission approval needed",
+    question: zh ? "{source} · 等待回答问题" : "{source} · Answer needed",
+    completed: zh ? "{source} · 本轮回复完成" : "{source} · Current turn completed",
+    error: zh ? "{source} · 执行遇到错误" : "{source} · Execution encountered an error",
+    quota80: zh ? "{source} · {period}额度剩余 {remaining}" : "{source} · {period} quota {remaining} remaining",
+    quota50: zh ? "{source} · {period}额度剩余 {remaining}" : "{source} · {period} quota {remaining} remaining",
+    quota20: zh ? "{source} · {period}额度剩余 {remaining}" : "{source} · {period} quota {remaining} remaining",
+    quota0: zh ? "{source} · {period}额度剩余 {remaining}" : "{source} · {period} quota {remaining} remaining",
+    recovered: zh ? "{source} · {period}额度已恢复" : "{source} · {period} quota recovered",
+  };
+  return bodies[event];
+}
 
 function sendErrorFeedback(error: unknown): NotificationFeedback {
   if (error === "Invalid Bark device key") return "invalidKey";
@@ -48,10 +72,18 @@ export class NotificationSettingsController {
   private feedback: NotificationFeedback | null = null;
   private testPending = false;
   private saveQueue: Promise<void> = Promise.resolve();
+  private selectedEvent: TemplateEvent = "permission";
+  private templateDrafts: Record<string, { title: string; body: string }> = {};
 
   constructor(private readonly root: HTMLElement, private readonly api: NotificationApi) {
     root.addEventListener("change", (event) => { void this.onChange(event); });
     root.addEventListener("click", (event) => { void this.onClick(event); });
+    root.addEventListener("input", (event) => {
+      if ((event.target as HTMLElement)?.hasAttribute("data-template-field")) {
+        this.rememberTemplateDraft();
+        this.updateTemplatePreview();
+      }
+    });
   }
 
   async init(locale: NotificationLocale): Promise<void> {
@@ -65,11 +97,32 @@ export class NotificationSettingsController {
 
   private async onChange(event: Event): Promise<void> {
     const input = event.target as HTMLInputElement;
+    if (input?.id === "template-event") {
+      this.selectedEvent = input.value as TemplateEvent;
+      this.render();
+      return;
+    }
+    const field = input?.dataset.templateField;
+    if ((field === "title" || field === "body") && this.settings) {
+      const next = structuredClone(this.settings) as NotificationSettings;
+      const key = `${this.locale}.${this.selectedEvent}`;
+      this.rememberTemplateDraft();
+      next.templates[key] = { ...this.templateDrafts[key] };
+      this.settings = next;
+      this.updateTemplatePreview();
+      this.saveQueue = this.saveQueue.then(async () => {
+        try { await this.api.setSettings(next); this.feedback = null; }
+        catch { this.feedback = "settingsFailure"; this.render(); }
+      });
+      await this.saveQueue;
+      return;
+    }
     const path = input?.dataset.path;
     if (!path || !this.settings) return;
     const next = structuredClone(this.settings) as NotificationSettings;
     const keys = path.split(".");
     if (keys.length === 1 && keys[0] === "enabled") next.enabled = input.checked;
+    else if (keys.length === 1 && keys[0] === "include_details") next.include_details = input.checked;
     else if (keys.length === 2 && (keys[0] === "sources" || keys[0] === "events" || keys[0] === "quota")) {
       const group = next[keys[0]] as unknown as Record<string, boolean>;
       if (!(keys[1] in group)) return;
@@ -94,6 +147,20 @@ export class NotificationSettingsController {
     const button = target.closest<HTMLButtonElement>("button[data-action]");
     if (!button) return;
     const action = button.dataset.action;
+    if (action === "reset-template" && this.settings) {
+      const next = structuredClone(this.settings) as NotificationSettings;
+      const key = `${this.locale}.${this.selectedEvent}`;
+      delete next.templates[key];
+      delete this.templateDrafts[key];
+      this.settings = next;
+      this.render();
+      this.saveQueue = this.saveQueue.then(async () => {
+        try { await this.api.setSettings(next); this.feedback = null; }
+        catch { this.feedback = "settingsFailure"; this.render(); }
+      });
+      await this.saveQueue;
+      return;
+    }
     if (action === "save-key") {
       const input = this.root.querySelector<HTMLInputElement>("#bark-key");
       const key = input?.value.trim() ?? "";
@@ -118,12 +185,21 @@ export class NotificationSettingsController {
 
   private render(): void {
     if (!this.settings || !this.status) return;
+    const active = this.root.contains(document.activeElement) ? document.activeElement as HTMLInputElement | HTMLTextAreaElement : null;
+    const activeTemplateField = active?.dataset?.templateField;
+    const selection = activeTemplateField ? { start: active!.selectionStart, end: active!.selectionEnd } : null;
     const s = this.settings, status = this.status, t = notificationCopy(this.locale);
     const feedback = this.feedback ?? (status.lastSendError ? sendErrorFeedback(status.lastSendError) : null);
     const feedbackError = feedback !== null && feedback !== "testSending" && feedback !== "testSuccess";
     document.documentElement.lang = this.locale;
     const toggle = (path: string, label: string, checked: boolean) => `<label class="switch-row"><span>${label}</span><input type="checkbox" data-path="${path}" ${checked ? "checked" : ""} aria-label="${label}"><i aria-hidden="true"></i></label>`;
     const eventSelected = Object.values(s.events).some(Boolean) || Object.values(s.quota).some(Boolean);
+    const labels: Record<TemplateEvent, string> = {
+      permission: t.templatePermission, question: t.templateQuestion, completed: t.templateCompleted,
+      error: t.templateError, quota80: t.templateQuota80, quota50: t.templateQuota50,
+      quota20: t.templateQuota20, quota0: t.templateQuota0, recovered: t.templateRecovered,
+    };
+    const selectedTemplate = this.templateDrafts[`${this.locale}.${this.selectedEvent}`] ?? s.templates[`${this.locale}.${this.selectedEvent}`] ?? { title: "", body: "" };
     this.root.innerHTML = `
       <header class="page-head"><p class="eyebrow">VIBE CODING LIGHT / NOTIFICATIONS</p><h1>${t.title}</h1><p>${t.intro}</p></header>
       <section class="hero-card"><div><h2>${t.master}</h2><p>${t.masterHint}</p></div>${toggle("enabled", t.master, s.enabled)}</section>
@@ -133,9 +209,59 @@ export class NotificationSettingsController {
         <section class="card events"><div class="card-title"><span class="card-index">03</span><h2>${t.events}</h2></div><p class="hint">${t.eventHint}</p>${toggle("events.permission", t.permission, s.events.permission)}${toggle("events.question", t.question, s.events.question)}${toggle("events.completed", t.completed, s.events.completed)}${toggle("events.error", t.error, s.events.error)}<p class="hint coverage">${t.codexQuestionHint}</p></section>
         <section class="card quotas"><div class="card-title"><span class="card-index">04</span><h2>${t.quotas}</h2></div><p class="hint">${t.quotaHint}</p><div class="quota-status"><span>${t.claudeQuota}</span><strong id="claude-quota-status">${status.claudeQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div><div class="quota-status"><span>${t.codexQuota}</span><strong id="codex-quota-status">${status.codexQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div>${toggle("quota.at80", t.at80, s.quota.at80)}${toggle("quota.at50", t.at50, s.quota.at50)}${toggle("quota.at20", t.at20, s.quota.at20)}${toggle("quota.at0", t.at0, s.quota.at0)}${toggle("quota.recovered", t.recovered, s.quota.recovered)}</section>
       </div>
+      <section class="card templates"><div class="card-title"><span class="card-index">05</span><h2>${t.templatesTitle}</h2></div><p class="hint">${t.templatesHint}</p>
+        ${toggle("include_details", t.detailsToggle, s.include_details)}<p class="detail-hint">${t.detailsHint}</p>
+        <div class="template-editor"><label class="field-label" for="template-event">${t.templateEvent}</label><select id="template-event">${templateEvents.map((event) => `<option value="${event}" ${event === this.selectedEvent ? "selected" : ""}>${labels[event]}</option>`).join("")}</select>
+          <label class="field-label" for="template-title">${t.templateTitle}</label><input id="template-title" data-template-field="title" maxlength="120" value="${escapeHtml(selectedTemplate.title)}" placeholder="Vibe Coding Light">
+          <label class="field-label" for="template-body">${t.templateBody}</label><textarea id="template-body" data-template-field="body" maxlength="2000" rows="3" placeholder="${escapeHtml(defaultBody(this.selectedEvent, this.locale))}">${escapeHtml(selectedTemplate.body)}</textarea>
+          <p class="token-hint">${t.templateTokens}</p><button type="button" data-action="reset-template">${t.templateReset}</button>
+        </div><div class="template-preview"><span>${t.templatePreview}</span><div id="template-preview"><strong id="preview-title"></strong><p id="preview-body"></p></div></div>
+      </section>
       ${!eventSelected ? `<p class="notice">${t.noTypes}</p>` : ""}
       ${!status.serviceAvailable ? `<p class="notice" role="status">${t.serviceUnavailable}</p>` : ""}
       <footer>${t.footer}</footer>`;
+    this.updateTemplatePreview();
+    if (activeTemplateField) {
+      const replacement = this.root.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-template-field="${activeTemplateField}"]`);
+      if (replacement) {
+        replacement.focus();
+        if (selection && selection.start !== null && selection.end !== null) replacement.setSelectionRange(selection.start, selection.end);
+      }
+    }
+  }
+
+  private rememberTemplateDraft(): void {
+    const title = this.root.querySelector<HTMLInputElement>('[data-template-field="title"]');
+    const body = this.root.querySelector<HTMLTextAreaElement>('[data-template-field="body"]');
+    if (!title || !body) return;
+    this.templateDrafts[`${this.locale}.${this.selectedEvent}`] = { title: title.value, body: body.value };
+  }
+
+  private updateTemplatePreview(): void {
+    if (!this.settings) return;
+    const t = notificationCopy(this.locale);
+    const titleInput = this.root.querySelector<HTMLInputElement>('[data-template-field="title"]');
+    const bodyInput = this.root.querySelector<HTMLTextAreaElement>('[data-template-field="body"]');
+    const titleOutput = this.root.querySelector<HTMLElement>("#preview-title");
+    const bodyOutput = this.root.querySelector<HTMLElement>("#preview-body");
+    if (!titleInput || !bodyInput || !titleOutput || !bodyOutput) return;
+    const sample = {
+      source: "Codex", task: t.sampleTask, command: "npm test", error: t.sampleError,
+      reply: t.sampleReply, question: t.sampleQuestion, period: this.locale === "zh-CN" ? "5 小时" : "5 hours", remaining: "20%",
+    };
+    const detailByEvent: Record<TemplateEvent, string> = {
+      permission: sample.command, question: sample.question, completed: sample.task,
+      error: sample.error, quota80: "", quota50: "", quota20: "", quota0: "", recovered: "",
+    };
+    const values: Record<string, string> = { ...sample, detail: detailByEvent[this.selectedEvent] };
+    if (!this.settings.include_details) {
+      for (const key of ["task", "command", "error", "reply", "question", "detail"]) values[key] = "";
+    }
+    const render = (value: string) => value.replace(/\{(source|task|command|error|reply|question|detail|period|remaining)\}/g, (_match, key: string) => values[key] ?? "");
+    const fallback = defaultBody(this.selectedEvent, this.locale);
+    const defaultWithDetail = !bodyInput.value && values.detail ? `${fallback}\n${values.detail}` : fallback;
+    titleOutput.textContent = render(titleInput.value || "Vibe Coding Light");
+    bodyOutput.textContent = render(bodyInput.value || defaultWithDetail);
   }
 }
 

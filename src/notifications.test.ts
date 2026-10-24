@@ -6,6 +6,8 @@ const defaults: NotificationSettings = {
   sources: { claude: true, codex: true },
   events: { permission: true, question: true, completed: true, error: true },
   quota: { at80: false, at50: false, at20: false, at0: false, recovered: false },
+  include_details: false,
+  templates: {},
 };
 const status: NotificationStatus = { serviceAvailable: true, keySaved: false, claudeHooksInstalled: false, codexHooksInstalled: false, claudeQuotaAvailable: false, codexQuotaAvailable: false, lastSendError: null };
 
@@ -151,6 +153,55 @@ describe("notification settings window", () => {
     expect(root.querySelector("#claude-quota-status")!.textContent).toContain("暂不可用");
     expect(root.querySelector("#codex-quota-status")!.textContent).toContain("暂不可用");
     expect(root.querySelector("#claude-quota-status")!.textContent).not.toContain("%");
+  });
+
+  it("keeps detailed content off until opted in and saves per-event title and body", async () => {
+    const { root, api, controller } = setup(); await controller.init("zh-CN");
+    const details = root.querySelector<HTMLInputElement>('[data-path="include_details"]')!;
+    expect(details.checked).toBe(false);
+    details.checked = true;
+    details.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const title = root.querySelector<HTMLInputElement>('[data-template-field="title"]')!;
+    const body = root.querySelector<HTMLTextAreaElement>('[data-template-field="body"]')!;
+    title.value = "{source} 需要帮忙";
+    title.dispatchEvent(new Event("change", { bubbles: true }));
+    body.value = "请批准：{command}";
+    body.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(api.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      include_details: true,
+      templates: { "zh-CN.permission": { title: "{source} 需要帮忙", body: "请批准：{command}" } },
+    }));
+    expect(root.querySelector("#template-preview")?.textContent).toContain("请批准：");
+    controller.setLocale("en");
+    expect(root.querySelector<HTMLInputElement>('[data-template-field="title"]')?.value).toBe("");
+  });
+
+  it("renders a saved template as text rather than executable HTML", async () => {
+    const { root, api, controller } = setup();
+    (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...structuredClone(defaults),
+      templates: { "zh-CN.permission": { title: '<img src=x onerror=alert(1)>', body: "请批准 {command}" } },
+    });
+    await controller.init("zh-CN");
+    expect(root.querySelector('[data-template-field="title"]')).not.toBeNull();
+    expect(root.querySelector<HTMLInputElement>('[data-template-field="title"]')?.value).toBe('<img src=x onerror=alert(1)>');
+    expect(root.querySelector(".templates img")).toBeNull();
+  });
+
+  it("preserves an unsaved template draft and cursor across status refreshes", async () => {
+    const { root, controller } = setup(); await controller.init("zh-CN");
+    const body = root.querySelector<HTMLTextAreaElement>('[data-template-field="body"]')!;
+    body.focus();
+    body.value = "等待批准：{command}";
+    body.setSelectionRange(4, 4);
+    body.dispatchEvent(new Event("input", { bubbles: true }));
+    controller.setStatus({ ...status, keySaved: true });
+    const restored = root.querySelector<HTMLTextAreaElement>('[data-template-field="body"]')!;
+    expect(restored.value).toBe("等待批准：{command}");
+    expect(document.activeElement).toBe(restored);
+    expect(restored.selectionStart).toBe(4);
   });
 
   it("explains when the optional notification service cannot start", async () => {

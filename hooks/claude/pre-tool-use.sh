@@ -11,7 +11,7 @@ query=$(extract_field "$INPUT" "query")
 message=$(make_message "$tool_name" "$file_path" "$command" "$query")
 
 sf=$(session_file)
-if ! grep -q '"state":"working"' "$sf" 2>/dev/null; then
+if detail_capture_enabled || ! grep -q '"state":"working"' "$sf" 2>/dev/null; then
     write_notification_event "$INPUT" working
 fi
 write_state "working" "$message" "$tool_name" "$file_path" "$command" "$query"

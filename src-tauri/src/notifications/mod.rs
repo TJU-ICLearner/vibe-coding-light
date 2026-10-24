@@ -1,6 +1,7 @@
 pub mod bark;
 pub mod claude_quota;
 pub mod codex_quota;
+mod detail_capture;
 pub mod engine;
 pub mod events;
 pub mod keychain;
@@ -173,6 +174,8 @@ mod tests {
             turn_id: None,
             kind,
             at_ms: at,
+            new_turn: false,
+            details: Default::default(),
         }
     }
 
@@ -226,6 +229,7 @@ mod tests {
             kind: PushKind::Question,
             label: None,
             remaining_percent: None,
+            details: Default::default(),
             due_at_ms: 1_000,
             expires_at_ms: 2_000,
         };
@@ -268,6 +272,7 @@ mod tests {
                 kind: PushKind::Error,
                 label: None,
                 remaining_percent: None,
+                details: Default::default(),
                 due_at_ms: 1_000,
                 expires_at_ms: 10_000,
             })

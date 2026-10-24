@@ -124,6 +124,8 @@ mod tests {
             turn_id: None,
             kind: AgentEventKind::Completed,
             at_ms,
+            new_turn: false,
+            details: Default::default(),
         }
     }
 

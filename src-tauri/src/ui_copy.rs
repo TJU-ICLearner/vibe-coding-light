@@ -1,5 +1,5 @@
 use crate::notifications::bark::PushPayload;
-use crate::notifications::model::{AgentSource, PushCandidate, PushKind};
+use crate::notifications::model::{AgentSource, NotificationSettings, PushCandidate, PushKind};
 use crate::ui_locale::AppLocale;
 use crate::State;
 
@@ -166,6 +166,142 @@ pub fn notification_payload(candidate: &PushCandidate, locale: AppLocale) -> Pus
     }
 }
 
+pub fn notification_payload_with_settings(
+    candidate: &PushCandidate,
+    locale: AppLocale,
+    settings: &NotificationSettings,
+) -> PushPayload {
+    let mut payload = notification_payload(candidate, locale);
+    if candidate.kind == PushKind::Test {
+        return payload;
+    }
+    let kind = match candidate.kind {
+        PushKind::Permission => "permission",
+        PushKind::Question => "question",
+        PushKind::Completed => "completed",
+        PushKind::Error => "error",
+        PushKind::QuotaThreshold(80) => "quota80",
+        PushKind::QuotaThreshold(50) => "quota50",
+        PushKind::QuotaThreshold(20) => "quota20",
+        PushKind::QuotaThreshold(0) => "quota0",
+        PushKind::QuotaThreshold(_) => "quota20",
+        PushKind::QuotaRecovered => "recovered",
+        PushKind::Test => unreachable!(),
+    };
+    let locale_key = match locale {
+        AppLocale::ZhCn => "zh-CN",
+        AppLocale::En => "en",
+    };
+    let key = format!("{locale_key}.{kind}");
+    let template = settings.templates.get(&key);
+    let detail = if settings.include_details {
+        match candidate.kind {
+            PushKind::Permission => candidate
+                .details
+                .command
+                .as_deref()
+                .or(candidate.details.task.as_deref()),
+            PushKind::Question => candidate
+                .details
+                .question
+                .as_deref()
+                .or(candidate.details.task.as_deref()),
+            PushKind::Completed => candidate
+                .details
+                .task
+                .as_deref()
+                .or(candidate.details.reply.as_deref()),
+            PushKind::Error => candidate
+                .details
+                .error
+                .as_deref()
+                .or(candidate.details.command.as_deref()),
+            _ => None,
+        }
+    } else {
+        None
+    }
+    .unwrap_or("");
+    if template.is_none_or(|value| value.body.trim().is_empty()) && !detail.is_empty() {
+        payload.body.push('\n');
+        payload.body.push_str(detail);
+    }
+    let title = template
+        .filter(|value| !value.title.trim().is_empty())
+        .map(|value| value.title.as_str())
+        .unwrap_or(&payload.title);
+    let body = template
+        .filter(|value| !value.body.trim().is_empty())
+        .map(|value| value.body.as_str())
+        .unwrap_or(&payload.body);
+    let source = match candidate.source {
+        AgentSource::Claude => "Claude",
+        AgentSource::Codex => "Codex",
+    };
+    let remaining = candidate
+        .remaining_percent
+        .map(|value| {
+            if value.fract() == 0.0 {
+                format!("{value:.0}%")
+            } else {
+                format!("{value:.1}%")
+            }
+        })
+        .unwrap_or_default();
+    let period = if matches!(
+        candidate.kind,
+        PushKind::QuotaThreshold(_) | PushKind::QuotaRecovered
+    ) {
+        quota_period(candidate, locale)
+    } else {
+        String::new()
+    };
+    let raw = |value: &Option<String>| {
+        if settings.include_details {
+            value.as_deref().unwrap_or("").to_string()
+        } else {
+            String::new()
+        }
+    };
+    let variables = [
+        ("{source}", source.to_string()),
+        ("{task}", raw(&candidate.details.task)),
+        ("{command}", raw(&candidate.details.command)),
+        ("{error}", raw(&candidate.details.error)),
+        ("{reply}", raw(&candidate.details.reply)),
+        ("{question}", raw(&candidate.details.question)),
+        ("{detail}", detail.to_string()),
+        ("{period}", period),
+        ("{remaining}", remaining),
+    ];
+    let render = |input: &str| {
+        let mut output = String::new();
+        let mut rest = input;
+        while let Some(start) = rest.find('{') {
+            output.push_str(&rest[..start]);
+            let tail = &rest[start..];
+            let Some(end) = tail.find('}') else {
+                rest = tail;
+                break;
+            };
+            let token = &tail[..=end];
+            if let Some((_, value)) = variables.iter().find(|(name, _)| *name == token) {
+                output.push_str(value);
+            } else {
+                output.push_str(token);
+            }
+            rest = &tail[end + 1..];
+        }
+        output.push_str(rest);
+        output
+    };
+    PushPayload {
+        title: render(title),
+        body: render(body),
+        group: payload.group,
+    }
+}
+
 fn quota_period(candidate: &PushCandidate, locale: AppLocale) -> String {
     let label = candidate.label.as_deref().unwrap_or_default();
     let parts: Vec<&str> = label.split('·').map(str::trim).collect();
@@ -292,6 +428,7 @@ mod tests {
             kind: PushKind::QuotaThreshold(20),
             label: Some("Coding primary · 300 min".into()),
             remaining_percent: Some(19.5),
+            details: Default::default(),
             due_at_ms: 1,
             expires_at_ms: 2,
         };
@@ -305,6 +442,112 @@ mod tests {
         assert_ne!(
             super::test_notification(AppLocale::ZhCn).body,
             super::test_notification(AppLocale::En).body
+        );
+    }
+
+    #[test]
+    fn custom_permission_template_renders_task_and_command_only_with_detail_opt_in() {
+        use crate::notifications::model::{
+            AgentSource, EventDetails, NotificationSettings, NotificationTemplate, PushCandidate,
+            PushKind,
+        };
+        let candidate = PushCandidate {
+            id: "permission-1".into(),
+            source: AgentSource::Codex,
+            kind: PushKind::Permission,
+            label: None,
+            remaining_percent: None,
+            details: EventDetails {
+                task: Some("修复登录".into()),
+                command: Some("npm test".into()),
+                ..Default::default()
+            },
+            due_at_ms: 1,
+            expires_at_ms: 2,
+        };
+        let mut settings = NotificationSettings::default();
+        settings.templates.insert(
+            "zh-CN.permission".into(),
+            NotificationTemplate {
+                title: "{source} 需批准".into(),
+                body: "任务：{task}\n命令：{command}".into(),
+            },
+        );
+        let private =
+            super::notification_payload_with_settings(&candidate, AppLocale::ZhCn, &settings);
+        assert_eq!(private.title, "Codex 需批准");
+        assert!(!private.body.contains("修复登录"));
+        assert!(!private.body.contains("npm test"));
+
+        settings.include_details = true;
+        let detailed =
+            super::notification_payload_with_settings(&candidate, AppLocale::ZhCn, &settings);
+        assert_eq!(detailed.body, "任务：修复登录\n命令：npm test");
+    }
+
+    #[test]
+    fn default_error_message_includes_raw_error_only_after_detail_opt_in() {
+        use crate::notifications::model::{
+            AgentSource, EventDetails, NotificationSettings, PushCandidate, PushKind,
+        };
+        let candidate = PushCandidate {
+            id: "error-1".into(),
+            source: AgentSource::Claude,
+            kind: PushKind::Error,
+            label: None,
+            remaining_percent: None,
+            details: EventDetails {
+                error: Some("Exit code 1: missing module".into()),
+                ..Default::default()
+            },
+            due_at_ms: 1,
+            expires_at_ms: 2,
+        };
+        let mut settings = NotificationSettings::default();
+        assert_eq!(
+            super::notification_payload_with_settings(&candidate, AppLocale::En, &settings).body,
+            "Claude · Execution encountered an error"
+        );
+        settings.include_details = true;
+        assert!(
+            super::notification_payload_with_settings(&candidate, AppLocale::En, &settings)
+                .body
+                .contains("Exit code 1: missing module")
+        );
+    }
+
+    #[test]
+    fn inserted_raw_text_is_not_parsed_as_another_template_variable() {
+        use crate::notifications::model::{
+            AgentSource, EventDetails, NotificationSettings, NotificationTemplate, PushCandidate,
+            PushKind,
+        };
+        let candidate = PushCandidate {
+            id: "permission-2".into(),
+            source: AgentSource::Codex,
+            kind: PushKind::Permission,
+            label: None,
+            remaining_percent: None,
+            details: EventDetails {
+                task: Some("Print {command} literally".into()),
+                command: Some("secret".into()),
+                ..Default::default()
+            },
+            due_at_ms: 1,
+            expires_at_ms: 2,
+        };
+        let mut settings = NotificationSettings::default();
+        settings.include_details = true;
+        settings.templates.insert(
+            "en.permission".into(),
+            NotificationTemplate {
+                title: "Test".into(),
+                body: "{task}".into(),
+            },
+        );
+        assert_eq!(
+            super::notification_payload_with_settings(&candidate, AppLocale::En, &settings).body,
+            "Print {command} literally"
         );
     }
 

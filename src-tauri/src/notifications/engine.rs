@@ -1,6 +1,6 @@
 use super::model::{
-    AgentEvent, AgentEventKind, AgentSource, NotificationSettings, PushCandidate, PushKind,
-    QuotaWindow,
+    AgentEvent, AgentEventKind, AgentSource, EventDetails, NotificationSettings, PushCandidate,
+    PushKind, QuotaWindow,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -46,6 +46,7 @@ pub struct NotificationEngine {
     ledger: Ledger,
     pending: Vec<PendingCompletion>,
     quota_generation: [u64; 2],
+    session_details: HashMap<String, (EventDetails, u64)>,
 }
 
 impl NotificationEngine {
@@ -62,6 +63,7 @@ impl NotificationEngine {
             ledger,
             pending: Vec::new(),
             quota_generation: [1, 1],
+            session_details: HashMap::new(),
         }
     }
 
@@ -138,6 +140,50 @@ impl NotificationEngine {
             return Vec::new();
         }
         self.ledger.event_ids.insert(event.id.clone(), now_ms);
+        self.session_details
+            .retain(|_, (_, seen)| now_ms.saturating_sub(*seen) < EVENT_DEDUPE_MS);
+        let context_key = format!("{:?}:{}", event.source, event.session_id);
+        let context = self.session_details.entry(context_key.clone()).or_default();
+        if event.kind == AgentEventKind::Working && (event.new_turn || event.details.task.is_some())
+        {
+            context.0 = EventDetails::default();
+        }
+        if event.kind == AgentEventKind::Working {
+            if let Some(task) = &event.details.task {
+                context.0.task = Some(task.clone());
+            }
+            context.0.command = event.details.command.clone();
+        }
+        context.1 = now_ms;
+        let details = EventDetails {
+            task: event
+                .details
+                .task
+                .clone()
+                .or_else(|| context.0.task.clone()),
+            command: event.details.command.clone().or_else(|| {
+                if matches!(
+                    event.kind,
+                    AgentEventKind::Permission | AgentEventKind::Error
+                ) {
+                    context.0.command.clone()
+                } else {
+                    None
+                }
+            }),
+            error: event.details.error.clone(),
+            reply: event.details.reply.clone(),
+            question: event.details.question.clone(),
+        };
+        if matches!(
+            event.kind,
+            AgentEventKind::Permission | AgentEventKind::Error
+        ) {
+            context.0.command = None;
+        }
+        if event.kind == AgentEventKind::Completed {
+            self.session_details.remove(&context_key);
+        }
         if event.kind == AgentEventKind::Working {
             let prefix = format!("{:?}:{}:", event.source, event.session_id);
             self.ledger
@@ -189,6 +235,7 @@ impl NotificationEngine {
             kind: kind.clone(),
             label: None,
             remaining_percent: None,
+            details,
             due_at_ms: now_ms.saturating_add(if kind == PushKind::Completed {
                 COMPLETE_DELAY_MS
             } else {
@@ -401,6 +448,7 @@ fn quota_candidate(
             window.bucket_label, window.duration_mins
         )),
         remaining_percent: Some(remaining),
+        details: Default::default(),
         due_at_ms: now_ms,
         expires_at_ms: now_ms.saturating_add(CANDIDATE_TTL_MS),
     }
@@ -429,6 +477,8 @@ mod tests {
             turn_id: Some("turn-1".into()),
             kind,
             at_ms: at,
+            new_turn: false,
+            details: Default::default(),
         }
     }
 
@@ -442,6 +492,113 @@ mod tests {
             resets_at: reset,
             reached: remaining == 0.0,
         }
+    }
+
+    #[test]
+    fn permission_and_completion_keep_only_the_current_sessions_task_details() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NotificationEngine::load(dir.path().join("ledger.json"));
+        let settings = settings();
+        let mut prompt = event("prompt-1", "session-a", AgentEventKind::Working, 1_000);
+        prompt.details.task = Some("修复登录".into());
+        assert!(engine.on_event(prompt, 1_000, &settings).is_empty());
+
+        let mut permission = event(
+            "permission-1",
+            "session-a",
+            AgentEventKind::Permission,
+            1_100,
+        );
+        permission.details.command = Some("npm test".into());
+        let sent = engine.on_event(permission, 1_100, &settings);
+        assert_eq!(sent[0].details.task.as_deref(), Some("修复登录"));
+        assert_eq!(sent[0].details.command.as_deref(), Some("npm test"));
+
+        let mut other = event(
+            "permission-2",
+            "session-b",
+            AgentEventKind::Permission,
+            1_200,
+        );
+        other.details.command = Some("echo other".into());
+        let sent = engine.on_event(other, 1_200, &settings);
+        assert_eq!(sent[0].details.task, None);
+        assert_eq!(sent[0].details.command.as_deref(), Some("echo other"));
+    }
+
+    #[test]
+    fn later_event_without_raw_text_does_not_reuse_old_error_or_completed_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NotificationEngine::load(dir.path().join("ledger.json"));
+        let settings = settings();
+        let mut prompt = event("prompt", "session-a", AgentEventKind::Working, 1_000);
+        prompt.details.task = Some("私人任务".into());
+        engine.on_event(prompt, 1_000, &settings);
+        let mut first_error = event("error-1", "session-a", AgentEventKind::Error, 1_100);
+        first_error.details.error = Some("旧错误原文".into());
+        assert_eq!(
+            engine.on_event(first_error, 1_100, &settings)[0]
+                .details
+                .error
+                .as_deref(),
+            Some("旧错误原文")
+        );
+
+        let later_error = event("error-2", "session-a", AgentEventKind::Error, 32_000);
+        let sent = engine.on_event(later_error, 32_000, &settings);
+        assert_eq!(sent[0].details.error, None);
+
+        let completed = event("completed", "session-a", AgentEventKind::Completed, 33_000);
+        engine.on_event(completed, 33_000, &settings);
+        let permission = event(
+            "permission-later",
+            "session-a",
+            AgentEventKind::Permission,
+            34_000,
+        );
+        let sent = engine.on_event(permission, 34_000, &settings);
+        assert_eq!(sent[0].details.task, None);
+    }
+
+    #[test]
+    fn new_turn_without_detail_capture_clears_previous_task_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NotificationEngine::load(dir.path().join("ledger.json"));
+        let settings = settings();
+        let mut first = event("prompt-old", "session-a", AgentEventKind::Working, 1_000);
+        first.details.task = Some("旧的私人任务".into());
+        first.new_turn = true;
+        engine.on_event(first, 1_000, &settings);
+
+        let mut next = event("prompt-new", "session-a", AgentEventKind::Working, 2_000);
+        next.new_turn = true;
+        engine.on_event(next, 2_000, &settings);
+
+        let permission = event(
+            "permission-new",
+            "session-a",
+            AgentEventKind::Permission,
+            3_000,
+        );
+        let sent = engine.on_event(permission, 3_000, &settings);
+        assert_eq!(sent[0].details.task, None);
+    }
+
+    #[test]
+    fn a_working_tool_without_command_clears_the_previous_tools_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NotificationEngine::load(dir.path().join("ledger.json"));
+        let settings = settings();
+        let mut bash = event("bash", "session-a", AgentEventKind::Working, 1_000);
+        bash.details.command = Some("secret command from previous tool".into());
+        engine.on_event(bash, 1_000, &settings);
+
+        let read = event("read", "session-a", AgentEventKind::Working, 2_000);
+        engine.on_event(read, 2_000, &settings);
+
+        let error = event("read-error", "session-a", AgentEventKind::Error, 3_000);
+        let sent = engine.on_event(error, 3_000, &settings);
+        assert_eq!(sent[0].details.command, None);
     }
 
     #[test]

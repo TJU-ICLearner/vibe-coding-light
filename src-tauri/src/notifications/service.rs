@@ -29,6 +29,7 @@ pub struct NotificationStatus {
 pub struct NotificationService {
     app: AppHandle,
     data_dir: PathBuf,
+    detail_marker: PathBuf,
     settings: Mutex<NotificationSettingsStore>,
     core: Mutex<NotificationCore>,
     spool: Mutex<EventSpool>,
@@ -56,6 +57,9 @@ impl NotificationService {
         let service = Arc::new(Self {
             app,
             data_dir: data_dir.clone(),
+            detail_marker: dirs::home_dir()
+                .ok_or("Home directory unavailable")?
+                .join(".code-light/detail-capture"),
             settings: Mutex::new(store),
             core: Mutex::new(NotificationCore::new(
                 data_dir.join("notification-ledger.json"),
@@ -67,6 +71,7 @@ impl NotificationService {
             key_store,
             bark: BarkClient::new().map_err(|_| "Bark transport unavailable")?,
         });
+        service.sync_detail_capture(&service.settings());
         service.sync_claude_proxy();
         service.refresh_status();
         let worker = Arc::clone(&service);
@@ -86,7 +91,11 @@ impl NotificationService {
         value: NotificationSettings,
     ) -> Result<NotificationSettings, String> {
         let old = self.settings();
-        self.settings.lock().unwrap().set(value.clone())?;
+        {
+            let mut store = self.settings.lock().unwrap();
+            store.set(value.clone())?;
+            self.sync_detail_capture(&value);
+        }
         self.core
             .lock()
             .unwrap()
@@ -137,7 +146,12 @@ impl NotificationService {
 
     fn tick(&self) {
         let now = now_ms();
-        let settings = self.settings();
+        let settings = {
+            let store = self.settings.lock().unwrap();
+            let settings = store.get();
+            self.sync_detail_capture(&settings);
+            settings
+        };
         let events = self.spool.lock().unwrap().drain(now);
         {
             let mut core = self.core.lock().unwrap();
@@ -197,6 +211,14 @@ impl NotificationService {
         self.refresh_status();
     }
 
+    fn sync_detail_capture(&self, settings: &NotificationSettings) {
+        let _ = super::detail_capture::sync(
+            &self.detail_marker,
+            settings.enabled && settings.include_details,
+            now_ms() / 1_000,
+        );
+    }
+
     fn send_candidate(&self, candidate: PushCandidate) -> Result<(), BarkError> {
         let key = self
             .key_store
@@ -207,8 +229,11 @@ impl NotificationService {
         if !super::candidate_allowed(&candidate, &settings, now_ms()) {
             return Ok(());
         }
-        let payload =
-            crate::ui_copy::notification_payload(&candidate, crate::current_locale(&self.app));
+        let payload = crate::ui_copy::notification_payload_with_settings(
+            &candidate,
+            crate::current_locale(&self.app),
+            &settings,
+        );
         let result = match super::keychain::validate_bark_key(&key) {
             Ok(valid_key) => self.bark.send(valid_key, &payload),
             Err(_) => Err(BarkError::Rejected),

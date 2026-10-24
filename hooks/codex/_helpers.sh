@@ -1,9 +1,20 @@
 #!/bin/bash
 # Shared helper for code-light Codex hooks
+umask 077
 
 CODE_LIGHT_DIR="$HOME/.code-light"
 SESSIONS_DIR="$CODE_LIGHT_DIR/sessions"
 EVENTS_DIR="$CODE_LIGHT_DIR/events"
+
+detail_capture_enabled() {
+    local pid updated now
+    [ -r "$CODE_LIGHT_DIR/detail-capture" ] || return 1
+    read -r pid updated < "$CODE_LIGHT_DIR/detail-capture" || return 1
+    [[ "$pid" =~ ^[0-9]+$ && "$updated" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    now=$(date +%s)
+    (( now >= updated && now - updated <= 15 ))
+}
 
 # Extract session_id from JSON input (handles optional whitespace)
 get_session_id_from_input() {
@@ -104,20 +115,52 @@ write_state() {
 }
 
 write_notification_event() {
-    local input="$1" kind="$2" turn_id="${3:-}"
+    local input="$1" kind="$2" turn_id="${3:-}" new_turn="${4:-0}"
     local session_id
     session_id=$(get_session_id_from_input "$input")
     [ -n "$session_id" ] || return 0
     mkdir -p "$EVENTS_DIR" 2>/dev/null || return 0
-    local id ts target tmp
+    local id ts target tmp capture=0
+    detail_capture_enabled && capture=1
     id=$(uuidgen | tr '[:upper:]' '[:lower:]')
     ts=$(perl -MTime::HiRes -e 'printf "%.0f", Time::HiRes::time() * 1000' 2>/dev/null) || ts=$(( $(date +%s) * 1000 ))
     target="$EVENTS_DIR/$id.json"
     tmp="$target.tmp.$$"
-    printf '{"id":"%s","source":"codex","session_id":"%s","turn_id":%s,"kind":"%s","at_ms":%s}' \
-        "$id" "$(json_escape "$session_id")" \
-        "$(if [ -n "$turn_id" ]; then printf '"%s"' "$(json_escape "$turn_id")"; else printf null; fi)" \
-        "$kind" "$ts" > "$tmp" 2>/dev/null || return 0
+    printf '%s' "$input" | perl -MJSON::PP -0777 -e '
+        my ($id, $session, $turn, $kind, $ts, $capture, $new_turn) = @ARGV;
+        my $input = eval { decode_json(<STDIN>) } || {};
+        my $short = sub {
+            my ($value) = @_;
+            return undef if !defined($value) || ref($value) || $value eq "";
+            return length($value) > 1000 ? substr($value, 0, 1000) . "..." : $value;
+        };
+        my $tool = ref($input->{tool_input}) eq "HASH" ? $input->{tool_input} : {};
+        my $response = $input->{tool_response};
+        my $error = $input->{error};
+        if (!defined($error) && ref($response) eq "HASH") {
+            for my $field (qw(error stderr output stdout)) {
+                my $value = $response->{$field};
+                if (defined($value) && !ref($value) && $value ne "") {
+                    $error = $value;
+                    last;
+                }
+            }
+            if (!defined($error) && ref($response->{content}) eq "ARRAY") {
+                $error = join "\n", map { ref($_) eq "HASH" ? ($_->{text} // "") : "" } @{$response->{content}};
+            }
+        }
+        $error = $response if !defined($error) && !ref($response);
+        my %details;
+        if ($capture eq "1") {
+            for my $pair ([task => $input->{prompt}], [command => $tool->{command}],
+                [error => $error], [reply => $input->{last_assistant_message}], [question => $input->{message}]) {
+                my $value = $short->($pair->[1]);
+                $details{$pair->[0]} = $value if defined($value);
+            }
+        }
+        print encode_json({id=>$id, source=>"codex", session_id=>$session,
+            turn_id=>($turn eq "" ? undef : $turn), kind=>$kind, new_turn=>($new_turn eq "1" ? JSON::PP::true : JSON::PP::false), at_ms=>0+$ts, details=>\%details});
+    ' "$id" "$session_id" "$turn_id" "$kind" "$ts" "$capture" "$new_turn" > "$tmp" 2>/dev/null || return 0
     chmod 600 "$tmp" 2>/dev/null || true
     mv "$tmp" "$target" 2>/dev/null || true
 }

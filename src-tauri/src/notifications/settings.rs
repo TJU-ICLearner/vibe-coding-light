@@ -24,6 +24,11 @@ impl NotificationSettingsStore {
     }
 
     pub fn set(&mut self, value: NotificationSettings) -> Result<(), String> {
+        if value.templates.values().any(|template| {
+            template.title.chars().count() > 120 || template.body.chars().count() > 2_000
+        }) {
+            return Err("Notification template is too long".into());
+        }
         let parent = self
             .path
             .parent()
@@ -92,6 +97,23 @@ mod tests {
         value.enabled = true;
         assert!(store.set(value).is_err());
         assert!(!store.get().enabled);
+    }
+
+    #[test]
+    fn oversized_custom_notification_text_is_rejected_before_saving() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notifications.json");
+        let mut store = NotificationSettingsStore::load(path.clone());
+        let mut value = store.get();
+        value.templates.insert(
+            "en.permission".into(),
+            super::super::model::NotificationTemplate {
+                title: "x".repeat(121),
+                body: "Allowed body".into(),
+            },
+        );
+        assert!(store.set(value).is_err());
+        assert!(!path.exists());
     }
 
     #[test]
