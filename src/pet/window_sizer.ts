@@ -1,6 +1,7 @@
 import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import type { ActivePet } from "./types";
 import { BUILTIN_PET_WINDOW_SIDE, petFitScale, petWindowSide } from "./window_size";
+import { clampPetDragPosition, type DragMonitor } from "./drag_bounds";
 
 interface Point { x: number; y: number }
 interface Size { width: number; height: number }
@@ -31,7 +32,7 @@ export class PetWindowSizer {
 
   constructor(
     private readonly window: WindowPort,
-    private readonly monitor: () => Promise<{ workArea: Area } | null>,
+    private readonly monitor: () => Promise<DragMonitor | null>,
     private readonly onFit: (scale: number | null) => void,
     private readonly onError: (error: unknown) => void = console.error,
   ) {}
@@ -55,8 +56,11 @@ export class PetWindowSizer {
       if (requestId === this.latest) this.onFit(null);
       const oldSide = Math.max(oldSize.width, oldSize.height);
       const nextPosition = clampCenteredPosition(oldPosition, oldSide, Math.round(side * factor), currentMonitor?.workArea ?? null);
+      const safePosition = currentMonitor
+        ? clampPetDragPosition(nextPosition, { width: Math.round(side * factor), height: Math.round(side * factor) }, [currentMonitor])
+        : nextPosition;
       try {
-        await this.window.setPosition(new PhysicalPosition(nextPosition.x, nextPosition.y));
+        await this.window.setPosition(new PhysicalPosition(safePosition.x, safePosition.y));
       } catch (error) { this.onError(error); }
     }).catch(this.onError);
     return this.queue;

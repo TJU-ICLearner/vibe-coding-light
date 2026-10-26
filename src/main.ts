@@ -1,11 +1,11 @@
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
-import type { PhysicalPosition } from "@tauri-apps/api/dpi";
+import { availableMonitors, currentMonitor, cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { PhotoRenderer } from "./pet/photo_renderer";
 import { PetWindowSizer } from "./pet/window_sizer";
 import { PatController } from "./pet/pat_interaction";
 import { BUILTIN_PET_SCALE } from "./pet/window_size";
+import { PetDragController } from "./pet/drag_controller";
 import type { ActivePet, AgentVisualState } from "./pet/types";
 
 interface StatePayload {
@@ -31,36 +31,19 @@ function setPetState(state: AgentVisualState): void {
 }
 
 async function initDrag() {
-  const appWindow = getCurrentWindow();
-  let dragging = false;
-  let startMouseX = 0;
-  let startMouseY = 0;
-  let startWinX = 0;
-  let startWinY = 0;
+  const drag = new PetDragController(getCurrentWindow(), cursorPosition, availableMonitors);
 
-  document.addEventListener("mousedown", async (e: MouseEvent) => {
+  document.addEventListener("mousedown", (e: MouseEvent) => {
     if (e.button !== 0) return;
-    dragging = true;
-    startMouseX = e.screenX;
-    startMouseY = e.screenY;
-    try {
-      const pos = await appWindow.outerPosition();
-      startWinX = pos.x;
-      startWinY = pos.y;
-    } catch {
-      dragging = false;
-    }
+    void drag.begin().catch(console.error);
   });
 
-  document.addEventListener("mousemove", (e: MouseEvent) => {
-    if (!dragging) return;
-    const dx = e.screenX - startMouseX;
-    const dy = e.screenY - startMouseY;
-    appWindow.setPosition({ type: "Physical", x: startWinX + dx, y: startWinY + dy } as PhysicalPosition);
+  document.addEventListener("mousemove", () => {
+    void drag.move().catch(console.error);
   });
 
   document.addEventListener("mouseup", () => {
-    dragging = false;
+    drag.end();
   });
 }
 

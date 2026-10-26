@@ -45,7 +45,7 @@ Vibe Coding Light includes Bubu as its built-in desktop pet. New installations s
 
 **Interface language:** Open the tray menu and choose **Language → English** or **Language → Chinese**. Menu items, status tooltip, settings title, and pet settings change immediately. Your choice is saved across launches; the first launch follows your Mac's preferred language (Chinese for a Chinese system language, English otherwise).
 
-The pet window is always on top and draggable, so you can position it anywhere on your screen.
+The pet window is always on top and draggable, so you can position it anywhere on your screen. On macOS 13 and later, it also attempts to stay visible in other apps' native full-screen spaces.
 Choose **Pet the Pet** in the tray menu, or press **⌘B**, to see a hand gently pat the active pet twice. The action works with Bubu and custom pets. Some Bubu GIFs contain Chinese text as part of their original artwork, including when the interface language is English.
 
 ### Create a custom pet (macOS)

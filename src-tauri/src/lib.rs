@@ -1,6 +1,8 @@
 mod notifications;
 mod pet_commands;
 mod pet_image;
+#[cfg(target_os = "macos")]
+mod pet_panel_macos;
 mod pet_store;
 #[cfg(target_os = "macos")]
 mod pet_vision;
@@ -698,9 +700,12 @@ pub fn run() {
         completed_since: None,
     }));
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+    builder
         .manage(app_state.clone())
         .invoke_handler(tauri::generate_handler![
             get_current_state,
@@ -834,8 +839,18 @@ pub fn run() {
                                 if visible {
                                     let _ = window.hide();
                                 } else {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
+                                    #[cfg(target_os = "macos")]
+                                    if let Err(error) =
+                                        pet_panel_macos::show_without_activation(app)
+                                    {
+                                        eprintln!("Could not show pet panel: {error}");
+                                        let _ = window.show();
+                                    }
+                                    #[cfg(not(target_os = "macos"))]
+                                    {
+                                        let _ = window.show();
+                                        let _ = window.set_focus();
+                                    }
                                 }
                                 app.state::<Arc<Mutex<TrayUi>>>()
                                     .lock()
@@ -916,9 +931,12 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Make pet window transparent on macOS
+            // Place the pet in other apps' full-screen Spaces without activating this app.
             #[cfg(target_os = "macos")]
             if let Some(window) = app.get_webview_window("pet") {
+                if let Err(error) = pet_panel_macos::configure(&window) {
+                    eprintln!("Could not configure pet panel: {error}");
+                }
                 make_window_transparent(&window);
             }
 

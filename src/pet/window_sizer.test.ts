@@ -44,8 +44,19 @@ describe("pet window resize", () => {
       outerPosition: vi.fn(async () => ({ x: 1700, y: 900 })),
       setSize: vi.fn(async (_size: { width: number }) => {}), setPosition: vi.fn(async (_position: { x: number; y: number }) => {}),
     };
-    await new PetWindowSizer(port, async () => ({ workArea: { position: { x: 0, y: 0 }, size: { width: 2000, height: 1200 } } }), vi.fn()).request(photo(3));
+    await new PetWindowSizer(port, async () => ({ position: { x: 0, y: 0 }, size: { width: 2000, height: 1200 }, workArea: { position: { x: 0, y: 0 }, size: { width: 2000, height: 1200 } }, scaleFactor: 2 }), vi.fn()).request(photo(3));
     expect(port.setSize.mock.calls[0][0]).toMatchObject({ width: 400, height: 400 });
     expect(port.setPosition.mock.calls[0][0]).toMatchObject({ x: 1200, y: 400 });
+  });
+
+  it("keeps a resized pet below the menu bar in a full-screen space", async () => {
+    const port = {
+      scaleFactor: vi.fn(async () => 2), innerSize: vi.fn(async () => ({ width: 416, height: 416 })),
+      outerPosition: vi.fn(async () => ({ x: 100, y: 96 })),
+      setSize: vi.fn(async () => {}), setPosition: vi.fn(async (_position: { x: number; y: number }) => {}),
+    };
+    const monitor = { position: { x: 0, y: 0 }, size: { width: 2880, height: 1800 }, workArea: { position: { x: 0, y: 0 }, size: { width: 2880, height: 1800 } }, scaleFactor: 2 };
+    await new PetWindowSizer(port, async () => monitor, vi.fn()).request(photo(3));
+    expect(port.setPosition.mock.calls[0][0]).toMatchObject({ y: 96 });
   });
 });
