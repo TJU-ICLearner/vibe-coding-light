@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { availableMonitors, currentMonitor, cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
+import { availableMonitors, currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { PhotoRenderer } from "./pet/photo_renderer";
 import { PetWindowSizer } from "./pet/window_sizer";
 import { PatController } from "./pet/pat_interaction";
@@ -31,19 +31,19 @@ function setPetState(state: AgentVisualState): void {
 }
 
 async function initDrag() {
-  const drag = new PetDragController(getCurrentWindow(), cursorPosition, availableMonitors);
+  const drag = new PetDragController(getCurrentWindow(), availableMonitors);
 
   document.addEventListener("mousedown", (e: MouseEvent) => {
     if (e.button !== 0) return;
-    void drag.begin().catch(console.error);
+    void drag.begin({ x: e.screenX, y: e.screenY }).catch(console.error);
   });
 
-  document.addEventListener("mousemove", () => {
-    void drag.move().catch(console.error);
+  document.addEventListener("mousemove", (e: MouseEvent) => {
+    void drag.move({ x: e.screenX, y: e.screenY }).catch(console.error);
   });
 
-  document.addEventListener("mouseup", () => {
-    drag.end();
+  document.addEventListener("mouseup", (e: MouseEvent) => {
+    void drag.end({ x: e.screenX, y: e.screenY }).catch(console.error);
   });
 }
 
