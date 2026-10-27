@@ -43,32 +43,46 @@ pub fn session_menu_item(locale: AppLocale, item: &SessionSummary, now: u64) -> 
     format!("{source} · {} · {state} · {ago}", item.project)
 }
 
-pub fn login_item_label(locale: AppLocale, pending_approval: bool, failed: bool) -> &'static str {
-    match (locale, pending_approval, failed) {
-        (AppLocale::ZhCn, _, true) => "登录启动设置失败",
-        (AppLocale::ZhCn, true, _) => "登录时启动（请在系统设置批准）",
-        (AppLocale::ZhCn, _, _) => "登录时启动",
-        (AppLocale::En, _, true) => "Launch at login failed",
-        (AppLocale::En, true, _) => "Launch at login (approve in System Settings)",
-        (AppLocale::En, _, _) => "Launch at login",
+pub fn login_item_label(
+    locale: AppLocale,
+    pending_approval: bool,
+    failed: bool,
+    needs_install: bool,
+) -> &'static str {
+    match (locale, pending_approval, failed, needs_install) {
+        (AppLocale::ZhCn, _, _, true) => "请先将 App 移至应用程序",
+        (AppLocale::ZhCn, _, true, _) => "登录启动设置失败",
+        (AppLocale::ZhCn, true, _, _) => "登录时启动（请在系统设置批准）",
+        (AppLocale::ZhCn, _, _, _) => "登录时启动",
+        (AppLocale::En, _, _, true) => "Move the app to Applications first",
+        (AppLocale::En, _, true, _) => "Launch at login failed",
+        (AppLocale::En, true, _, _) => "Launch at login (approve in System Settings)",
+        (AppLocale::En, _, _, _) => "Launch at login",
     }
 }
 
 pub fn automatic_update_label(locale: AppLocale) -> &'static str {
     match locale {
-        AppLocale::ZhCn => "每天检查新版本",
-        AppLocale::En => "Check for updates daily",
+        AppLocale::ZhCn => "自动检查新版本",
+        AppLocale::En => "Automatically check for updates",
     }
 }
 
-pub fn update_check_label(locale: AppLocale, checking: bool, failed: bool) -> &'static str {
-    match (locale, checking, failed) {
-        (AppLocale::ZhCn, true, _) => "正在检查新版本…",
-        (AppLocale::ZhCn, _, true) => "检查失败，点击重试",
-        (AppLocale::ZhCn, _, _) => "检查新版本",
-        (AppLocale::En, true, _) => "Checking for updates…",
-        (AppLocale::En, _, true) => "Check failed — retry",
-        (AppLocale::En, _, _) => "Check for updates",
+pub fn update_check_label(
+    locale: AppLocale,
+    checking: bool,
+    failed: bool,
+    current: bool,
+) -> &'static str {
+    match (locale, checking, failed, current) {
+        (AppLocale::ZhCn, true, _, _) => "正在检查新版本…",
+        (AppLocale::ZhCn, _, true, _) => "检查失败，点击重试",
+        (AppLocale::ZhCn, _, _, true) => "当前已是最新版本 · 点击重新检查",
+        (AppLocale::ZhCn, _, _, _) => "检查新版本",
+        (AppLocale::En, true, _, _) => "Checking for updates…",
+        (AppLocale::En, _, true, _) => "Check failed — retry",
+        (AppLocale::En, _, _, true) => "Up to date · Check again",
+        (AppLocale::En, _, _, _) => "Check for updates",
     }
 }
 
@@ -519,17 +533,31 @@ mod tests {
 
     #[test]
     fn update_and_login_menu_copy_follows_locale() {
-        assert!(super::login_item_label(AppLocale::ZhCn, true, false).contains("系统设置"));
-        assert!(super::login_item_label(AppLocale::En, true, false).contains("System Settings"));
-        assert_eq!(
-            super::automatic_update_label(AppLocale::ZhCn),
-            "每天检查新版本"
+        assert!(super::login_item_label(AppLocale::ZhCn, true, false, false).contains("系统设置"));
+        assert!(
+            super::login_item_label(AppLocale::En, true, false, false).contains("System Settings")
         );
         assert_eq!(
-            super::update_check_label(AppLocale::En, false, true),
+            super::login_item_label(AppLocale::ZhCn, false, true, true),
+            "请先将 App 移至应用程序"
+        );
+        assert_eq!(
+            super::automatic_update_label(AppLocale::ZhCn),
+            "自动检查新版本"
+        );
+        assert_eq!(
+            super::update_check_label(AppLocale::En, false, true, false),
             "Check failed — retry"
         );
         assert!(super::release_label(AppLocale::ZhCn, Some("1.7.0"), true).contains("1.7.0"));
+        assert_eq!(
+            super::automatic_update_label(AppLocale::ZhCn),
+            "自动检查新版本"
+        );
+        assert_eq!(
+            super::update_check_label(AppLocale::ZhCn, false, false, true),
+            "当前已是最新版本 · 点击重新检查"
+        );
     }
 
     #[test]

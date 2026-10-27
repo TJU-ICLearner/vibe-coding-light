@@ -1,3 +1,4 @@
+use quick_xml::{events::Event, Reader};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -8,6 +9,7 @@ use std::time::Duration;
 const RELEASES_API: &str =
     "https://api.github.com/repos/TJU-ICLearner/vibe-coding-light/releases?per_page=30";
 const RELEASE_BASE: &str = "https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/";
+const RELEASES_ATOM: &str = "https://github.com/TJU-ICLearner/vibe-coding-light/releases.atom";
 const CHECK_INTERVAL_SECS: u64 = 86_400;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,18 +61,70 @@ pub fn select_release(body: &str, current_version: &str) -> Result<Option<Releas
     }))
 }
 
-pub fn fetch_release(current_version: &str) -> Result<Option<ReleaseInfo>, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|error| error.to_string())?;
+pub fn select_atom_release(
+    body: &str,
+    current_version: &str,
+) -> Result<Option<ReleaseInfo>, String> {
+    let mut reader = Reader::from_str(body);
+    let mut in_entry = false;
+    let mut saw_feed = false;
+    let mut releases = Vec::new();
+    loop {
+        match reader.read_event().map_err(|error| error.to_string())? {
+            Event::Start(element) if element.name().as_ref() == b"feed" => saw_feed = true,
+            Event::Start(element) if element.name().as_ref() == b"entry" => in_entry = true,
+            Event::End(element) if element.name().as_ref() == b"entry" => in_entry = false,
+            Event::Start(element) | Event::Empty(element)
+                if in_entry && element.name().as_ref() == b"link" =>
+            {
+                let mut alternate = false;
+                let mut href = None;
+                for attribute in element.attributes().with_checks(false) {
+                    let attribute = attribute.map_err(|error| error.to_string())?;
+                    match attribute.key.as_ref() {
+                        b"rel" => alternate = attribute.value.as_ref() == b"alternate",
+                        b"href" => {
+                            href = std::str::from_utf8(attribute.value.as_ref())
+                                .ok()
+                                .map(str::to_owned)
+                        }
+                        _ => {}
+                    }
+                }
+                if alternate {
+                    if let Some(tag) = href
+                        .as_deref()
+                        .and_then(|value| value.strip_prefix(RELEASE_BASE))
+                    {
+                        if let Some(version) = tag
+                            .strip_prefix('v')
+                            .and_then(|value| Version::parse(value).ok())
+                        {
+                            releases.push(serde_json::json!({"tag_name": tag, "draft": false, "prerelease": !version.pre.is_empty()}));
+                        }
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !saw_feed {
+        return Err("Invalid GitHub release feed".into());
+    }
+    select_release(
+        &serde_json::to_string(&releases).map_err(|error| error.to_string())?,
+        current_version,
+    )
+}
+
+fn fetch_text(client: &reqwest::blocking::Client, url: &str) -> Result<String, String> {
     let response = client
-        .get(RELEASES_API)
+        .get(url)
         .header(
             reqwest::header::USER_AGENT,
             "Vibe-Coding-Light-update-check",
         )
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .send()
         .map_err(|error| error.to_string())?
         .error_for_status()
@@ -79,7 +133,29 @@ pub fn fetch_release(current_version: &str) -> Result<Option<ReleaseInfo>, Strin
     if body.len() > 2_000_000 {
         return Err("Release response too large".into());
     }
-    select_release(&body, current_version)
+    Ok(body)
+}
+
+pub fn fetch_release(current_version: &str) -> Result<Option<ReleaseInfo>, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|error| error.to_string())?;
+    fetch_release_from(&client, current_version, RELEASES_API, RELEASES_ATOM)
+}
+
+fn fetch_release_from(
+    client: &reqwest::blocking::Client,
+    current_version: &str,
+    api_url: &str,
+    atom_url: &str,
+) -> Result<Option<ReleaseInfo>, String> {
+    match fetch_text(client, api_url).and_then(|body| select_release(&body, current_version)) {
+        Ok(release) => Ok(release),
+        Err(primary) => fetch_text(client, atom_url)
+            .and_then(|body| select_atom_release(&body, current_version))
+            .map_err(|fallback| format!("GitHub API: {primary}; release feed: {fallback}")),
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -170,6 +246,61 @@ impl UpdatePreferencesStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn atom_feed_can_supply_release_when_api_is_unavailable() {
+        let feed = r#"<?xml version="1.0"?><feed><entry><link rel="alternate" type="text/html" href="https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.7.0-rc.2"/></entry><entry><link rel="alternate" href="https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.6.0"/></entry></feed>"#;
+        assert_eq!(
+            select_atom_release(feed, "1.7.0-rc.1")
+                .unwrap()
+                .unwrap()
+                .version,
+            "1.7.0-rc.2"
+        );
+        assert_eq!(
+            select_atom_release(feed, "1.5.0").unwrap().unwrap().version,
+            "1.6.0"
+        );
+        assert!(select_atom_release("<broken", "1.5.0").is_err());
+    }
+
+    #[test]
+    fn http_failure_uses_atom_endpoint_before_reporting_failure() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let feed = "<feed><entry><link rel=\"alternate\" href=\"https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.7.0-rc.2\"/></entry></feed>";
+            for response in [
+                "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .to_string(),
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    feed.len(),
+                    feed
+                ),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 2048];
+                let _ = stream.read(&mut request);
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let result = fetch_release_from(
+            &client,
+            "1.7.0-rc.1",
+            &format!("http://{address}/api"),
+            &format!("http://{address}/feed"),
+        )
+        .unwrap();
+        assert_eq!(result.unwrap().version, "1.7.0-rc.2");
+        server.join().unwrap();
+    }
 
     #[test]
     fn release_selection_respects_channel_and_semver() {

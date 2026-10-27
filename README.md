@@ -71,7 +71,7 @@ The **Sessions** tray submenu lists up to eight recent Claude/Codex sessions wit
 
 Notification Settings also includes a local **delivery history** and **quiet hours**. History keeps at most 100 metadata-only results and can be cleared. Quiet hours are off by default; the initial interval is 22:00–08:00 in the Mac's local time. Permission, question, and error alerts bypass quiet hours by default, and each category can be changed. Muted alerts are discarded; manual test pushes still work.
 
-The tray offers optional **Launch at login** (macOS 13+) and **Check for updates daily** switches, plus a manual update check. A newer version opens the project's GitHub release page when selected; the app does not install updates automatically. macOS may require approval for the login item in System Settings.
+The tray offers optional **Launch at login** and **Automatically check for updates** switches, plus a manual update check. Automatic checks run at most once per day and fall back to GitHub's release feed if the API is unavailable. A newer version opens the project's GitHub release page when selected; the app does not install updates automatically. Move the app to Applications before enabling launch at login. macOS may require approval for its login item; a user LaunchAgent is available as a fallback.
 
 ## How It Works
 

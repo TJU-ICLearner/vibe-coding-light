@@ -25,7 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{
     image::Image,
     menu::{
-        CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder, Submenu,
+        CheckMenuItem, CheckMenuItemBuilder, Menu, MenuBuilder, MenuItem, MenuItemBuilder, Submenu,
         SubmenuBuilder,
     },
     tray::TrayIconBuilder,
@@ -37,6 +37,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[derive(Clone)]
 struct TrayUi {
+    menu: Menu<tauri::Wry>,
     toggle_pet: MenuItem<tauri::Wry>,
     pet_action: MenuItem<tauri::Wry>,
     customize_pet: Option<MenuItem<tauri::Wry>>,
@@ -50,9 +51,11 @@ struct TrayUi {
     login_enabled: bool,
     login_pending_approval: bool,
     login_failed: bool,
+    login_needs_install: bool,
     auto_updates: CheckMenuItem<tauri::Wry>,
     check_updates: MenuItem<tauri::Wry>,
     release_item: MenuItem<tauri::Wry>,
+    release_visible: bool,
     update_running: bool,
     update_failed: bool,
     update_checked: bool,
@@ -93,6 +96,7 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
             locale,
             ui.login_pending_approval,
             ui.login_failed,
+            ui.login_needs_install,
         ));
         let _ = item.set_checked(ui.login_enabled);
     }
@@ -110,6 +114,7 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
         locale,
         ui.update_running,
         ui.update_failed,
+        ui.update_checked && ui.release_info.is_none(),
     ));
     let _ = ui.check_updates.set_enabled(!ui.update_running);
     let _ = ui.release_item.set_text(ui_copy::release_label(
@@ -117,7 +122,26 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
         ui.release_info.as_ref().map(|value| value.version.as_str()),
         ui.update_checked,
     ));
-    let _ = ui.release_item.set_enabled(ui.release_info.is_some());
+    let should_show_release = ui.release_info.is_some();
+    if should_show_release != ui.release_visible {
+        let state = app.state::<Arc<Mutex<TrayUi>>>();
+        let mut current = state.lock().unwrap();
+        if should_show_release {
+            let index = current
+                .menu
+                .items()
+                .unwrap_or_default()
+                .iter()
+                .position(|item| item.id().as_ref() == "check_updates")
+                .map(|position| position + 1)
+                .unwrap_or(0);
+            if current.menu.insert(&current.release_item, index).is_ok() {
+                current.release_visible = true;
+            }
+        } else if current.menu.remove(&current.release_item).is_ok() {
+            current.release_visible = false;
+        }
+    }
     let _ = ui.language.set_text(labels.language);
     let _ = ui.chinese.set_text(labels.chinese);
     let _ = ui.english.set_text(labels.english);
@@ -1019,6 +1043,7 @@ pub fn run() {
                         Some(login_item_macos::LoginStatus::RequiresApproval)
                     ),
                     false,
+                    false,
                 ),
             )
             .checked(matches!(
@@ -1047,7 +1072,12 @@ pub fn run() {
             .build(app)?;
             let check_updates_item = MenuItemBuilder::with_id(
                 "check_updates",
-                ui_copy::update_check_label(locale, false, false),
+                ui_copy::update_check_label(
+                    locale,
+                    false,
+                    false,
+                    update_checked && cached_release.is_none(),
+                ),
             )
             .build(app)?;
             let release_item = MenuItemBuilder::with_id(
@@ -1058,7 +1088,6 @@ pub fn run() {
                     update_checked,
                 ),
             )
-            .enabled(cached_release.is_some())
             .build(app)?;
             let empty_session_item =
                 MenuItemBuilder::with_id("session_empty", ui_copy::session_menu_empty(locale))
@@ -1085,18 +1114,19 @@ pub fn run() {
                 .item(&language_menu);
             #[cfg(target_os = "macos")]
             let menu = menu.item(&login_item);
-            let menu = menu
-                .item(&auto_updates_item)
-                .item(&check_updates_item)
-                .item(&release_item)
-                .separator()
-                .item(&quit_item)
-                .build()?;
+            let menu = menu.item(&auto_updates_item).item(&check_updates_item);
+            let menu = if cached_release.is_some() {
+                menu.item(&release_item)
+            } else {
+                menu
+            };
+            let menu = menu.separator().item(&quit_item).build()?;
 
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             app.manage(Arc::new(Mutex::new(TrayUi {
+                menu: menu.clone(),
                 toggle_pet: toggle_pet_item,
                 pet_action: pet_action_item,
                 customize_pet: {
@@ -1164,9 +1194,11 @@ pub fn run() {
                     }
                 },
                 login_failed: false,
+                login_needs_install: false,
                 auto_updates: auto_updates_item,
                 check_updates: check_updates_item,
                 release_item,
+                release_visible: cached_release.is_some(),
                 update_running: false,
                 update_failed: false,
                 update_checked,
@@ -1292,10 +1324,13 @@ pub fn run() {
                                 ui.login_pending_approval =
                                     status == login_item_macos::LoginStatus::RequiresApproval;
                                 ui.login_failed = false;
+                                ui.login_needs_install = false;
                             }
                             Err(error) => {
                                 eprintln!("Login item change failed: {error}");
                                 ui.login_failed = true;
+                                ui.login_needs_install =
+                                    error.starts_with("Move Vibe Coding Light.app to Applications");
                             }
                         }
                         drop(ui);
