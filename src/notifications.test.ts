@@ -17,6 +17,7 @@ function setup() {
     getSettings: vi.fn(async () => structuredClone(defaults)),
     setSettings: vi.fn(async (settings) => settings),
     getStatus: vi.fn(async () => structuredClone(status)),
+    getDiagnostics: vi.fn(async () => []), clearDiagnostics: vi.fn(async () => {}),
     saveKey: vi.fn(async () => {}), deleteKey: vi.fn(async () => {}), sendTest: vi.fn(async () => {}),
   };
   const controller = new NotificationSettingsController(root, api);
@@ -210,5 +211,31 @@ describe("notification settings window", () => {
     expect(root.textContent).toContain("通知服务暂不可用");
     controller.setLocale("en");
     expect(root.textContent).toContain("Notification service is unavailable");
+  });
+
+  it("shows localized delivery diagnostics and lets the user clear them", async () => {
+    const { root, api, controller } = setup();
+    (api.getDiagnostics as ReturnType<typeof vi.fn>).mockResolvedValue([{
+      atMs: 1_800_000_000_000, source: "codex", kind: "error", outcome: "failed", reason: "network",
+    }]);
+    await controller.init("zh-CN");
+    expect(root.querySelector(".diagnostics")?.textContent).toContain("Codex");
+    expect(root.querySelector(".diagnostics")?.textContent).toContain("网络");
+    root.querySelector<HTMLButtonElement>('[data-action="clear-diagnostics"]')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(api.clearDiagnostics).toHaveBeenCalledTimes(1);
+    expect(root.querySelector(".diagnostics")?.textContent).toContain("暂无记录");
+    controller.setLocale("en");
+    expect(root.querySelector(".diagnostics")?.textContent).toContain("No recent records");
+  });
+
+  it("renders malformed diagnostic text without creating HTML", async () => {
+    const { root, api, controller } = setup();
+    (api.getDiagnostics as ReturnType<typeof vi.fn>).mockResolvedValue([{
+      atMs: 1_800_000_000_000, source: "codex", kind: '<img src=x onerror=alert(1)>', outcome: "observed", reason: null,
+    }]);
+    await controller.init("en");
+    expect(root.querySelector(".diagnostics img")).toBeNull();
+    expect(root.querySelector(".diagnostics")?.textContent).toContain("<img src=x onerror=alert(1)>");
   });
 });

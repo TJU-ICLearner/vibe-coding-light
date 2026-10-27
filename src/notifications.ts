@@ -15,10 +15,19 @@ export interface NotificationStatus {
   serviceAvailable: boolean; keySaved: boolean; claudeHooksInstalled: boolean; codexHooksInstalled: boolean;
   claudeQuotaAvailable: boolean; codexQuotaAvailable: boolean; lastSendError: string | null;
 }
+export interface DiagnosticEntry {
+  atMs: number;
+  source: "claude" | "codex" | null;
+  kind: string;
+  outcome: "observed" | "deferred" | "sent" | "skipped" | "failed";
+  reason: string | null;
+}
 export interface NotificationApi {
   getSettings(): Promise<NotificationSettings>;
   setSettings(settings: NotificationSettings): Promise<NotificationSettings>;
   getStatus(): Promise<NotificationStatus>;
+  getDiagnostics(): Promise<DiagnosticEntry[]>;
+  clearDiagnostics(): Promise<void>;
   saveKey(key: string): Promise<void>;
   deleteKey(): Promise<void>;
   sendTest(): Promise<void>;
@@ -28,6 +37,8 @@ const api: NotificationApi = {
   getSettings: () => invoke("get_notification_settings"),
   setSettings: (settings) => invoke("set_notification_settings", { settings }),
   getStatus: () => invoke("get_notification_status"),
+  getDiagnostics: () => invoke("get_notification_diagnostics"),
+  clearDiagnostics: () => invoke("clear_notification_diagnostics"),
   saveKey: (key) => invoke("save_bark_key", { key }),
   deleteKey: () => invoke("delete_bark_key"),
   sendTest: () => invoke("send_test_notification"),
@@ -68,6 +79,7 @@ function sendErrorFeedback(error: unknown): NotificationFeedback {
 export class NotificationSettingsController {
   private settings: NotificationSettings | null = null;
   private status: NotificationStatus | null = null;
+  private diagnostics: DiagnosticEntry[] = [];
   private locale: NotificationLocale = "zh-CN";
   private feedback: NotificationFeedback | null = null;
   private testPending = false;
@@ -88,12 +100,13 @@ export class NotificationSettingsController {
 
   async init(locale: NotificationLocale): Promise<void> {
     this.locale = locale;
-    [this.settings, this.status] = await Promise.all([this.api.getSettings(), this.api.getStatus()]);
+    [this.settings, this.status, this.diagnostics] = await Promise.all([this.api.getSettings(), this.api.getStatus(), this.api.getDiagnostics()]);
     this.render();
   }
 
   setLocale(locale: NotificationLocale): void { this.locale = locale; this.render(); }
   setStatus(status: NotificationStatus): void { this.status = status; this.render(); }
+  setDiagnostics(entries: DiagnosticEntry[]): void { this.diagnostics = entries; this.render(); }
 
   private async onChange(event: Event): Promise<void> {
     const input = event.target as HTMLInputElement;
@@ -147,6 +160,12 @@ export class NotificationSettingsController {
     const button = target.closest<HTMLButtonElement>("button[data-action]");
     if (!button) return;
     const action = button.dataset.action;
+    if (action === "clear-diagnostics") {
+      try { await this.api.clearDiagnostics(); this.diagnostics = []; this.feedback = null; }
+      catch { this.feedback = "settingsFailure"; }
+      this.render();
+      return;
+    }
     if (action === "reset-template" && this.settings) {
       const next = structuredClone(this.settings) as NotificationSettings;
       const key = `${this.locale}.${this.selectedEvent}`;
@@ -200,6 +219,23 @@ export class NotificationSettingsController {
       quota20: t.templateQuota20, quota0: t.templateQuota0, recovered: t.templateRecovered,
     };
     const selectedTemplate = this.templateDrafts[`${this.locale}.${this.selectedEvent}`] ?? s.templates[`${this.locale}.${this.selectedEvent}`] ?? { title: "", body: "" };
+    const outcomeLabels: Record<DiagnosticEntry["outcome"], string> = { observed: t.diagnosticObserved, deferred: t.diagnosticDeferred, sent: t.diagnosticSent, skipped: t.diagnosticSkipped, failed: t.diagnosticFailed };
+    const reasonLabels: Record<string, string> = {
+      notifications_disabled: t.diagnosticNotificationsDisabled, state_only: t.diagnosticStateOnly,
+      duplicate: t.diagnosticDuplicate, expired: t.diagnosticExpired,
+      source_disabled: t.diagnosticSourceDisabled, type_disabled: t.diagnosticTypeDisabled,
+      cooldown: t.diagnosticCooldown, quiet_hours: t.diagnosticQuietHours,
+      superseded: t.diagnosticSuperseded, key_missing: t.diagnosticKeyMissing,
+      rejected: t.diagnosticRejected, network: t.diagnosticNetwork, unconfirmed: t.diagnosticUnconfirmed,
+    };
+    const diagnosticLabels: Record<string, string> = { permission: t.permission, question: t.question, completed: t.completed, error: t.error, quota80: t.at80, quota50: t.at50, quota20: t.at20, quota0: t.at0, recovered: t.recovered, working: t.diagnosticWorking, test: t.test };
+    const diagnosticRows = [...this.diagnostics].reverse().map((entry) => {
+      const source = entry.source === "claude" ? t.claude : entry.source === "codex" ? t.codex : t.diagnosticApp;
+      const kind = diagnosticLabels[entry.kind] ?? entry.kind;
+      const reason = entry.reason ? reasonLabels[entry.reason] ?? entry.reason : "";
+      const when = new Date(entry.atMs).toLocaleString(this.locale);
+      return `<li><time>${escapeHtml(when)}</time><strong>${escapeHtml(source)} · ${escapeHtml(kind)}</strong><span class="diagnostic-outcome ${entry.outcome}">${escapeHtml(outcomeLabels[entry.outcome] ?? entry.outcome)}</span>${reason ? `<small>${escapeHtml(reason)}</small>` : ""}</li>`;
+    }).join("");
     this.root.innerHTML = `
       <header class="page-head"><p class="eyebrow">VIBE CODING LIGHT / NOTIFICATIONS</p><h1>${t.title}</h1><p>${t.intro}</p></header>
       <section class="hero-card"><div><h2>${t.master}</h2><p>${t.masterHint}</p></div>${toggle("enabled", t.master, s.enabled)}</section>
@@ -217,6 +253,7 @@ export class NotificationSettingsController {
           <p class="token-hint">${t.templateTokens}</p><button type="button" data-action="reset-template">${t.templateReset}</button>
         </div><div class="template-preview"><span>${t.templatePreview}</span><div id="template-preview"><strong id="preview-title"></strong><p id="preview-body"></p></div></div>
       </section>
+      <section class="card diagnostics"><div class="card-title"><span class="card-index">06</span><h2>${t.diagnosticsTitle}</h2></div><p class="hint">${t.diagnosticsHint}</p><div class="diagnostic-actions"><button type="button" data-action="clear-diagnostics" ${this.diagnostics.length ? "" : "disabled"}>${t.diagnosticsClear}</button></div>${diagnosticRows ? `<ol class="diagnostic-list">${diagnosticRows}</ol>` : `<p class="diagnostic-empty">${t.diagnosticsEmpty}</p>`}</section>
       ${!eventSelected ? `<p class="notice">${t.noTypes}</p>` : ""}
       ${!status.serviceAvailable ? `<p class="notice" role="status">${t.serviceUnavailable}</p>` : ""}
       <footer>${t.footer}</footer>`;
@@ -271,4 +308,5 @@ if (root) {
   void invoke<NotificationLocale>("get_app_locale").then((locale) => controller.init(locale));
   void listen<NotificationLocale>("locale-changed", (event) => controller.setLocale(event.payload));
   void listen<NotificationStatus>("notification-status-changed", (event) => controller.setStatus(event.payload));
+  void listen("notification-diagnostics-changed", () => { void api.getDiagnostics().then((entries) => controller.setDiagnostics(entries)); });
 }

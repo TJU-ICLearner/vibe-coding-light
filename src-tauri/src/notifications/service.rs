@@ -1,6 +1,7 @@
 use super::bark::{BarkClient, BarkError};
 use super::claude_quota::ClaudeQuota;
 use super::codex_quota::CodexQuota;
+use super::diagnostics::{DiagnosticEntry, DiagnosticOutcome, DiagnosticReason, DiagnosticStore};
 use super::events::EventSpool;
 use super::keychain::{KeyStore, MacKeyStore};
 use super::model::{AgentSource, NotificationSettings, PushCandidate};
@@ -34,6 +35,7 @@ pub struct NotificationService {
     core: Mutex<NotificationCore>,
     spool: Mutex<EventSpool>,
     status: Mutex<NotificationStatus>,
+    diagnostics: Mutex<DiagnosticStore>,
     last_claude_poll: Mutex<u64>,
     last_codex_poll: Mutex<u64>,
     key_store: MacKeyStore,
@@ -66,6 +68,9 @@ impl NotificationService {
             )),
             spool: Mutex::new(spool),
             status: Mutex::new(status),
+            diagnostics: Mutex::new(DiagnosticStore::load(
+                data_dir.join("notification-diagnostics.json"),
+            )),
             last_claude_poll: Mutex::new(0),
             last_codex_poll: Mutex::new(0),
             key_store,
@@ -136,12 +141,36 @@ impl NotificationService {
         let payload = crate::ui_copy::test_notification(crate::current_locale(&self.app));
         let result = self.bark.send(&key, &payload);
         self.record_send_result(&result);
+        let (outcome, reason) = diagnostic_send_result(&result);
+        self.record_diagnostic(DiagnosticEntry {
+            at_ms: now_ms(),
+            source: None,
+            kind: "test".into(),
+            outcome,
+            reason,
+        });
         result.map_err(|error| format!("Bark send failed: {error:?}"))
     }
 
     pub fn status(&self) -> NotificationStatus {
         self.refresh_status();
         self.status.lock().unwrap().clone()
+    }
+
+    pub fn diagnostics(&self) -> Vec<DiagnosticEntry> {
+        self.diagnostics.lock().unwrap().entries()
+    }
+
+    pub fn clear_diagnostics(&self) -> Result<(), String> {
+        self.diagnostics.lock().unwrap().clear()?;
+        let _ = self.app.emit("notification-diagnostics-changed", ());
+        Ok(())
+    }
+
+    fn record_diagnostic(&self, entry: DiagnosticEntry) {
+        if self.diagnostics.lock().unwrap().append(entry).is_ok() {
+            let _ = self.app.emit("notification-diagnostics-changed", ());
+        }
     }
 
     fn tick(&self) {
@@ -153,6 +182,11 @@ impl NotificationService {
             settings
         };
         let events = self.spool.lock().unwrap().drain(now);
+        for event in &events {
+            if event.kind != super::model::AgentEventKind::Working {
+                self.record_diagnostic(DiagnosticEntry::from_event(event, now, &settings));
+            }
+        }
         {
             let mut core = self.core.lock().unwrap();
             core.events(
@@ -220,13 +254,39 @@ impl NotificationService {
     }
 
     fn send_candidate(&self, candidate: PushCandidate) -> Result<(), BarkError> {
-        let key = self
-            .key_store
-            .read()
-            .map_err(|_| BarkError::Unsent)?
-            .ok_or(BarkError::Unsent)?;
+        let key = match self.key_store.read().ok().flatten() {
+            Some(key) => key,
+            None => {
+                self.record_diagnostic(DiagnosticEntry::from_candidate(
+                    &candidate,
+                    now_ms(),
+                    DiagnosticOutcome::Failed,
+                    Some(DiagnosticReason::KeyMissing),
+                ));
+                return Err(BarkError::Unsent);
+            }
+        };
         let settings = self.settings();
-        if !super::candidate_allowed(&candidate, &settings, now_ms()) {
+        let now = now_ms();
+        if !super::candidate_allowed(&candidate, &settings, now) {
+            let reason = if now < candidate.due_at_ms || now >= candidate.expires_at_ms {
+                DiagnosticReason::Expired
+            } else if !settings.enabled {
+                DiagnosticReason::NotificationsDisabled
+            } else if !match candidate.source {
+                AgentSource::Claude => settings.sources.claude,
+                AgentSource::Codex => settings.sources.codex,
+            } {
+                DiagnosticReason::SourceDisabled
+            } else {
+                DiagnosticReason::TypeDisabled
+            };
+            self.record_diagnostic(DiagnosticEntry::from_candidate(
+                &candidate,
+                now,
+                DiagnosticOutcome::Skipped,
+                Some(reason),
+            ));
             return Ok(());
         }
         let payload = crate::ui_copy::notification_payload_with_settings(
@@ -239,6 +299,13 @@ impl NotificationService {
             Err(_) => Err(BarkError::Rejected),
         };
         self.record_send_result(&result);
+        let (outcome, reason) = diagnostic_send_result(&result);
+        self.record_diagnostic(DiagnosticEntry::from_candidate(
+            &candidate,
+            now_ms(),
+            outcome,
+            reason,
+        ));
         result
     }
 
@@ -287,6 +354,20 @@ impl NotificationService {
         if *status != before {
             let _ = self.app.emit("notification-status-changed", status.clone());
         }
+    }
+}
+
+fn diagnostic_send_result(
+    result: &Result<(), BarkError>,
+) -> (DiagnosticOutcome, Option<DiagnosticReason>) {
+    match result {
+        Ok(()) => (DiagnosticOutcome::Sent, None),
+        Err(BarkError::Rejected) => (DiagnosticOutcome::Failed, Some(DiagnosticReason::Rejected)),
+        Err(BarkError::Unsent) => (DiagnosticOutcome::Failed, Some(DiagnosticReason::Network)),
+        Err(BarkError::Ambiguous) => (
+            DiagnosticOutcome::Failed,
+            Some(DiagnosticReason::Unconfirmed),
+        ),
     }
 }
 
@@ -408,4 +489,28 @@ pub fn get_notification_status(
 ) -> Result<NotificationStatus, String> {
     ensure_notification_window(&window)?;
     Ok(status_or_unavailable(service.as_deref()))
+}
+
+#[tauri::command]
+pub fn get_notification_diagnostics(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+) -> Result<Vec<DiagnosticEntry>, String> {
+    ensure_notification_window(&window)?;
+    Ok(service
+        .as_deref()
+        .map(NotificationService::diagnostics)
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn clear_notification_diagnostics(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+) -> Result<(), String> {
+    ensure_notification_window(&window)?;
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .clear_diagnostics()
 }

@@ -2,6 +2,7 @@ pub mod bark;
 pub mod claude_quota;
 pub mod codex_quota;
 mod detail_capture;
+pub mod diagnostics;
 pub mod engine;
 pub mod events;
 pub mod keychain;
