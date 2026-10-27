@@ -60,7 +60,7 @@ pub fn candidate(
     };
     let quota = matches!(kind, PushKind::QuotaThreshold(_) | PushKind::QuotaRecovered);
     let label = match (quota, request.duration_mins) {
-        (true, Some(duration @ (300 | 10080))) => Some(format!("Simulated quota · {duration} min")),
+        (true, Some(duration @ (300 | 10080))) => Some(format!("{duration} min")),
         (false, None) => None,
         _ => return Err("Invalid simulated quota period".into()),
     };

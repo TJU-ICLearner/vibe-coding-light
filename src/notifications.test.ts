@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { NotificationSettingsController, type NotificationApi, type NotificationSettings, type NotificationStatus } from "./notifications";
+import { NotificationSettingsController, type NotificationApi, type NotificationSettings, type NotificationStatus, type SimulatedTestResult } from "./notifications";
 
 const defaults: NotificationSettings = {
   enabled: false,
@@ -10,24 +10,87 @@ const defaults: NotificationSettings = {
   templates: {},
   quiet_hours: { enabled: false, start_minute: 1320, end_minute: 480, bypass: { permission: true, question: true, completed: false, error: true, quota: false } },
 };
-const status: NotificationStatus = { serviceAvailable: true, keySaved: false, claudeHooksInstalled: false, codexHooksInstalled: false, claudeQuotaAvailable: false, codexQuotaAvailable: false, lastSendError: null };
+const status: NotificationStatus = { serviceAvailable: true, keySaved: false, claudeHooksInstalled: false, codexHooksInstalled: false, claudeQuotaAvailable: false, codexQuotaAvailable: false, testConsoleAvailable: false, lastSendError: null };
 
 function setup() {
   const root = document.createElement("main"); document.body.replaceChildren(root);
+  const sendSimulated = vi.fn<NotificationApi["sendSimulated"]>(async () => ({ outcome: "sent", reason: null }));
   const api: NotificationApi = {
     getSettings: vi.fn(async () => structuredClone(defaults)),
     setSettings: vi.fn(async (settings) => settings),
     getStatus: vi.fn(async () => structuredClone(status)),
     getDiagnostics: vi.fn(async () => []), clearDiagnostics: vi.fn(async () => {}),
-    saveKey: vi.fn(async () => {}), deleteKey: vi.fn(async () => {}), sendTest: vi.fn(async () => {}),
+    saveKey: vi.fn(async () => {}), deleteKey: vi.fn(async () => {}), sendTest: vi.fn(async () => {}), sendSimulated,
   };
   const controller = new NotificationSettingsController(root, api);
-  return { root, api, controller };
+  return { root, api, controller, sendSimulated };
 }
 
 beforeEach(() => document.body.replaceChildren());
 
 describe("notification settings window", () => {
+  it("renders nine RC test buttons", async () => {
+    const { root, api, controller } = setup();
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true });
+    await controller.init("zh-CN");
+    expect(root.querySelectorAll('button[data-action="simulate-event"]')).toHaveLength(9);
+    expect(root.textContent).toContain("仅 RC 测试");
+  });
+
+  it("sends selected source and period", async () => {
+    const { root, api, controller, sendSimulated } = setup();
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true, keySaved: true });
+    await controller.init("zh-CN");
+    const source = root.querySelector<HTMLSelectElement>("#test-source")!;
+    source.value = "claude"; source.dispatchEvent(new Event("change", { bubbles: true }));
+    const period = root.querySelector<HTMLSelectElement>("#test-period")!;
+    period.value = "10080"; period.dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelector<HTMLButtonElement>('button[data-event="quota20"]')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sendSimulated).toHaveBeenCalledWith({ source: "claude", event: "quota20", duration_mins: 10080 });
+    expect(root.querySelector('[data-test-feedback="quota20"]')?.textContent).toContain("已提交给 Bark");
+  });
+
+  it("shows skipped and Bark failure reasons", async () => {
+    const { root, api, controller, sendSimulated } = setup();
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true, keySaved: true });
+    sendSimulated.mockResolvedValueOnce({ outcome: "skipped", reason: "quiet_hours" });
+    await controller.init("zh-CN");
+    root.querySelector<HTMLButtonElement>('button[data-event="completed"]')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(root.querySelector('[data-test-feedback="completed"]')?.textContent).toContain("免打扰");
+    controller.setLocale("en");
+    expect(root.querySelector('[data-test-feedback="completed"]')?.textContent).toContain("Quiet hours");
+    sendSimulated.mockRejectedValueOnce("Bark send failed: Rejected");
+    root.querySelector<HTMLButtonElement>('button[data-event="error"]')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(root.querySelector('[data-test-feedback="error"]')?.textContent).toContain("Bark rejected");
+    expect(root.querySelector('[data-test-feedback="completed"]')?.textContent).toContain("Quiet hours");
+    const source = root.querySelector<HTMLSelectElement>("#test-source")!;
+    source.value = "claude"; source.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(root.querySelector('[data-test-feedback="error"]')).toBeNull();
+  });
+
+  it("prevents duplicate clicks during simulated send", async () => {
+    const { root, api, controller, sendSimulated } = setup();
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true, keySaved: true });
+    let finish!: (value: SimulatedTestResult) => void;
+    sendSimulated.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await controller.init("zh-CN");
+    const button = root.querySelector<HTMLButtonElement>('button[data-event="permission"]')!;
+    button.click(); button.click();
+    expect(sendSimulated).toHaveBeenCalledTimes(1);
+    expect(root.querySelector<HTMLButtonElement>('button[data-event="permission"]')!.disabled).toBe(true);
+    finish({ outcome: "sent", reason: null });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it("hides console in stable builds", async () => {
+    const { root, controller } = setup();
+    await controller.init("zh-CN");
+    expect(root.querySelector('button[data-action="simulate-event"]')).toBeNull();
+  });
+
   it("renders every control and opt-in defaults", async () => {
     const { root, controller } = setup(); await controller.init("zh-CN");
     for (const path of ["enabled","sources.claude","sources.codex","events.permission","events.question","events.completed","events.error","quota.at80","quota.at50","quota.at20","quota.at0","quota.recovered"]) {
