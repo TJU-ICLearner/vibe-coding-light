@@ -14,6 +14,7 @@ mod integration_tests;
 pub mod settings;
 
 use bark::BarkError;
+use diagnostics::{DiagnosticEntry, DiagnosticOutcome, DiagnosticReason};
 use engine::NotificationEngine;
 use model::{AgentEvent, AgentSource, NotificationSettings, PushCandidate, PushKind, QuotaWindow};
 use std::path::PathBuf;
@@ -56,6 +57,43 @@ impl NotificationCore {
         dispatch(candidates, now_ms, current, send)
     }
 
+    pub fn events_with_diagnostics<F, G, H>(
+        &mut self,
+        events: Vec<AgentEvent>,
+        now_ms: u64,
+        settings: &NotificationSettings,
+        current: F,
+        send: G,
+        mut record: H,
+    ) -> Vec<BarkError>
+    where
+        F: FnMut() -> NotificationSettings,
+        G: FnMut(PushCandidate) -> Result<(), BarkError>,
+        H: FnMut(DiagnosticEntry),
+    {
+        let mut candidates = Vec::new();
+        for event in events {
+            let (produced, (outcome, reason), canceled) =
+                self.engine
+                    .on_event_tracked(event.clone(), now_ms, settings);
+            if event.kind != model::AgentEventKind::Working {
+                record(DiagnosticEntry::from_event_decision(
+                    &event, now_ms, outcome, reason,
+                ));
+            }
+            for candidate in canceled {
+                record(DiagnosticEntry::from_candidate(
+                    &candidate,
+                    now_ms,
+                    DiagnosticOutcome::Skipped,
+                    Some(DiagnosticReason::Superseded),
+                ));
+            }
+            candidates.extend(produced);
+        }
+        dispatch_tracked(candidates, now_ms, current, send, record)
+    }
+
     pub fn quota<F, G>(
         &mut self,
         window: QuotaWindow,
@@ -72,6 +110,24 @@ impl NotificationCore {
         dispatch(candidates, now_ms, current, send)
     }
 
+    pub fn quota_with_diagnostics<F, G, H>(
+        &mut self,
+        window: QuotaWindow,
+        now_ms: u64,
+        settings: &NotificationSettings,
+        current: F,
+        send: G,
+        record: H,
+    ) -> Vec<BarkError>
+    where
+        F: FnMut() -> NotificationSettings,
+        G: FnMut(PushCandidate) -> Result<(), BarkError>,
+        H: FnMut(DiagnosticEntry),
+    {
+        let candidates = self.engine.on_quota(window, now_ms, settings);
+        dispatch_tracked(candidates, now_ms, current, send, record)
+    }
+
     pub fn flush<F, G>(
         &mut self,
         now_ms: u64,
@@ -85,6 +141,31 @@ impl NotificationCore {
     {
         let candidates = self.engine.flush_due(now_ms, settings);
         dispatch(candidates, now_ms, current, send)
+    }
+
+    pub fn flush_with_diagnostics<F, G, H>(
+        &mut self,
+        now_ms: u64,
+        settings: &NotificationSettings,
+        current: F,
+        send: G,
+        mut record: H,
+    ) -> Vec<BarkError>
+    where
+        F: FnMut() -> NotificationSettings,
+        G: FnMut(PushCandidate) -> Result<(), BarkError>,
+        H: FnMut(DiagnosticEntry),
+    {
+        let (candidates, skipped) = self.engine.flush_due_tracked(now_ms, settings);
+        for (candidate, reason) in skipped {
+            record(DiagnosticEntry::from_candidate(
+                &candidate,
+                now_ms,
+                DiagnosticOutcome::Skipped,
+                Some(reason),
+            ));
+        }
+        dispatch_tracked(candidates, now_ms, current, send, record)
     }
 }
 
@@ -123,6 +204,57 @@ where
     errors
 }
 
+fn dispatch_tracked<F, G, H>(
+    candidates: Vec<PushCandidate>,
+    now_ms: u64,
+    mut current: F,
+    mut send: G,
+    mut record: H,
+) -> Vec<BarkError>
+where
+    F: FnMut() -> NotificationSettings,
+    G: FnMut(PushCandidate) -> Result<(), BarkError>,
+    H: FnMut(DiagnosticEntry),
+{
+    let mut errors = Vec::new();
+    for candidate in candidates {
+        let settings = current();
+        if candidate_allowed(&candidate, &settings, now_ms) {
+            if let Err(error) = send(candidate) {
+                errors.push(error);
+            }
+        } else {
+            let reason = candidate_skip_reason(&candidate, &settings, now_ms);
+            record(DiagnosticEntry::from_candidate(
+                &candidate,
+                now_ms,
+                DiagnosticOutcome::Skipped,
+                Some(reason),
+            ));
+        }
+    }
+    errors
+}
+
+pub fn candidate_skip_reason(
+    candidate: &PushCandidate,
+    settings: &NotificationSettings,
+    now_ms: u64,
+) -> DiagnosticReason {
+    if now_ms < candidate.due_at_ms || now_ms >= candidate.expires_at_ms {
+        DiagnosticReason::Expired
+    } else if !settings.enabled {
+        DiagnosticReason::NotificationsDisabled
+    } else if !match candidate.source {
+        AgentSource::Claude => settings.sources.claude,
+        AgentSource::Codex => settings.sources.codex,
+    } {
+        DiagnosticReason::SourceDisabled
+    } else {
+        DiagnosticReason::TypeDisabled
+    }
+}
+
 pub fn candidate_allowed(
     candidate: &PushCandidate,
     settings: &NotificationSettings,
@@ -157,6 +289,7 @@ pub fn candidate_allowed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::notifications::diagnostics::{DiagnosticOutcome, DiagnosticReason};
     use crate::notifications::model::{
         AgentEvent, AgentEventKind, AgentSource, NotificationSettings, PushCandidate, PushKind,
         QuotaWindow,
@@ -178,6 +311,45 @@ mod tests {
             new_turn: false,
             details: Default::default(),
         }
+    }
+
+    #[test]
+    fn diagnostic_dispatch_reports_duplicate_and_superseded_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = NotificationCore::new(dir.path().join("ledger.json"));
+        let settings = enabled();
+        let mut records = Vec::new();
+        core.events_with_diagnostics(
+            vec![
+                event("first", AgentEventKind::Permission, 1_000),
+                event("second", AgentEventKind::Permission, 1_001),
+            ],
+            1_001,
+            &settings,
+            || settings.clone(),
+            |_| Ok(()),
+            |entry| records.push(entry),
+        );
+        assert!(records
+            .iter()
+            .any(|entry| entry.outcome == DiagnosticOutcome::Skipped
+                && entry.reason == Some(DiagnosticReason::Duplicate)));
+        records.clear();
+        core.events_with_diagnostics(
+            vec![
+                event("done", AgentEventKind::Completed, 2_000),
+                event("working", AgentEventKind::Working, 2_001),
+            ],
+            2_001,
+            &settings,
+            || settings.clone(),
+            |_| Ok(()),
+            |entry| records.push(entry),
+        );
+        assert!(records
+            .iter()
+            .any(|entry| entry.kind == "completed"
+                && entry.reason == Some(DiagnosticReason::Superseded)));
     }
 
     #[test]

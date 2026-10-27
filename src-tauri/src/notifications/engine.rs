@@ -1,7 +1,9 @@
+use super::diagnostics::{DiagnosticOutcome, DiagnosticReason};
 use super::model::{
     AgentEvent, AgentEventKind, AgentSource, EventDetails, NotificationSettings, PushCandidate,
     PushKind, QuotaWindow,
 };
+use chrono::{Local, TimeZone, Timelike};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -270,17 +272,156 @@ impl NotificationEngine {
         vec![candidate]
     }
 
+    pub fn on_event_tracked(
+        &mut self,
+        event: AgentEvent,
+        now_ms: u64,
+        settings: &NotificationSettings,
+    ) -> (
+        Vec<PushCandidate>,
+        (DiagnosticOutcome, Option<DiagnosticReason>),
+        Vec<PushCandidate>,
+    ) {
+        let decision = self.event_decision(&event, now_ms, settings);
+        let before = self
+            .pending
+            .iter()
+            .map(|item| item.candidate.clone())
+            .collect::<Vec<_>>();
+        let candidates = self.on_event(event, now_ms, settings);
+        let canceled = before
+            .into_iter()
+            .filter(|candidate| {
+                !self
+                    .pending
+                    .iter()
+                    .any(|item| item.candidate.id == candidate.id)
+            })
+            .collect();
+        (candidates, decision, canceled)
+    }
+
+    fn event_decision(
+        &self,
+        event: &AgentEvent,
+        now_ms: u64,
+        settings: &NotificationSettings,
+    ) -> (DiagnosticOutcome, Option<DiagnosticReason>) {
+        let age_limit = if matches!(
+            event.kind,
+            AgentEventKind::Completed | AgentEventKind::Error
+        ) {
+            COMPLETION_ERROR_TTL_MS
+        } else {
+            CANDIDATE_TTL_MS
+        };
+        if event.at_ms > now_ms.saturating_add(60_000)
+            || now_ms.saturating_sub(event.at_ms) >= age_limit
+        {
+            return (DiagnosticOutcome::Skipped, Some(DiagnosticReason::Expired));
+        }
+        if self.ledger.event_ids.contains_key(&event.id) {
+            return (
+                DiagnosticOutcome::Skipped,
+                Some(DiagnosticReason::Duplicate),
+            );
+        }
+        if matches!(
+            event.kind,
+            AgentEventKind::Permission | AgentEventKind::Question | AgentEventKind::Completed
+        ) {
+            let key = format!(
+                "{:?}:{}:{}:{:?}",
+                event.source,
+                event.session_id,
+                event.turn_id.as_deref().unwrap_or("no-turn"),
+                event.kind
+            );
+            if self.ledger.turn_categories.contains_key(&key) {
+                return (
+                    DiagnosticOutcome::Skipped,
+                    Some(DiagnosticReason::Duplicate),
+                );
+            }
+        }
+        if !settings.enabled {
+            return (
+                DiagnosticOutcome::Skipped,
+                Some(DiagnosticReason::NotificationsDisabled),
+            );
+        }
+        if !source_enabled(settings, event.source) {
+            return (
+                DiagnosticOutcome::Skipped,
+                Some(DiagnosticReason::SourceDisabled),
+            );
+        }
+        if event.kind == AgentEventKind::Working {
+            return (
+                DiagnosticOutcome::Observed,
+                Some(DiagnosticReason::StateOnly),
+            );
+        }
+        let selected = match event.kind {
+            AgentEventKind::Permission => settings.events.permission,
+            AgentEventKind::Question => settings.events.question,
+            AgentEventKind::Completed => settings.events.completed,
+            AgentEventKind::Error => settings.events.error,
+            AgentEventKind::Working => unreachable!(),
+        };
+        if !selected {
+            return (
+                DiagnosticOutcome::Skipped,
+                Some(DiagnosticReason::TypeDisabled),
+            );
+        }
+        if event.kind == AgentEventKind::Error {
+            let key = format!("{:?}:{}", event.source, event.session_id);
+            if self
+                .ledger
+                .error_at
+                .get(&key)
+                .is_some_and(|at| now_ms.saturating_sub(*at) < ERROR_COOLDOWN_MS)
+            {
+                return (DiagnosticOutcome::Skipped, Some(DiagnosticReason::Cooldown));
+            }
+        }
+        if event.kind == AgentEventKind::Completed {
+            (DiagnosticOutcome::Deferred, None)
+        } else {
+            (DiagnosticOutcome::Observed, None)
+        }
+    }
+
     pub fn flush_due(
         &mut self,
         now_ms: u64,
         settings: &NotificationSettings,
     ) -> Vec<PushCandidate> {
+        self.flush_due_tracked(now_ms, settings).0
+    }
+
+    pub fn flush_due_tracked(
+        &mut self,
+        now_ms: u64,
+        settings: &NotificationSettings,
+    ) -> (Vec<PushCandidate>, Vec<(PushCandidate, DiagnosticReason)>) {
         let mut due = Vec::new();
+        let mut skipped = Vec::new();
         self.pending.retain(|pending| {
-            if now_ms >= pending.candidate.expires_at_ms
-                || !source_enabled(settings, pending.source)
-                || !settings.events.completed
-            {
+            let reason = if now_ms >= pending.candidate.expires_at_ms {
+                Some(DiagnosticReason::Expired)
+            } else if !settings.enabled {
+                Some(DiagnosticReason::NotificationsDisabled)
+            } else if !source_enabled(settings, pending.source) {
+                Some(DiagnosticReason::SourceDisabled)
+            } else if !settings.events.completed {
+                Some(DiagnosticReason::TypeDisabled)
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                skipped.push((pending.candidate.clone(), reason));
                 return false;
             }
             if now_ms >= pending.candidate.due_at_ms {
@@ -289,7 +430,7 @@ impl NotificationEngine {
             }
             true
         });
-        due
+        (due, skipped)
     }
 
     pub fn on_quota(
@@ -394,12 +535,23 @@ impl NotificationEngine {
                     remaining,
                     now_ms,
                 ));
-                state.alerted = true;
-                state.lowest_alerted = Some(
-                    state
-                        .lowest_alerted
-                        .map_or(level, |previous| previous.min(level)),
-                );
+                let quiet_now = i64::try_from(now_ms)
+                    .ok()
+                    .and_then(|time| Local.timestamp_millis_opt(time).single())
+                    .is_some_and(|time| {
+                        settings.quiet_hours.blocks(
+                            &PushKind::QuotaThreshold(level),
+                            (time.hour() * 60 + time.minute()) as u16,
+                        )
+                    });
+                if !quiet_now {
+                    state.alerted = true;
+                    state.lowest_alerted = Some(
+                        state
+                            .lowest_alerted
+                            .map_or(level, |previous| previous.min(level)),
+                    );
+                }
             }
         }
         state.previous_remaining = remaining;
@@ -492,6 +644,128 @@ mod tests {
             resets_at: reset,
             reached: remaining == 0.0,
         }
+    }
+
+    #[test]
+    fn tracked_events_explain_duplicate_expiry_and_error_cooldown() {
+        use crate::notifications::diagnostics::{DiagnosticOutcome, DiagnosticReason};
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NotificationEngine::load(dir.path().join("ledger.json"));
+        let settings = settings();
+        let first = event("a", "session", AgentEventKind::Permission, 1_000);
+        assert_eq!(
+            engine
+                .on_event_tracked(first.clone(), 1_000, &settings)
+                .0
+                .len(),
+            1
+        );
+        let duplicate = engine.on_event_tracked(first, 1_001, &settings);
+        assert_eq!(
+            duplicate.1,
+            (
+                DiagnosticOutcome::Skipped,
+                Some(DiagnosticReason::Duplicate)
+            )
+        );
+        let same_turn = engine.on_event_tracked(
+            event("b", "session", AgentEventKind::Permission, 1_002),
+            1_002,
+            &settings,
+        );
+        assert_eq!(
+            same_turn.1,
+            (
+                DiagnosticOutcome::Skipped,
+                Some(DiagnosticReason::Duplicate)
+            )
+        );
+        let expired = engine.on_event_tracked(
+            event("old", "other", AgentEventKind::Question, 1_000),
+            122_000,
+            &settings,
+        );
+        assert_eq!(
+            expired.1,
+            (DiagnosticOutcome::Skipped, Some(DiagnosticReason::Expired))
+        );
+        engine.on_event_tracked(
+            event("err-1", "other", AgentEventKind::Error, 2_000),
+            2_000,
+            &settings,
+        );
+        let cooled = engine.on_event_tracked(
+            event("err-2", "other", AgentEventKind::Error, 2_001),
+            2_001,
+            &settings,
+        );
+        assert_eq!(
+            cooled.1,
+            (DiagnosticOutcome::Skipped, Some(DiagnosticReason::Cooldown))
+        );
+    }
+
+    #[test]
+    fn tracked_event_reports_superseded_pending_completion() {
+        use crate::notifications::diagnostics::DiagnosticOutcome;
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NotificationEngine::load(dir.path().join("ledger.json"));
+        let settings = settings();
+        let deferred = engine.on_event_tracked(
+            event("done", "session", AgentEventKind::Completed, 1_000),
+            1_000,
+            &settings,
+        );
+        assert_eq!(deferred.1 .0, DiagnosticOutcome::Deferred);
+        let next = engine.on_event_tracked(
+            event("next", "session", AgentEventKind::Working, 2_000),
+            2_000,
+            &settings,
+        );
+        assert_eq!(next.2.len(), 1);
+        assert_eq!(next.2[0].kind, PushKind::Completed);
+    }
+
+    #[test]
+    fn muted_quota_threshold_does_not_arm_recovery_alert() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NotificationEngine::load(dir.path().join("ledger.json"));
+        let mut settings = settings();
+        settings.quiet_hours.enabled = true;
+        settings.quiet_hours.start_minute = 0;
+        settings.quiet_hours.end_minute = 1439;
+        settings.quota.recovered = true;
+        let reset = 10_000;
+        engine.on_quota(quota("primary", 300, 90.0, reset), 1_000, &settings);
+        let threshold = engine.on_quota(quota("primary", 300, 79.0, reset), 2_000, &settings);
+        assert_eq!(threshold.len(), 1);
+        assert!(!engine.ledger.quotas["Codex:primary:300"].alerted);
+        let recovered = engine.on_quota(
+            quota("primary", 300, 100.0, reset + 18_000),
+            10_001_000,
+            &settings,
+        );
+        assert!(recovered
+            .iter()
+            .all(|candidate| candidate.kind != PushKind::QuotaRecovered));
+    }
+
+    #[test]
+    fn deferred_completion_reports_when_disabled_before_send() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NotificationEngine::load(dir.path().join("ledger.json"));
+        let settings = settings();
+        engine.on_event(
+            event("done", "session", AgentEventKind::Completed, 1_000),
+            1_000,
+            &settings,
+        );
+        let mut off = settings.clone();
+        off.enabled = false;
+        let (due, skipped) = engine.flush_due_tracked(4_000, &off);
+        assert!(due.is_empty());
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].1, DiagnosticReason::NotificationsDisabled);
     }
 
     #[test]

@@ -67,6 +67,12 @@ Each event can have its own notification title and body, using `{source}`, `{det
 
 Install Bark on your iPhone and allow its notifications, then configure Apple Watch to receive Bark notifications. Pushes reach iPhone first; Apple's routing rules determine whether they appear on the watch. The master switch is off by default, and alerts stop when the switch is off or the app exits. Quota data may be unavailable for some Claude/Codex versions or sign-in methods; the settings window shows availability.
 
+The **Sessions** tray submenu lists up to eight recent Claude/Codex sessions with source, project, state, and last activity. It omits task, command, and error text and excludes sessions inactive for more than five minutes.
+
+Notification Settings also includes a local **delivery history** and **quiet hours**. History keeps at most 100 metadata-only results and can be cleared. Quiet hours are off by default; the initial interval is 22:00–08:00 in the Mac's local time. Permission, question, and error alerts bypass quiet hours by default, and each category can be changed. Muted alerts are discarded; manual test pushes still work.
+
+The tray offers optional **Launch at login** (macOS 13+) and **Check for updates daily** switches, plus a manual update check. A newer version opens the project's GitHub release page when selected; the app does not install updates automatically. macOS may require approval for the login item in System Settings.
+
 ## How It Works
 
 Vibe Coding Light uses a file-based polling mechanism:
@@ -79,7 +85,7 @@ Vibe Coding Light uses a file-based polling mechanism:
 Agent event → Hook script → ~/.code-light/sessions/*.json → Tray icon
 ```
 
-The status light opens no network port. Only when you enable Bark notifications does the app send brief selected-event pushes to Bark.
+The status light opens no network port. Only when you enable Bark notifications does the app send brief selected-event pushes to Bark. Manual or enabled daily update checks access this project's GitHub Releases API.
 
 ## Install
 

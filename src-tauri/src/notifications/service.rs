@@ -183,25 +183,22 @@ impl NotificationService {
             settings
         };
         let events = self.spool.lock().unwrap().drain(now);
-        for event in &events {
-            if event.kind != super::model::AgentEventKind::Working {
-                self.record_diagnostic(DiagnosticEntry::from_event(event, now, &settings));
-            }
-        }
         {
             let mut core = self.core.lock().unwrap();
-            core.events(
+            core.events_with_diagnostics(
                 events,
                 now,
                 &settings,
                 || self.settings(),
                 |candidate| self.send_candidate(candidate),
+                |entry| self.record_diagnostic(entry),
             );
-            core.flush(
+            core.flush_with_diagnostics(
                 now,
                 &settings,
                 || self.settings(),
                 |candidate| self.send_candidate(candidate),
+                |entry| self.record_diagnostic(entry),
             );
         }
         if should_poll_quota(&settings, AgentSource::Claude) && due(&self.last_claude_poll, now) {
@@ -216,12 +213,13 @@ impl NotificationService {
             if let Ok(windows) = result {
                 for window in windows {
                     let current = self.settings();
-                    self.core.lock().unwrap().quota(
+                    self.core.lock().unwrap().quota_with_diagnostics(
                         window,
                         now,
                         &current,
                         || self.settings(),
                         |candidate| self.send_candidate(candidate),
+                        |entry| self.record_diagnostic(entry),
                     );
                 }
             }
@@ -233,12 +231,13 @@ impl NotificationService {
             if let Ok(windows) = result {
                 for window in windows {
                     let current = self.settings();
-                    self.core.lock().unwrap().quota(
+                    self.core.lock().unwrap().quota_with_diagnostics(
                         window,
                         now,
                         &current,
                         || self.settings(),
                         |candidate| self.send_candidate(candidate),
+                        |entry| self.record_diagnostic(entry),
                     );
                 }
             }
@@ -258,18 +257,7 @@ impl NotificationService {
         let settings = self.settings();
         let now = now_ms();
         if !super::candidate_allowed(&candidate, &settings, now) {
-            let reason = if now < candidate.due_at_ms || now >= candidate.expires_at_ms {
-                DiagnosticReason::Expired
-            } else if !settings.enabled {
-                DiagnosticReason::NotificationsDisabled
-            } else if !match candidate.source {
-                AgentSource::Claude => settings.sources.claude,
-                AgentSource::Codex => settings.sources.codex,
-            } {
-                DiagnosticReason::SourceDisabled
-            } else {
-                DiagnosticReason::TypeDisabled
-            };
+            let reason = super::candidate_skip_reason(&candidate, &settings, now);
             self.record_diagnostic(DiagnosticEntry::from_candidate(
                 &candidate,
                 now,

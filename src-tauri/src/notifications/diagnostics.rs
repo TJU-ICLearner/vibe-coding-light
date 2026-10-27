@@ -47,6 +47,28 @@ pub struct DiagnosticEntry {
 }
 
 impl DiagnosticEntry {
+    pub fn from_event_decision(
+        event: &AgentEvent,
+        at_ms: u64,
+        outcome: DiagnosticOutcome,
+        reason: Option<DiagnosticReason>,
+    ) -> Self {
+        let kind = match event.kind {
+            AgentEventKind::Working => "working",
+            AgentEventKind::Permission => "permission",
+            AgentEventKind::Question => "question",
+            AgentEventKind::Completed => "completed",
+            AgentEventKind::Error => "error",
+        };
+        Self {
+            at_ms,
+            source: Some(event.source),
+            kind: kind.into(),
+            outcome,
+            reason,
+        }
+    }
+
     pub fn from_event(event: &AgentEvent, at_ms: u64, settings: &NotificationSettings) -> Self {
         let (kind, selected) = match event.kind {
             AgentEventKind::Working => ("working", false),

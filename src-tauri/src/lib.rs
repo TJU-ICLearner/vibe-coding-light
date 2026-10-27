@@ -1,3 +1,6 @@
+mod app_updates;
+#[cfg(target_os = "macos")]
+mod login_item_macos;
 mod notifications;
 mod pet_commands;
 mod pet_image;
@@ -43,6 +46,17 @@ struct TrayUi {
     sessions: Submenu<tauri::Wry>,
     session_items: Vec<MenuItem<tauri::Wry>>,
     session_labels: Vec<String>,
+    login_item: Option<CheckMenuItem<tauri::Wry>>,
+    login_enabled: bool,
+    login_pending_approval: bool,
+    login_failed: bool,
+    auto_updates: CheckMenuItem<tauri::Wry>,
+    check_updates: MenuItem<tauri::Wry>,
+    release_item: MenuItem<tauri::Wry>,
+    update_running: bool,
+    update_failed: bool,
+    update_checked: bool,
+    release_info: Option<app_updates::ReleaseInfo>,
     language: Submenu<tauri::Wry>,
     chinese: CheckMenuItem<tauri::Wry>,
     english: CheckMenuItem<tauri::Wry>,
@@ -74,6 +88,36 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
     let _ = ui.setup_claude.set_text(labels.claude_hooks);
     let _ = ui.setup_codex.set_text(labels.codex_hooks);
     let _ = ui.sessions.set_text(ui_copy::session_menu_title(locale));
+    if let Some(item) = &ui.login_item {
+        let _ = item.set_text(ui_copy::login_item_label(
+            locale,
+            ui.login_pending_approval,
+            ui.login_failed,
+        ));
+        let _ = item.set_checked(ui.login_enabled);
+    }
+    let auto_enabled = app
+        .state::<Arc<Mutex<app_updates::UpdatePreferencesStore>>>()
+        .lock()
+        .unwrap()
+        .get()
+        .auto_check;
+    let _ = ui
+        .auto_updates
+        .set_text(ui_copy::automatic_update_label(locale));
+    let _ = ui.auto_updates.set_checked(auto_enabled);
+    let _ = ui.check_updates.set_text(ui_copy::update_check_label(
+        locale,
+        ui.update_running,
+        ui.update_failed,
+    ));
+    let _ = ui.check_updates.set_enabled(!ui.update_running);
+    let _ = ui.release_item.set_text(ui_copy::release_label(
+        locale,
+        ui.release_info.as_ref().map(|value| value.version.as_str()),
+        ui.update_checked,
+    ));
+    let _ = ui.release_item.set_enabled(ui.release_info.is_some());
     let _ = ui.language.set_text(labels.language);
     let _ = ui.chinese.set_text(labels.chinese);
     let _ = ui.english.set_text(labels.english);
@@ -103,6 +147,57 @@ fn current_locale(app: &tauri::AppHandle) -> ui_locale::AppLocale {
         .lock()
         .unwrap()
         .get()
+}
+
+fn request_update_check(app: &tauri::AppHandle, automatic: bool) {
+    let store = app.state::<Arc<Mutex<app_updates::UpdatePreferencesStore>>>();
+    if automatic && !store.lock().unwrap().should_check(now_secs()) {
+        return;
+    }
+    let ui_state = app.state::<Arc<Mutex<TrayUi>>>();
+    {
+        let mut ui = ui_state.lock().unwrap();
+        if ui.update_running {
+            return;
+        }
+        ui.update_running = true;
+        ui.update_failed = false;
+    }
+    if let Err(error) = store.lock().unwrap().mark_checked(now_secs()) {
+        eprintln!("Could not save update check time: {error}");
+    }
+    refresh_tray_ui(app, current_locale(app));
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let result = app_updates::fetch_release(env!("CARGO_PKG_VERSION"));
+        let update_app = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Ok(release) = &result {
+                let store = update_app.state::<Arc<Mutex<app_updates::UpdatePreferencesStore>>>();
+                let saved = { store.lock().unwrap().save_result(release.as_ref()) };
+                if let Err(error) = saved {
+                    eprintln!("Could not cache update result: {error}");
+                }
+            }
+            {
+                let state = update_app.state::<Arc<Mutex<TrayUi>>>();
+                let mut ui = state.lock().unwrap();
+                ui.update_running = false;
+                match result {
+                    Ok(release) => {
+                        ui.update_checked = true;
+                        ui.update_failed = false;
+                        ui.release_info = release;
+                    }
+                    Err(error) => {
+                        eprintln!("Update check failed: {error}");
+                        ui.update_failed = true;
+                    }
+                }
+            }
+            refresh_tray_ui(&update_app, current_locale(&update_app));
+        });
+    });
 }
 
 #[tauri::command]
@@ -865,11 +960,15 @@ pub fn run() {
             refresh_existing_hooks();
             let pet_data_dir = app.path().app_data_dir()?;
             let preferences = pet_data_dir.join("preferences.json");
+            let update_preferences = pet_data_dir.join("updates.json");
             let system_tag = sys_locale::get_locale();
             let locale_store = ui_locale::UiLocaleStore::load(preferences, system_tag.as_deref());
             let locale = locale_store.get();
             app.manage(Arc::new(Mutex::new(locale_store)));
             app.manage(pet_store::PetStore::new(pet_data_dir.clone()));
+            app.manage(Arc::new(Mutex::new(
+                app_updates::UpdatePreferencesStore::load(update_preferences),
+            )));
             let notification_service = notifications::service::NotificationService::start(
                 app.handle().clone(),
                 pet_data_dir,
@@ -908,6 +1007,59 @@ pub fn run() {
                 .item(&chinese_item)
                 .item(&english_item)
                 .build()?;
+            #[cfg(target_os = "macos")]
+            let initial_login = login_item_macos::status().ok();
+            #[cfg(target_os = "macos")]
+            let login_item = CheckMenuItemBuilder::with_id(
+                "launch_at_login",
+                ui_copy::login_item_label(
+                    locale,
+                    matches!(
+                        initial_login,
+                        Some(login_item_macos::LoginStatus::RequiresApproval)
+                    ),
+                    false,
+                ),
+            )
+            .checked(matches!(
+                initial_login,
+                Some(
+                    login_item_macos::LoginStatus::Enabled
+                        | login_item_macos::LoginStatus::RequiresApproval
+                )
+            ))
+            .enabled(initial_login.is_some())
+            .build(app)?;
+            let update_store = app.state::<Arc<Mutex<app_updates::UpdatePreferencesStore>>>();
+            let (auto_check, update_checked, cached_release) = {
+                let store = update_store.lock().unwrap();
+                (
+                    store.get().auto_check,
+                    store.get().checked_successfully,
+                    store.cached_release(env!("CARGO_PKG_VERSION")),
+                )
+            };
+            let auto_updates_item = CheckMenuItemBuilder::with_id(
+                "auto_updates",
+                ui_copy::automatic_update_label(locale),
+            )
+            .checked(auto_check)
+            .build(app)?;
+            let check_updates_item = MenuItemBuilder::with_id(
+                "check_updates",
+                ui_copy::update_check_label(locale, false, false),
+            )
+            .build(app)?;
+            let release_item = MenuItemBuilder::with_id(
+                "open_release",
+                ui_copy::release_label(
+                    locale,
+                    cached_release.as_ref().map(|value| value.version.as_str()),
+                    update_checked,
+                ),
+            )
+            .enabled(cached_release.is_some())
+            .build(app)?;
             let empty_session_item =
                 MenuItemBuilder::with_id("session_empty", ui_copy::session_menu_empty(locale))
                     .enabled(false)
@@ -930,7 +1082,13 @@ pub fn run() {
                 .item(&setup_codex_item)
                 .item(&sessions_menu)
                 .separator()
-                .item(&language_menu)
+                .item(&language_menu);
+            #[cfg(target_os = "macos")]
+            let menu = menu.item(&login_item);
+            let menu = menu
+                .item(&auto_updates_item)
+                .item(&check_updates_item)
+                .item(&release_item)
                 .separator()
                 .item(&quit_item)
                 .build()?;
@@ -966,6 +1124,53 @@ pub fn run() {
                 sessions: sessions_menu,
                 session_items: vec![empty_session_item],
                 session_labels: vec![ui_copy::session_menu_empty(locale).to_string()],
+                login_item: {
+                    #[cfg(target_os = "macos")]
+                    {
+                        Some(login_item)
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        None
+                    }
+                },
+                login_enabled: {
+                    #[cfg(target_os = "macos")]
+                    {
+                        matches!(
+                            initial_login,
+                            Some(
+                                login_item_macos::LoginStatus::Enabled
+                                    | login_item_macos::LoginStatus::RequiresApproval
+                            )
+                        )
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        false
+                    }
+                },
+                login_pending_approval: {
+                    #[cfg(target_os = "macos")]
+                    {
+                        matches!(
+                            initial_login,
+                            Some(login_item_macos::LoginStatus::RequiresApproval)
+                        )
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        false
+                    }
+                },
+                login_failed: false,
+                auto_updates: auto_updates_item,
+                check_updates: check_updates_item,
+                release_item,
+                update_running: false,
+                update_failed: false,
+                update_checked,
+                release_info: cached_release,
                 language: language_menu,
                 chinese: chinese_item,
                 english: english_item,
@@ -1067,6 +1272,61 @@ pub fn run() {
                         }
                         refresh_tray_ui(app, current_locale(app));
                     }
+                    #[cfg(target_os = "macos")]
+                    "launch_at_login" => {
+                        let enabled = app
+                            .state::<Arc<Mutex<TrayUi>>>()
+                            .lock()
+                            .unwrap()
+                            .login_enabled;
+                        let result = login_item_macos::set_enabled(!enabled);
+                        let state = app.state::<Arc<Mutex<TrayUi>>>();
+                        let mut ui = state.lock().unwrap();
+                        match result {
+                            Ok(status) => {
+                                ui.login_enabled = matches!(
+                                    status,
+                                    login_item_macos::LoginStatus::Enabled
+                                        | login_item_macos::LoginStatus::RequiresApproval
+                                );
+                                ui.login_pending_approval =
+                                    status == login_item_macos::LoginStatus::RequiresApproval;
+                                ui.login_failed = false;
+                            }
+                            Err(error) => {
+                                eprintln!("Login item change failed: {error}");
+                                ui.login_failed = true;
+                            }
+                        }
+                        drop(ui);
+                        refresh_tray_ui(app, current_locale(app));
+                    }
+                    "auto_updates" => {
+                        let state = app.state::<Arc<Mutex<app_updates::UpdatePreferencesStore>>>();
+                        let enabled = state.lock().unwrap().get().auto_check;
+                        let saved = { state.lock().unwrap().set_auto_check(!enabled) };
+                        if let Err(error) = saved {
+                            eprintln!("Could not save automatic update setting: {error}");
+                        } else if !enabled {
+                            request_update_check(app, true);
+                        }
+                        refresh_tray_ui(app, current_locale(app));
+                    }
+                    "check_updates" => request_update_check(app, false),
+                    "open_release" => {
+                        use tauri_plugin_opener::OpenerExt;
+                        let release = app
+                            .state::<Arc<Mutex<TrayUi>>>()
+                            .lock()
+                            .unwrap()
+                            .release_info
+                            .clone();
+                        if let Some(release) = release {
+                            if let Err(error) = app.opener().open_url(release.url, None::<&str>) {
+                                eprintln!("Could not open release page: {error}");
+                            }
+                        }
+                    }
                     "quit" => {
                         app.exit(0);
                     }
@@ -1077,6 +1337,7 @@ pub fn run() {
                 })
                 .build(app)?;
             refresh_session_menu(app.handle(), locale);
+            request_update_check(app.handle(), true);
 
             // Place the pet in other apps' full-screen Spaces without activating this app.
             #[cfg(target_os = "macos")]
@@ -1101,6 +1362,7 @@ pub fn run() {
             let poll_app = app.handle().clone();
             let poll_state = app_state.clone();
             let mut previous_session_labels = Vec::<String>::new();
+            let mut update_tick = 0u8;
             std::thread::spawn(move || loop {
                 std::thread::sleep(POLL_INTERVAL);
                 let (state, message, ts, count) = read_all_sessions();
@@ -1174,6 +1436,12 @@ pub fn run() {
                     previous_session_labels = labels;
                     let app = poll_app.clone();
                     let _ = poll_app.run_on_main_thread(move || refresh_session_menu(&app, locale));
+                }
+                update_tick = update_tick.wrapping_add(1);
+                if update_tick >= 60 {
+                    update_tick = 0;
+                    let app = poll_app.clone();
+                    let _ = poll_app.run_on_main_thread(move || request_update_check(&app, true));
                 }
             });
 
