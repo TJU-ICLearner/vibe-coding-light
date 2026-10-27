@@ -410,7 +410,11 @@ fn tray_panel_state(app: &tauri::AppHandle) -> TrayPanelState {
         )
         .into(),
         login_enabled: ui.login_enabled,
-        login_available: ui.login_item.is_some(),
+        login_available: ui
+            .login_item
+            .as_ref()
+            .and_then(|item| item.is_enabled().ok())
+            .unwrap_or(false),
         auto_updates_label: ui_copy::automatic_update_label(locale).into(),
         auto_updates_enabled,
         auto_updates_failed: ui.auto_updates_failed,
@@ -1219,6 +1223,66 @@ fn show_notification_settings(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn toggle_tray_panel(app: &tauri::AppHandle, tray_rect: tauri::Rect) -> Result<(), String> {
+    let window = if let Some(window) = app.get_webview_window("tray_panel") {
+        if window.is_visible().map_err(|error| error.to_string())? {
+            return window.hide().map_err(|error| error.to_string());
+        }
+        window
+    } else {
+        let window =
+            WebviewWindowBuilder::new(app, "tray_panel", WebviewUrl::App("tray.html".into()))
+                .title("Vibe Coding Light")
+                .inner_size(360.0, 620.0)
+                .decorations(false)
+                .resizable(false)
+                .always_on_top(true)
+                .visible_on_all_workspaces(true)
+                .skip_taskbar(true)
+                .visible(false)
+                .build()
+                .map_err(|error| error.to_string())?;
+        let close_window = window.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Focused(false)) {
+                let _ = close_window.hide();
+            }
+        });
+        window
+    };
+    let tray_position = tray_rect.position.to_physical::<i32>(1.0);
+    let tray_size = tray_rect.size.to_physical::<u32>(1.0);
+    let monitor = app
+        .monitor_from_point(tray_position.x as f64, tray_position.y as f64)
+        .map_err(|error| error.to_string())?
+        .or_else(|| window.current_monitor().ok().flatten())
+        .ok_or("Could not locate tray display")?;
+    let area = monitor.work_area();
+    let panel_size = window.inner_size().map_err(|error| error.to_string())?;
+    let (x, y) = tray_panel::panel_origin(
+        tray_panel::ScreenRect {
+            x: tray_position.x,
+            y: tray_position.y,
+            width: tray_size.width as i32,
+            height: tray_size.height as i32,
+        },
+        tray_panel::ScreenRect {
+            x: area.position.x,
+            y: area.position.y,
+            width: area.size.width as i32,
+            height: area.size.height as i32,
+        },
+        panel_size.width as i32,
+        panel_size.height as i32,
+    );
+    window
+        .set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn open_pet_settings(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -1513,13 +1577,29 @@ pub fn run() {
                 claude_feedback: ui_copy::HookFeedback::Initial,
                 codex_feedback: ui_copy::HookFeedback::Initial,
             })));
-            let _tray = TrayIconBuilder::with_id("main")
+            let tray_builder = TrayIconBuilder::with_id("main")
                 .icon(initial_icon)
                 .menu(&menu)
-                .tooltip(ui_copy::status_text(locale, State::Idle, "", 0, 0))
+                .tooltip(ui_copy::status_text(locale, State::Idle, "", 0, 0));
+            #[cfg(target_os = "macos")]
+            let tray_builder = tray_builder.show_menu_on_left_click(false);
+            let _tray = tray_builder
                 .on_menu_event(|app, event| handle_tray_menu_action(app, event.id().as_ref()))
-                .on_tray_icon_event(|_tray, event| {
-                    let _ = event;
+                .on_tray_icon_event(|tray, event| {
+                    #[cfg(target_os = "macos")]
+                    if let tauri::tray::TrayIconEvent::Click {
+                        rect,
+                        button: tauri::tray::MouseButton::Left,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        if let Err(error) = toggle_tray_panel(tray.app_handle(), rect) {
+                            eprintln!("Could not show tray panel: {error}");
+                        }
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    let _ = (tray, event);
                 })
                 .build(app)?;
             refresh_session_menu(app.handle(), locale);

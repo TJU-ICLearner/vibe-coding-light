@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray-panel",
+  "description": "Capability for the menu bar popover",
+  "windows": ["tray_panel"],
+  "permissions": ["core:default"]
+}
