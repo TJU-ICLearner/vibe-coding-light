@@ -78,7 +78,8 @@ impl NotificationEngine {
             let became_active = !source_enabled(old, source) && source_enabled(new, source);
             let threshold_enabled = [80, 50, 20, 0]
                 .into_iter()
-                .any(|level| !quota_switch(old, level) && quota_switch(new, level));
+                .any(|level| !quota_switch(old, level, 300) && quota_switch(new, level, 300))
+                || (!old.quota.at_week0 && new.quota.at_week0);
             if became_active || threshold_enabled {
                 let index = if source == AgentSource::Claude { 0 } else { 1 };
                 self.quota_generation[index] = self.quota_generation[index].saturating_add(1);
@@ -236,6 +237,7 @@ impl NotificationEngine {
             source: event.source,
             kind: kind.clone(),
             label: None,
+            quota_duration_mins: None,
             remaining_percent: None,
             details,
             due_at_ms: now_ms.saturating_add(if kind == PushKind::Completed {
@@ -523,7 +525,7 @@ impl NotificationEngine {
             .collect();
         let selected = crossed
             .iter()
-            .filter(|level| quota_switch(settings, **level))
+            .filter(|level| quota_switch(settings, **level, window.duration_mins))
             .min()
             .copied();
         state.crossed.extend(crossed);
@@ -572,11 +574,12 @@ fn source_enabled(settings: &NotificationSettings, source: AgentSource) -> bool 
         }
 }
 
-fn quota_switch(settings: &NotificationSettings, level: u8) -> bool {
+fn quota_switch(settings: &NotificationSettings, level: u8, duration_mins: u64) -> bool {
     match level {
         80 => settings.quota.at80,
         50 => settings.quota.at50,
         20 => settings.quota.at20,
+        0 if duration_mins == 10080 => settings.quota.at_week0,
         0 => settings.quota.at0,
         _ => false,
     }
@@ -599,6 +602,7 @@ fn quota_candidate(
             "{} · {} min",
             window.bucket_label, window.duration_mins
         )),
+        quota_duration_mins: Some(window.duration_mins),
         remaining_percent: Some(remaining),
         details: Default::default(),
         due_at_ms: now_ms,
@@ -644,6 +648,22 @@ mod tests {
             resets_at: reset,
             reached: remaining == 0.0,
         }
+    }
+
+    #[test]
+    fn weekly_zero_switch_is_independent_from_other_zero_thresholds() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NotificationEngine::load(dir.path().join("ledger.json"));
+        let mut settings = settings();
+        settings.quota.at0 = false;
+        settings.quota.at_week0 = true;
+        engine.on_quota(quota("weekly", 10080, 10.0, 100_000), 1_000, &settings);
+        engine.on_quota(quota("short", 300, 10.0, 100_000), 1_000, &settings);
+        let weekly = engine.on_quota(quota("weekly", 10080, 0.0, 100_000), 2_000, &settings);
+        let short = engine.on_quota(quota("short", 300, 0.0, 100_000), 2_000, &settings);
+        assert_eq!(weekly.len(), 1);
+        assert_eq!(weekly[0].kind, PushKind::QuotaThreshold(0));
+        assert!(short.is_empty());
     }
 
     #[test]

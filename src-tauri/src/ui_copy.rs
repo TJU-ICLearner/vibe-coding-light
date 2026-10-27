@@ -568,6 +568,7 @@ mod tests {
             source: AgentSource::Codex,
             kind: PushKind::QuotaThreshold(20),
             label: Some("Coding primary · 300 min".into()),
+            quota_duration_mins: Some(300),
             remaining_percent: Some(19.5),
             details: Default::default(),
             due_at_ms: 1,
@@ -597,6 +598,7 @@ mod tests {
             source: AgentSource::Codex,
             kind: PushKind::Permission,
             label: None,
+            quota_duration_mins: None,
             remaining_percent: None,
             details: EventDetails {
                 task: Some("修复登录".into()),
@@ -636,6 +638,7 @@ mod tests {
             source: AgentSource::Claude,
             kind: PushKind::Error,
             label: None,
+            quota_duration_mins: None,
             remaining_percent: None,
             details: EventDetails {
                 error: Some("Exit code 1: missing module".into()),
@@ -668,6 +671,7 @@ mod tests {
             source: AgentSource::Codex,
             kind: PushKind::Permission,
             label: None,
+            quota_duration_mins: None,
             remaining_percent: None,
             details: EventDetails {
                 task: Some("Print {command} literally".into()),

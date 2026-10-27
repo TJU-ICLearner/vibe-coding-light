@@ -180,6 +180,7 @@ pub fn should_poll_quota(settings: &NotificationSettings, source: AgentSource) -
             || settings.quota.at50
             || settings.quota.at20
             || settings.quota.at0
+            || settings.quota.at_week0
             || settings.quota.recovered)
 }
 
@@ -280,6 +281,9 @@ pub fn candidate_allowed(
         PushKind::QuotaThreshold(80) => settings.quota.at80,
         PushKind::QuotaThreshold(50) => settings.quota.at50,
         PushKind::QuotaThreshold(20) => settings.quota.at20,
+        PushKind::QuotaThreshold(0) if candidate.quota_duration_mins == Some(10080) => {
+            settings.quota.at_week0
+        }
         PushKind::QuotaThreshold(0) => settings.quota.at0,
         PushKind::QuotaThreshold(_) => false,
         PushKind::QuotaRecovered => settings.quota.recovered,
@@ -301,6 +305,35 @@ mod tests {
         s.enabled = true;
         s
     }
+
+    #[test]
+    fn dispatch_uses_the_independent_weekly_zero_switch() {
+        let mut settings = enabled();
+        settings.quota.at_week0 = true;
+        let candidate = PushCandidate {
+            id: "weekly-zero".into(),
+            source: AgentSource::Codex,
+            kind: PushKind::QuotaThreshold(0),
+            label: Some("7 days · 10080 min".into()),
+            quota_duration_mins: Some(10080),
+            remaining_percent: Some(0.0),
+            details: Default::default(),
+            due_at_ms: 1_000,
+            expires_at_ms: 10_000,
+        };
+        assert!(candidate_allowed(&candidate, &settings, 1_000));
+        settings.quota.at_week0 = false;
+        settings.quota.at0 = true;
+        assert!(!candidate_allowed(&candidate, &settings, 1_000));
+    }
+
+    #[test]
+    fn weekly_zero_alone_keeps_quota_polling_enabled() {
+        let mut settings = enabled();
+        settings.quota.at_week0 = true;
+        assert!(should_poll_quota(&settings, AgentSource::Codex));
+    }
+
     fn event(id: &str, kind: AgentEventKind, at: u64) -> AgentEvent {
         AgentEvent {
             id: id.into(),
@@ -402,6 +435,7 @@ mod tests {
             source: AgentSource::Codex,
             kind: PushKind::Question,
             label: None,
+            quota_duration_mins: None,
             remaining_percent: None,
             details: Default::default(),
             due_at_ms: 1_000,
@@ -445,6 +479,7 @@ mod tests {
                 source,
                 kind: PushKind::Error,
                 label: None,
+                quota_duration_mins: None,
                 remaining_percent: None,
                 details: Default::default(),
                 due_at_ms: 1_000,

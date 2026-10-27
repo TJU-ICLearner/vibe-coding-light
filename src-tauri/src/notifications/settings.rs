@@ -14,7 +14,20 @@ impl NotificationSettingsStore {
     pub fn load(path: PathBuf) -> Self {
         let value = fs::read(&path)
             .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|mut json| {
+                if let Some(quota) = json
+                    .get_mut("quota")
+                    .and_then(|value| value.as_object_mut())
+                {
+                    if !quota.contains_key("at_week0") {
+                        if let Some(old) = quota.get("at0").cloned() {
+                            quota.insert("at_week0".into(), old);
+                        }
+                    }
+                }
+                serde_json::from_value(json).ok()
+            })
             .unwrap_or_default();
         Self { path, value }
     }
@@ -77,6 +90,7 @@ mod tests {
         assert!(!settings.quota.at50);
         assert!(!settings.quota.at20);
         assert!(!settings.quota.at0);
+        assert!(!settings.quota.at_week0);
         assert!(!settings.quota.recovered);
     }
 
@@ -89,8 +103,19 @@ mod tests {
         value.enabled = true;
         value.sources.codex = false;
         value.quota.at20 = true;
+        value.quota.at_week0 = true;
         store.set(value.clone()).unwrap();
         assert_eq!(NotificationSettingsStore::load(path).get(), value);
+    }
+
+    #[test]
+    fn legacy_zero_switch_migrates_to_weekly_zero_without_changing_other_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notifications.json");
+        fs::write(&path, r#"{"enabled":true,"quota":{"at0":true}}"#).unwrap();
+        let loaded = NotificationSettingsStore::load(path).get();
+        assert!(loaded.quota.at0);
+        assert!(loaded.quota.at_week0);
     }
 
     #[test]

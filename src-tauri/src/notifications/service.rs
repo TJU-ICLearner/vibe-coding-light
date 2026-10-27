@@ -141,9 +141,25 @@ impl NotificationService {
         Ok(())
     }
 
-    pub fn send_test(&self) -> Result<(), String> {
-        if !self.settings().enabled {
+    pub fn send_test(&self) -> Result<TestResult, String> {
+        let settings = self.settings();
+        if !settings.enabled {
             return Err("Notifications are disabled".into());
+        }
+        let local = chrono::Local::now();
+        let minute = (local.hour() * 60 + local.minute()) as u16;
+        if test_console::connection_test_quiet(&settings, minute) {
+            self.record_diagnostic(DiagnosticEntry {
+                at_ms: now_ms(),
+                source: None,
+                kind: "test".into(),
+                outcome: DiagnosticOutcome::Skipped,
+                reason: Some(DiagnosticReason::QuietHours),
+            });
+            return Ok(TestResult {
+                outcome: TestOutcome::Skipped,
+                reason: Some(DiagnosticReason::QuietHours),
+            });
         }
         let key = self.key_store.read()?.ok_or("Bark device key not saved")?;
         let key = super::keychain::validate_bark_key(&key).map_err(str::to_owned)?;
@@ -158,7 +174,12 @@ impl NotificationService {
             outcome,
             reason,
         });
-        result.map_err(|error| format!("Bark send failed: {error:?}"))
+        result
+            .map(|_| TestResult {
+                outcome: TestOutcome::Sent,
+                reason: None,
+            })
+            .map_err(|error| format!("Bark send failed: {error:?}"))
     }
 
     pub fn send_simulated(&self, request: TestRequest) -> Result<TestResult, String> {
@@ -519,7 +540,7 @@ pub fn delete_bark_key(
 pub fn send_test_notification(
     window: tauri::WebviewWindow,
     service: tauri::State<'_, Option<Arc<NotificationService>>>,
-) -> Result<(), String> {
+) -> Result<TestResult, String> {
     ensure_notification_window(&window)?;
     service
         .as_deref()

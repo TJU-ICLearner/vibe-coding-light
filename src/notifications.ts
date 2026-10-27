@@ -7,7 +7,7 @@ export interface NotificationSettings {
   enabled: boolean;
   sources: { claude: boolean; codex: boolean };
   events: { permission: boolean; question: boolean; completed: boolean; error: boolean };
-  quota: { at80: boolean; at50: boolean; at20: boolean; at0: boolean; recovered: boolean };
+  quota: { at80: boolean; at50: boolean; at20: boolean; at0: boolean; at_week0: boolean; recovered: boolean };
   include_details: boolean;
   templates: Record<string, { title: string; body: string }>;
   quiet_hours: { enabled: boolean; start_minute: number; end_minute: number; bypass: { permission: boolean; question: boolean; completed: boolean; error: boolean; quota: boolean } };
@@ -16,7 +16,7 @@ export interface NotificationStatus {
   serviceAvailable: boolean; keySaved: boolean; claudeHooksInstalled: boolean; codexHooksInstalled: boolean;
   claudeQuotaAvailable: boolean; codexQuotaAvailable: boolean; testConsoleAvailable: boolean; lastSendError: string | null;
 }
-export interface SimulatedTestRequest { source: "claude" | "codex"; event: TemplateEvent; duration_mins: number | null }
+export interface SimulatedTestRequest { source: "claude" | "codex"; event: TestEvent; duration_mins: number | null }
 export interface SimulatedTestResult { outcome: "sent" | "skipped"; reason: string | null }
 export interface DiagnosticEntry {
   atMs: number;
@@ -33,7 +33,7 @@ export interface NotificationApi {
   clearDiagnostics(): Promise<void>;
   saveKey(key: string): Promise<void>;
   deleteKey(): Promise<void>;
-  sendTest(): Promise<void>;
+  sendTest(): Promise<SimulatedTestResult>;
   sendSimulated(request: SimulatedTestRequest): Promise<SimulatedTestResult>;
 }
 
@@ -49,9 +49,11 @@ const api: NotificationApi = {
   sendSimulated: (request) => invoke("send_simulated_notification", { request }),
 };
 
-type NotificationFeedback = "testSending" | "testSuccess" | "testFailure" | "testRejected" | "testUnsent" | "testAmbiguous" | "invalidKey" | "saveFailure" | "settingsFailure";
+type NotificationFeedback = "testSending" | "testSuccess" | "testQuietSkipped" | "testFailure" | "testRejected" | "testUnsent" | "testAmbiguous" | "invalidKey" | "saveFailure" | "settingsFailure";
 type TemplateEvent = "permission" | "question" | "completed" | "error" | "quota80" | "quota50" | "quota20" | "quota0" | "recovered";
+type TestEvent = TemplateEvent | "quota_week0";
 const templateEvents: TemplateEvent[] = ["permission", "question", "completed", "error", "quota80", "quota50", "quota20", "quota0", "recovered"];
+const testEvents: TestEvent[] = [...templateEvents, "quota_week0"];
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
@@ -91,7 +93,7 @@ export class NotificationSettingsController {
   private simulatedPending = false;
   private testSource: "claude" | "codex" = "codex";
   private testPeriod = 300;
-  private simulatedFeedback: Partial<Record<TemplateEvent, { outcome: "sending" | "sent" | "skipped" | "failed"; reason: string | null }>> = {};
+  private simulatedFeedback: Partial<Record<TestEvent, { outcome: "sending" | "sent" | "skipped" | "failed"; reason: string | null }>> = {};
   private quietError = false;
   private saveQueue: Promise<void> = Promise.resolve();
   private selectedEvent: TemplateEvent = "permission";
@@ -185,8 +187,8 @@ export class NotificationSettingsController {
     if (!button) return;
     const action = button.dataset.action;
     if (action === "simulate-event") {
-      const eventName = button.dataset.event as TemplateEvent;
-      if (!this.status?.testConsoleAvailable || this.simulatedPending || !templateEvents.includes(eventName)) return;
+      const eventName = button.dataset.event as TestEvent;
+      if (!this.status?.testConsoleAvailable || this.simulatedPending || !testEvents.includes(eventName)) return;
       this.simulatedPending = true;
       this.simulatedFeedback[eventName] = { outcome: "sending", reason: null };
       this.render();
@@ -197,7 +199,8 @@ export class NotificationSettingsController {
           return;
         }
         const quota = eventName.startsWith("quota") || eventName === "recovered";
-        const result = await this.api.sendSimulated({ source: this.testSource, event: eventName, duration_mins: quota ? this.testPeriod : null });
+        const duration = eventName === "quota_week0" ? 10080 : eventName === "quota0" ? 300 : quota ? this.testPeriod : null;
+        const result = await this.api.sendSimulated({ source: this.testSource, event: eventName, duration_mins: duration });
         this.simulatedFeedback[eventName] = { outcome: result.outcome, reason: result.reason };
       } catch (error) {
         this.simulatedFeedback[eventName] = { outcome: "failed", reason: error === "Bark device key not saved" ? "key_missing" : sendErrorFeedback(error) };
@@ -242,7 +245,10 @@ export class NotificationSettingsController {
       this.testPending = true;
       this.feedback = "testSending";
       this.render();
-      try { await this.api.sendTest(); this.feedback = "testSuccess"; }
+      try {
+        const result = await this.api.sendTest();
+        this.feedback = result.outcome === "skipped" ? "testQuietSkipped" : "testSuccess";
+      }
       catch (error) { this.feedback = sendErrorFeedback(error); }
       this.testPending = false;
     }
@@ -256,20 +262,20 @@ export class NotificationSettingsController {
     const selection = activeTemplateField ? { start: active!.selectionStart, end: active!.selectionEnd } : null;
     const s = this.settings, status = this.status, t = notificationCopy(this.locale);
     const feedback = this.feedback ?? (status.lastSendError ? sendErrorFeedback(status.lastSendError) : null);
-    const feedbackError = feedback !== null && feedback !== "testSending" && feedback !== "testSuccess";
+    const feedbackError = feedback !== null && feedback !== "testSending" && feedback !== "testSuccess" && feedback !== "testQuietSkipped";
     document.documentElement.lang = this.locale;
     const toggle = (path: string, label: string, checked: boolean) => `<label class="switch-row"><span>${label}</span><input type="checkbox" data-path="${path}" ${checked ? "checked" : ""} aria-label="${label}"><i aria-hidden="true"></i></label>`;
-    const testableToggle = (path: string, label: string, checked: boolean, event: TemplateEvent) => {
+    const testableToggle = (path: string, label: string, checked: boolean, event: TestEvent) => {
       if (!status.testConsoleAvailable) return toggle(path, label, checked);
       const message = this.simulatedFeedback[event] ?? null;
       const feedbackText = !message ? "" : message.outcome === "sending" ? t.testSendingShort : message.outcome === "sent" ? t.testSentShort : message.outcome === "skipped" ? `${t.testSkippedShort}：${reasonLabels[message.reason ?? ""] ?? message.reason ?? ""}` : message.reason === "key_missing" ? t.diagnosticKeyMissing : t[message.reason as NotificationFeedback] ?? t.testFailure;
       return `<div class="testable-row">${toggle(path, label, checked)}<button type="button" data-action="simulate-event" data-event="${event}" ${this.simulatedPending ? "disabled" : ""}>${t.testButton}</button>${message ? `<small class="test-feedback ${message.outcome}" data-test-feedback="${event}" role="status">${escapeHtml(feedbackText)}</small>` : ""}</div>`;
     };
     const eventSelected = Object.values(s.events).some(Boolean) || Object.values(s.quota).some(Boolean);
-    const labels: Record<TemplateEvent, string> = {
+    const labels: Record<TestEvent, string> = {
       permission: t.templatePermission, question: t.templateQuestion, completed: t.templateCompleted,
       error: t.templateError, quota80: t.templateQuota80, quota50: t.templateQuota50,
-      quota20: t.templateQuota20, quota0: t.templateQuota0, recovered: t.templateRecovered,
+      quota20: t.templateQuota20, quota0: t.templateQuota0, quota_week0: t.atWeek0, recovered: t.templateRecovered,
     };
     const selectedTemplate = this.templateDrafts[`${this.locale}.${this.selectedEvent}`] ?? s.templates[`${this.locale}.${this.selectedEvent}`] ?? { title: "", body: "" };
     const outcomeLabels: Record<DiagnosticEntry["outcome"], string> = { observed: t.diagnosticObserved, deferred: t.diagnosticDeferred, sent: t.diagnosticSent, skipped: t.diagnosticSkipped, failed: t.diagnosticFailed };
@@ -281,11 +287,11 @@ export class NotificationSettingsController {
       superseded: t.diagnosticSuperseded, key_missing: t.diagnosticKeyMissing,
       rejected: t.diagnosticRejected, network: t.diagnosticNetwork, unconfirmed: t.diagnosticUnconfirmed,
     };
-    const diagnosticLabels: Record<string, string> = { permission: t.permission, question: t.question, completed: t.completed, error: t.error, quota80: t.at80, quota50: t.at50, quota20: t.at20, quota0: t.at0, recovered: t.recovered, working: t.diagnosticWorking, test: t.test };
+    const diagnosticLabels: Record<string, string> = { permission: t.permission, question: t.question, completed: t.completed, error: t.error, quota80: t.at80, quota50: t.at50, quota20: t.at20, quota0: t.at0, quota_week0: t.atWeek0, recovered: t.recovered, working: t.diagnosticWorking, test: t.test };
     const diagnosticRows = [...this.diagnostics].reverse().map((entry) => {
       const source = entry.source === "claude" ? t.claude : entry.source === "codex" ? t.codex : t.diagnosticApp;
-      const simulatedKind = entry.kind.startsWith("test_") ? entry.kind.slice(5) as TemplateEvent : null;
-      const kind = simulatedKind && labels[simulatedKind] ? `${t.testTag} · ${labels[simulatedKind]}` : diagnosticLabels[entry.kind] ?? entry.kind;
+      const simulatedKind = entry.kind.startsWith("test_") ? entry.kind.slice(5) : null;
+      const kind = simulatedKind && diagnosticLabels[simulatedKind] ? `${t.testTag} · ${diagnosticLabels[simulatedKind]}` : diagnosticLabels[entry.kind] ?? entry.kind;
       const reason = entry.reason ? reasonLabels[entry.reason] ?? entry.reason : "";
       const when = new Date(entry.atMs).toLocaleString(this.locale);
       return `<li><time>${escapeHtml(when)}</time><strong>${escapeHtml(source)} · ${escapeHtml(kind)}</strong><span class="diagnostic-outcome ${entry.outcome}">${escapeHtml(outcomeLabels[entry.outcome] ?? entry.outcome)}</span>${reason ? `<small>${escapeHtml(reason)}</small>` : ""}</li>`;
@@ -299,7 +305,7 @@ export class NotificationSettingsController {
         <section class="card connection"><div class="card-title"><span class="card-index">01</span><h2>${t.connection}</h2></div><p class="key-status ${status.keySaved ? "good" : ""}">${status.keySaved ? t.keySaved : t.keyMissing}</p><label class="field-label" for="bark-key">${t.key}</label><div class="key-entry"><input id="bark-key" type="password" autocomplete="off" spellcheck="false" placeholder="${t.keyPlaceholder}"><button type="button" id="save-key" data-action="save-key">${t.saveKey}</button></div><div class="actions"><button type="button" data-action="delete-key" ${status.keySaved ? "" : "disabled"}>${t.deleteKey}</button><button type="button" id="send-test" data-action="send-test" ${s.enabled && status.keySaved && !this.testPending ? "" : "disabled"}>${t.test}</button></div><p id="feedback" role="status" class="${feedbackError ? "error" : feedback === "testSuccess" ? "success" : ""}">${feedback ? t[feedback] : !s.enabled || !status.keySaved ? t.testPrerequisite : ""}</p></section>
         <section class="card sources"><div class="card-title"><span class="card-index">02</span><h2>${t.sources}</h2></div><p class="hint">${t.sourceHint}</p>${toggle("sources.claude", t.claude, s.sources.claude)}<p class="availability">${status.claudeHooksInstalled ? t.hooksInstalled : t.hooksMissing}</p>${toggle("sources.codex", t.codex, s.sources.codex)}<p class="availability">${status.codexHooksInstalled ? t.hooksInstalled : t.hooksMissing}</p></section>
         <section class="card events"><div class="card-title"><span class="card-index">03</span><h2>${t.events}</h2></div><p class="hint">${t.eventHint}</p>${testableToggle("events.permission", t.permission, s.events.permission, "permission")}${testableToggle("events.question", t.question, s.events.question, "question")}${testableToggle("events.completed", t.completed, s.events.completed, "completed")}${testableToggle("events.error", t.error, s.events.error, "error")}<p class="hint coverage">${t.codexQuestionHint}</p></section>
-        <section class="card quotas"><div class="card-title"><span class="card-index">04</span><h2>${t.quotas}</h2></div><p class="hint">${t.quotaHint}</p><div class="quota-status"><span>${t.claudeQuota}</span><strong id="claude-quota-status">${status.claudeQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div><div class="quota-status"><span>${t.codexQuota}</span><strong id="codex-quota-status">${status.codexQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div>${testableToggle("quota.at80", t.at80, s.quota.at80, "quota80")}${testableToggle("quota.at50", t.at50, s.quota.at50, "quota50")}${testableToggle("quota.at20", t.at20, s.quota.at20, "quota20")}${testableToggle("quota.at0", t.at0, s.quota.at0, "quota0")}${testableToggle("quota.recovered", t.recovered, s.quota.recovered, "recovered")}</section>
+        <section class="card quotas"><div class="card-title"><span class="card-index">04</span><h2>${t.quotas}</h2></div><p class="hint">${t.quotaHint}</p><div class="quota-status"><span>${t.claudeQuota}</span><strong id="claude-quota-status">${status.claudeQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div><div class="quota-status"><span>${t.codexQuota}</span><strong id="codex-quota-status">${status.codexQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div>${testableToggle("quota.at80", t.at80, s.quota.at80, "quota80")}${testableToggle("quota.at50", t.at50, s.quota.at50, "quota50")}${testableToggle("quota.at20", t.at20, s.quota.at20, "quota20")}${testableToggle("quota.at0", t.at0, s.quota.at0, "quota0")}${testableToggle("quota.at_week0", t.atWeek0, s.quota.at_week0, "quota_week0")}${testableToggle("quota.recovered", t.recovered, s.quota.recovered, "recovered")}</section>
       </div>
       <section class="card quiet-hours"><div class="card-title"><span class="card-index">05</span><h2>${t.quietTitle}</h2></div><p class="hint">${t.quietHint}</p>${toggle("quiet_hours.enabled", t.quietEnabled, s.quiet_hours.enabled)}<div class="quiet-time-grid"><label class="field-label">${t.quietStart}<input type="time" data-path="quiet_hours.start_minute" value="${timeValue(s.quiet_hours.start_minute)}"></label><label class="field-label">${t.quietEnd}<input type="time" data-path="quiet_hours.end_minute" value="${timeValue(s.quiet_hours.end_minute)}"></label></div>${this.quietError ? `<p class="quiet-error" role="alert">${t.quietInvalid}</p>` : ""}<p class="hint quiet-bypass-title">${t.quietBypass}</p>${toggle("quiet_hours.bypass.permission", t.permission, s.quiet_hours.bypass.permission)}${toggle("quiet_hours.bypass.question", t.question, s.quiet_hours.bypass.question)}${toggle("quiet_hours.bypass.completed", t.completed, s.quiet_hours.bypass.completed)}${toggle("quiet_hours.bypass.error", t.error, s.quiet_hours.bypass.error)}${toggle("quiet_hours.bypass.quota", t.quotas, s.quiet_hours.bypass.quota)}</section>
       <section class="card templates"><div class="card-title"><span class="card-index">06</span><h2>${t.templatesTitle}</h2></div><p class="hint">${t.templatesHint}</p>

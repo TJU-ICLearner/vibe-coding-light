@@ -15,6 +15,7 @@ pub enum TestEvent {
     Quota50,
     Quota20,
     Quota0,
+    QuotaWeek0,
     Recovered,
 }
 
@@ -56,12 +57,19 @@ pub fn candidate(
         TestEvent::Quota50 => (PushKind::QuotaThreshold(50), Some(50.0)),
         TestEvent::Quota20 => (PushKind::QuotaThreshold(20), Some(20.0)),
         TestEvent::Quota0 => (PushKind::QuotaThreshold(0), Some(0.0)),
+        TestEvent::QuotaWeek0 => (PushKind::QuotaThreshold(0), Some(0.0)),
         TestEvent::Recovered => (PushKind::QuotaRecovered, Some(100.0)),
     };
     let quota = matches!(kind, PushKind::QuotaThreshold(_) | PushKind::QuotaRecovered);
-    let label = match (quota, request.duration_mins) {
-        (true, Some(duration @ (300 | 10080))) => Some(format!("{duration} min")),
-        (false, None) => None,
+    let label = match (quota, request.event, request.duration_mins) {
+        (true, TestEvent::QuotaWeek0, Some(10080)) => Some("10080 min".into()),
+        (true, TestEvent::QuotaWeek0, _) => {
+            return Err("Weekly zero test needs seven-day period".into())
+        }
+        (true, TestEvent::Quota0, Some(300)) => Some("300 min".into()),
+        (true, TestEvent::Quota0, _) => return Err("Other zero test needs five-hour period".into()),
+        (true, _, Some(duration @ (300 | 10080))) => Some(format!("{duration} min")),
+        (false, _, None) => None,
         _ => return Err("Invalid simulated quota period".into()),
     };
     let details = match locale {
@@ -85,6 +93,7 @@ pub fn candidate(
         source: request.source,
         kind,
         label,
+        quota_duration_mins: request.duration_mins,
         remaining_percent,
         details,
         due_at_ms: now_ms,
@@ -104,7 +113,7 @@ pub fn decision(
             reason: Some(super::candidate_skip_reason(candidate, settings, now_ms)),
         };
     }
-    if settings.quiet_hours.blocks(&candidate.kind, minute) {
+    if settings.quiet_hours.contains(minute) {
         return TestResult {
             outcome: TestOutcome::Skipped,
             reason: Some(DiagnosticReason::QuietHours),
@@ -114,6 +123,10 @@ pub fn decision(
         outcome: TestOutcome::Sent,
         reason: None,
     }
+}
+
+pub fn connection_test_quiet(settings: &NotificationSettings, minute: u16) -> bool {
+    settings.quiet_hours.contains(minute)
 }
 
 pub fn marked_payload(mut payload: PushPayload, locale: AppLocale) -> PushPayload {
@@ -135,6 +148,7 @@ pub fn diagnostic_kind(event: TestEvent) -> String {
         TestEvent::Quota50 => "quota50",
         TestEvent::Quota20 => "quota20",
         TestEvent::Quota0 => "quota0",
+        TestEvent::QuotaWeek0 => "quota_week0",
         TestEvent::Recovered => "recovered",
     };
     format!("test_{suffix}")
@@ -155,6 +169,10 @@ mod tests {
 
     #[test]
     fn maps_all_events_and_periods() {
+        assert_eq!(
+            serde_json::from_str::<TestEvent>("\"quota_week0\"").unwrap(),
+            TestEvent::QuotaWeek0
+        );
         let cases = [
             (TestEvent::Permission, PushKind::Permission),
             (TestEvent::Question, PushKind::Question),
@@ -164,6 +182,7 @@ mod tests {
             (TestEvent::Quota50, PushKind::QuotaThreshold(50)),
             (TestEvent::Quota20, PushKind::QuotaThreshold(20)),
             (TestEvent::Quota0, PushKind::QuotaThreshold(0)),
+            (TestEvent::QuotaWeek0, PushKind::QuotaThreshold(0)),
             (TestEvent::Recovered, PushKind::QuotaRecovered),
         ];
         for (event, expected) in cases {
@@ -173,14 +192,24 @@ mod tests {
                     | TestEvent::Quota50
                     | TestEvent::Quota20
                     | TestEvent::Quota0
+                    | TestEvent::QuotaWeek0
                     | TestEvent::Recovered
             )
-            .then_some(300);
+            .then_some(if event == TestEvent::QuotaWeek0 {
+                10080
+            } else {
+                300
+            });
             let made = candidate(&request(event, duration), 1_000, AppLocale::ZhCn).unwrap();
             assert_eq!(made.kind, expected);
             assert_eq!(made.source, AgentSource::Codex);
-            if duration.is_some() {
-                assert!(made.label.as_deref().unwrap().contains("300 min"));
+            assert_eq!(made.quota_duration_mins, duration);
+            if let Some(minutes) = duration {
+                assert!(made
+                    .label
+                    .as_deref()
+                    .unwrap()
+                    .contains(&format!("{minutes} min")));
             }
             assert!(diagnostic_kind(event).starts_with("test_"));
         }
@@ -194,6 +223,18 @@ mod tests {
         .unwrap()
         .contains("10080 min"));
         assert!(candidate(&request(TestEvent::Quota20, Some(60)), 1_000, AppLocale::En).is_err());
+        assert!(candidate(
+            &request(TestEvent::QuotaWeek0, Some(300)),
+            1_000,
+            AppLocale::En
+        )
+        .is_err());
+        assert!(candidate(
+            &request(TestEvent::Quota0, Some(10080)),
+            1_000,
+            AppLocale::En
+        )
+        .is_err());
         assert!(candidate(
             &request(TestEvent::Permission, Some(300)),
             1_000,
@@ -259,6 +300,22 @@ mod tests {
             decision(&made, &settings, 1_000, 12 * 60).outcome,
             TestOutcome::Sent
         );
+        settings.quiet_hours.bypass.quota = true;
+        assert_eq!(
+            decision(&made, &settings, 1_000, 23 * 60).reason,
+            Some(DiagnosticReason::QuietHours)
+        );
+    }
+
+    #[test]
+    fn connection_test_is_skipped_during_quiet_hours_even_with_bypasses() {
+        let mut settings = NotificationSettings::default();
+        settings.enabled = true;
+        settings.quiet_hours.enabled = true;
+        settings.quiet_hours.bypass.permission = true;
+        settings.quiet_hours.bypass.quota = true;
+        assert!(connection_test_quiet(&settings, 23 * 60));
+        assert!(!connection_test_quiet(&settings, 12 * 60));
     }
 
     #[test]

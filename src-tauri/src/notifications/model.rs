@@ -44,6 +44,7 @@ pub struct QuotaSwitches {
     pub at50: bool,
     pub at20: bool,
     pub at0: bool,
+    pub at_week0: bool,
     pub recovered: bool,
 }
 
@@ -102,7 +103,7 @@ impl Default for QuietBypass {
 }
 
 impl QuietHours {
-    pub fn blocks(&self, kind: &PushKind, local_minute: u16) -> bool {
+    pub fn contains(&self, local_minute: u16) -> bool {
         if !self.enabled
             || self.start_minute >= 1440
             || self.end_minute >= 1440
@@ -111,11 +112,17 @@ impl QuietHours {
         {
             return false;
         }
-        let within = if self.start_minute < self.end_minute {
+        if self.start_minute < self.end_minute {
             local_minute >= self.start_minute && local_minute < self.end_minute
         } else {
             local_minute >= self.start_minute || local_minute < self.end_minute
-        };
+        }
+    }
+
+    pub fn blocks(&self, kind: &PushKind, local_minute: u16) -> bool {
+        if !self.contains(local_minute) {
+            return false;
+        }
         let bypass = match kind {
             PushKind::Permission => self.bypass.permission,
             PushKind::Question => self.bypass.question,
@@ -124,7 +131,7 @@ impl QuietHours {
             PushKind::QuotaThreshold(_) | PushKind::QuotaRecovered => self.bypass.quota,
             PushKind::Test => true,
         };
-        within && !bypass
+        !bypass
     }
 }
 
@@ -210,6 +217,7 @@ pub struct PushCandidate {
     pub source: AgentSource,
     pub kind: PushKind,
     pub label: Option<String>,
+    pub quota_duration_mins: Option<u64>,
     pub remaining_percent: Option<f64>,
     pub details: EventDetails,
     pub due_at_ms: u64,

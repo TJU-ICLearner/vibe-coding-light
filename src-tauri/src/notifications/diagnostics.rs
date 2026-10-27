@@ -209,6 +209,7 @@ mod tests {
             source: AgentSource::Codex,
             kind: PushKind::Error,
             label: Some("private label".into()),
+            quota_duration_mins: None,
             remaining_percent: None,
             details: EventDetails {
                 error: Some("SECRET_ERROR_TEXT".into()),
