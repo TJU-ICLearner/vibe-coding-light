@@ -24,6 +24,12 @@ impl NotificationSettingsStore {
     }
 
     pub fn set(&mut self, value: NotificationSettings) -> Result<(), String> {
+        if value.quiet_hours.start_minute >= 1440
+            || value.quiet_hours.end_minute >= 1440
+            || value.quiet_hours.start_minute == value.quiet_hours.end_minute
+        {
+            return Err("Quiet hours need distinct valid start and end times".into());
+        }
         if value.templates.values().any(|template| {
             template.title.chars().count() > 120 || template.body.chars().count() > 2_000
         }) {
@@ -125,5 +131,26 @@ mod tests {
         assert!(loaded.enabled);
         assert!(!loaded.sources.codex);
         assert!(loaded.quota.at20);
+        assert!(!loaded.quiet_hours.enabled);
+        assert_eq!(
+            (
+                loaded.quiet_hours.start_minute,
+                loaded.quiet_hours.end_minute
+            ),
+            (1320, 480)
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_quiet_hours_without_changing_saved_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notifications.json");
+        let mut store = NotificationSettingsStore::load(path.clone());
+        let mut value = store.get();
+        value.quiet_hours.enabled = true;
+        value.quiet_hours.end_minute = value.quiet_hours.start_minute;
+        assert!(store.set(value).is_err());
+        assert!(!path.exists());
+        assert!(!store.get().quiet_hours.enabled);
     }
 }

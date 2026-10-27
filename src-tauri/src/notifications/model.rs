@@ -56,6 +56,76 @@ pub struct NotificationSettings {
     pub quota: QuotaSwitches,
     pub include_details: bool,
     pub templates: HashMap<String, NotificationTemplate>,
+    pub quiet_hours: QuietHours,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct QuietHours {
+    pub enabled: bool,
+    pub start_minute: u16,
+    pub end_minute: u16,
+    pub bypass: QuietBypass,
+}
+
+impl Default for QuietHours {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            start_minute: 22 * 60,
+            end_minute: 8 * 60,
+            bypass: QuietBypass::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct QuietBypass {
+    pub permission: bool,
+    pub question: bool,
+    pub completed: bool,
+    pub error: bool,
+    pub quota: bool,
+}
+
+impl Default for QuietBypass {
+    fn default() -> Self {
+        Self {
+            permission: true,
+            question: true,
+            completed: false,
+            error: true,
+            quota: false,
+        }
+    }
+}
+
+impl QuietHours {
+    pub fn blocks(&self, kind: &PushKind, local_minute: u16) -> bool {
+        if !self.enabled
+            || self.start_minute >= 1440
+            || self.end_minute >= 1440
+            || self.start_minute == self.end_minute
+            || local_minute >= 1440
+        {
+            return false;
+        }
+        let within = if self.start_minute < self.end_minute {
+            local_minute >= self.start_minute && local_minute < self.end_minute
+        } else {
+            local_minute >= self.start_minute || local_minute < self.end_minute
+        };
+        let bypass = match kind {
+            PushKind::Permission => self.bypass.permission,
+            PushKind::Question => self.bypass.question,
+            PushKind::Completed => self.bypass.completed,
+            PushKind::Error => self.bypass.error,
+            PushKind::QuotaThreshold(_) | PushKind::QuotaRecovered => self.bypass.quota,
+            PushKind::Test => true,
+        };
+        within && !bypass
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,4 +214,37 @@ pub struct PushCandidate {
     pub details: EventDetails,
     pub due_at_ms: u64,
     pub expires_at_ms: u64,
+}
+
+#[cfg(test)]
+mod quiet_tests {
+    use super::*;
+
+    #[test]
+    fn cross_midnight_interval_blocks_selected_events_and_keeps_priority_events() {
+        let mut quiet = QuietHours::default();
+        quiet.enabled = true;
+        assert!(quiet.blocks(&PushKind::Completed, 23 * 60));
+        assert!(quiet.blocks(&PushKind::QuotaThreshold(20), 7 * 60 + 59));
+        assert!(!quiet.blocks(&PushKind::Completed, 8 * 60));
+        assert!(!quiet.blocks(&PushKind::Completed, 21 * 60 + 59));
+        assert!(!quiet.blocks(&PushKind::Permission, 23 * 60));
+        assert!(!quiet.blocks(&PushKind::Question, 23 * 60));
+        assert!(!quiet.blocks(&PushKind::Error, 23 * 60));
+        assert!(!quiet.blocks(&PushKind::Test, 23 * 60));
+    }
+
+    #[test]
+    fn same_day_interval_and_disabled_interval_use_local_wall_minutes() {
+        let mut quiet = QuietHours::default();
+        quiet.enabled = true;
+        quiet.start_minute = 9 * 60;
+        quiet.end_minute = 17 * 60;
+        assert!(!quiet.blocks(&PushKind::Completed, 8 * 60 + 59));
+        assert!(quiet.blocks(&PushKind::Completed, 9 * 60));
+        assert!(quiet.blocks(&PushKind::Completed, 16 * 60 + 59));
+        assert!(!quiet.blocks(&PushKind::Completed, 17 * 60));
+        quiet.enabled = false;
+        assert!(!quiet.blocks(&PushKind::Completed, 12 * 60));
+    }
 }

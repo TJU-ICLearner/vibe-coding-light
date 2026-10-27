@@ -10,6 +10,7 @@ export interface NotificationSettings {
   quota: { at80: boolean; at50: boolean; at20: boolean; at0: boolean; recovered: boolean };
   include_details: boolean;
   templates: Record<string, { title: string; body: string }>;
+  quiet_hours: { enabled: boolean; start_minute: number; end_minute: number; bypass: { permission: boolean; question: boolean; completed: boolean; error: boolean; quota: boolean } };
 }
 export interface NotificationStatus {
   serviceAvailable: boolean; keySaved: boolean; claudeHooksInstalled: boolean; codexHooksInstalled: boolean;
@@ -83,6 +84,7 @@ export class NotificationSettingsController {
   private locale: NotificationLocale = "zh-CN";
   private feedback: NotificationFeedback | null = null;
   private testPending = false;
+  private quietError = false;
   private saveQueue: Promise<void> = Promise.resolve();
   private selectedEvent: TemplateEvent = "permission";
   private templateDrafts: Record<string, { title: string; body: string }> = {};
@@ -134,8 +136,20 @@ export class NotificationSettingsController {
     if (!path || !this.settings) return;
     const next = structuredClone(this.settings) as NotificationSettings;
     const keys = path.split(".");
+    if (keys[0] === "quiet_hours" && keys.length === 2 && (keys[1] === "start_minute" || keys[1] === "end_minute")) {
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.value)) { this.quietError = true; this.render(); return; }
+      const [hour, minute] = input.value.split(":").map(Number);
+      next.quiet_hours[keys[1]] = hour * 60 + minute;
+      if (next.quiet_hours.start_minute === next.quiet_hours.end_minute) { this.quietError = true; this.render(); return; }
+      this.quietError = false;
+    }
     if (keys.length === 1 && keys[0] === "enabled") next.enabled = input.checked;
     else if (keys.length === 1 && keys[0] === "include_details") next.include_details = input.checked;
+    else if (keys.length === 2 && keys[0] === "quiet_hours" && keys[1] === "enabled") next.quiet_hours.enabled = input.checked;
+    else if (keys.length === 2 && keys[0] === "quiet_hours" && (keys[1] === "start_minute" || keys[1] === "end_minute")) { /* parsed above */ }
+    else if (keys.length === 3 && keys[0] === "quiet_hours" && keys[1] === "bypass" && keys[2] in next.quiet_hours.bypass) {
+      next.quiet_hours.bypass[keys[2] as keyof typeof next.quiet_hours.bypass] = input.checked;
+    }
     else if (keys.length === 2 && (keys[0] === "sources" || keys[0] === "events" || keys[0] === "quota")) {
       const group = next[keys[0]] as unknown as Record<string, boolean>;
       if (!(keys[1] in group)) return;
@@ -236,6 +250,7 @@ export class NotificationSettingsController {
       const when = new Date(entry.atMs).toLocaleString(this.locale);
       return `<li><time>${escapeHtml(when)}</time><strong>${escapeHtml(source)} · ${escapeHtml(kind)}</strong><span class="diagnostic-outcome ${entry.outcome}">${escapeHtml(outcomeLabels[entry.outcome] ?? entry.outcome)}</span>${reason ? `<small>${escapeHtml(reason)}</small>` : ""}</li>`;
     }).join("");
+    const timeValue = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
     this.root.innerHTML = `
       <header class="page-head"><p class="eyebrow">VIBE CODING LIGHT / NOTIFICATIONS</p><h1>${t.title}</h1><p>${t.intro}</p></header>
       <section class="hero-card"><div><h2>${t.master}</h2><p>${t.masterHint}</p></div>${toggle("enabled", t.master, s.enabled)}</section>
@@ -245,7 +260,8 @@ export class NotificationSettingsController {
         <section class="card events"><div class="card-title"><span class="card-index">03</span><h2>${t.events}</h2></div><p class="hint">${t.eventHint}</p>${toggle("events.permission", t.permission, s.events.permission)}${toggle("events.question", t.question, s.events.question)}${toggle("events.completed", t.completed, s.events.completed)}${toggle("events.error", t.error, s.events.error)}<p class="hint coverage">${t.codexQuestionHint}</p></section>
         <section class="card quotas"><div class="card-title"><span class="card-index">04</span><h2>${t.quotas}</h2></div><p class="hint">${t.quotaHint}</p><div class="quota-status"><span>${t.claudeQuota}</span><strong id="claude-quota-status">${status.claudeQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div><div class="quota-status"><span>${t.codexQuota}</span><strong id="codex-quota-status">${status.codexQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div>${toggle("quota.at80", t.at80, s.quota.at80)}${toggle("quota.at50", t.at50, s.quota.at50)}${toggle("quota.at20", t.at20, s.quota.at20)}${toggle("quota.at0", t.at0, s.quota.at0)}${toggle("quota.recovered", t.recovered, s.quota.recovered)}</section>
       </div>
-      <section class="card templates"><div class="card-title"><span class="card-index">05</span><h2>${t.templatesTitle}</h2></div><p class="hint">${t.templatesHint}</p>
+      <section class="card quiet-hours"><div class="card-title"><span class="card-index">05</span><h2>${t.quietTitle}</h2></div><p class="hint">${t.quietHint}</p>${toggle("quiet_hours.enabled", t.quietEnabled, s.quiet_hours.enabled)}<div class="quiet-time-grid"><label class="field-label">${t.quietStart}<input type="time" data-path="quiet_hours.start_minute" value="${timeValue(s.quiet_hours.start_minute)}"></label><label class="field-label">${t.quietEnd}<input type="time" data-path="quiet_hours.end_minute" value="${timeValue(s.quiet_hours.end_minute)}"></label></div>${this.quietError ? `<p class="quiet-error" role="alert">${t.quietInvalid}</p>` : ""}<p class="hint quiet-bypass-title">${t.quietBypass}</p>${toggle("quiet_hours.bypass.permission", t.permission, s.quiet_hours.bypass.permission)}${toggle("quiet_hours.bypass.question", t.question, s.quiet_hours.bypass.question)}${toggle("quiet_hours.bypass.completed", t.completed, s.quiet_hours.bypass.completed)}${toggle("quiet_hours.bypass.error", t.error, s.quiet_hours.bypass.error)}${toggle("quiet_hours.bypass.quota", t.quotas, s.quiet_hours.bypass.quota)}</section>
+      <section class="card templates"><div class="card-title"><span class="card-index">06</span><h2>${t.templatesTitle}</h2></div><p class="hint">${t.templatesHint}</p>
         ${toggle("include_details", t.detailsToggle, s.include_details)}<p class="detail-hint">${t.detailsHint}</p>
         <div class="template-editor"><label class="field-label" for="template-event">${t.templateEvent}</label><select id="template-event">${templateEvents.map((event) => `<option value="${event}" ${event === this.selectedEvent ? "selected" : ""}>${labels[event]}</option>`).join("")}</select>
           <label class="field-label" for="template-title">${t.templateTitle}</label><input id="template-title" data-template-field="title" maxlength="120" value="${escapeHtml(selectedTemplate.title)}" placeholder="Vibe Coding Light">
@@ -253,7 +269,7 @@ export class NotificationSettingsController {
           <p class="token-hint">${t.templateTokens}</p><button type="button" data-action="reset-template">${t.templateReset}</button>
         </div><div class="template-preview"><span>${t.templatePreview}</span><div id="template-preview"><strong id="preview-title"></strong><p id="preview-body"></p></div></div>
       </section>
-      <section class="card diagnostics"><div class="card-title"><span class="card-index">06</span><h2>${t.diagnosticsTitle}</h2></div><p class="hint">${t.diagnosticsHint}</p><div class="diagnostic-actions"><button type="button" data-action="clear-diagnostics" ${this.diagnostics.length ? "" : "disabled"}>${t.diagnosticsClear}</button></div>${diagnosticRows ? `<ol class="diagnostic-list">${diagnosticRows}</ol>` : `<p class="diagnostic-empty">${t.diagnosticsEmpty}</p>`}</section>
+      <section class="card diagnostics"><div class="card-title"><span class="card-index">07</span><h2>${t.diagnosticsTitle}</h2></div><p class="hint">${t.diagnosticsHint}</p><div class="diagnostic-actions"><button type="button" data-action="clear-diagnostics" ${this.diagnostics.length ? "" : "disabled"}>${t.diagnosticsClear}</button></div>${diagnosticRows ? `<ol class="diagnostic-list">${diagnosticRows}</ol>` : `<p class="diagnostic-empty">${t.diagnosticsEmpty}</p>`}</section>
       ${!eventSelected ? `<p class="notice">${t.noTypes}</p>` : ""}
       ${!status.serviceAvailable ? `<p class="notice" role="status">${t.serviceUnavailable}</p>` : ""}
       <footer>${t.footer}</footer>`;

@@ -7,6 +7,7 @@ use super::keychain::{KeyStore, MacKeyStore};
 use super::model::{AgentSource, NotificationSettings, PushCandidate};
 use super::settings::NotificationSettingsStore;
 use super::{should_poll_quota, NotificationCore};
+use chrono::Timelike;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -254,18 +255,6 @@ impl NotificationService {
     }
 
     fn send_candidate(&self, candidate: PushCandidate) -> Result<(), BarkError> {
-        let key = match self.key_store.read().ok().flatten() {
-            Some(key) => key,
-            None => {
-                self.record_diagnostic(DiagnosticEntry::from_candidate(
-                    &candidate,
-                    now_ms(),
-                    DiagnosticOutcome::Failed,
-                    Some(DiagnosticReason::KeyMissing),
-                ));
-                return Err(BarkError::Unsent);
-            }
-        };
         let settings = self.settings();
         let now = now_ms();
         if !super::candidate_allowed(&candidate, &settings, now) {
@@ -289,6 +278,29 @@ impl NotificationService {
             ));
             return Ok(());
         }
+        let local = chrono::Local::now();
+        let minute = (local.hour() * 60 + local.minute()) as u16;
+        if settings.quiet_hours.blocks(&candidate.kind, minute) {
+            self.record_diagnostic(DiagnosticEntry::from_candidate(
+                &candidate,
+                now,
+                DiagnosticOutcome::Skipped,
+                Some(DiagnosticReason::QuietHours),
+            ));
+            return Ok(());
+        }
+        let key = match self.key_store.read().ok().flatten() {
+            Some(key) => key,
+            None => {
+                self.record_diagnostic(DiagnosticEntry::from_candidate(
+                    &candidate,
+                    now,
+                    DiagnosticOutcome::Failed,
+                    Some(DiagnosticReason::KeyMissing),
+                ));
+                return Err(BarkError::Unsent);
+            }
+        };
         let payload = crate::ui_copy::notification_payload_with_settings(
             &candidate,
             crate::current_locale(&self.app),

@@ -35,6 +35,11 @@ button:disabled { opacity: .48; cursor: default; }
 button:focus-visible, .key-entry input:focus-visible { outline: 2px solid #2a8e5d; outline-offset: 2px; }
 .templates { margin-top: 16px; }
 .diagnostics { margin-top: 16px; }
+.quiet-hours { margin-top: 16px; }
+.quiet-time-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.quiet-time-grid input { display: block; width: 100%; margin-top: 7px; padding: 9px 10px; border: 1px solid #cbdacf; border-radius: 9px; color: #22352d; background: #fff; font: inherit; }
+.quiet-bypass-title { margin-top: 15px; font-weight: 700; }
+.quiet-error { color: #a43c38; font-size: .72rem; margin: 8px 0; }
 .diagnostic-actions { display: flex; justify-content: flex-end; margin: 0 0 12px; }
 .diagnostic-list { list-style: none; padding: 0; margin: 0; max-height: 360px; overflow-y: auto; border-top: 1px solid #eef2ef; }
 .diagnostic-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; padding: 11px 0; border-bottom: 1px solid #eef2ef; font-size: .76rem; }

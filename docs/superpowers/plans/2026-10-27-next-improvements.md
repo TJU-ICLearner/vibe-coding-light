@@ -41,11 +41,11 @@
 
 **Files:** Modify `model.rs`, `settings.rs`, `mod.rs`, `service.rs`, notification page/copy/styles; test in Rust and Vitest.
 
-- [ ] Write failing tests for same-day/cross-midnight schedule, selected bypass categories, disabled schedule, and manual test.
-- [ ] Run targeted tests and confirm expected failures.
-- [ ] Add persisted interval and dispatch gate with local-time evaluation; log quiet skips.
-- [ ] Add localized start/end and bypass controls with validation; verify settings migration.
-- [ ] Run targeted and full tests; commit.
+- [x] Write failing tests for same-day/cross-midnight schedule, selected bypass categories, disabled schedule, and manual test.
+- [x] Run targeted tests and confirm expected failures.
+- [x] Add persisted interval and dispatch gate with local-time evaluation; log quiet skips.
+- [x] Add localized start/end and bypass controls with validation; verify settings migration.
+- [x] Run targeted and full tests; commit.
 
 ### Task 3: Session submenu
 

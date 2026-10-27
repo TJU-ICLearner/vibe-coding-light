@@ -8,6 +8,7 @@ const defaults: NotificationSettings = {
   quota: { at80: false, at50: false, at20: false, at0: false, recovered: false },
   include_details: false,
   templates: {},
+  quiet_hours: { enabled: false, start_minute: 1320, end_minute: 480, bypass: { permission: true, question: true, completed: false, error: true, quota: false } },
 };
 const status: NotificationStatus = { serviceAvailable: true, keySaved: false, claudeHooksInstalled: false, codexHooksInstalled: false, claudeQuotaAvailable: false, codexQuotaAvailable: false, lastSendError: null };
 
@@ -237,5 +238,24 @@ describe("notification settings window", () => {
     await controller.init("en");
     expect(root.querySelector(".diagnostics img")).toBeNull();
     expect(root.querySelector(".diagnostics")?.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+
+  it("configures quiet hours and selected bypass events in both languages", async () => {
+    const { root, api, controller } = setup(); await controller.init("zh-CN");
+    const enabled = root.querySelector<HTMLInputElement>('[data-path="quiet_hours.enabled"]')!;
+    expect(enabled.checked).toBe(false);
+    expect(root.querySelector<HTMLInputElement>('[data-path="quiet_hours.start_minute"]')?.value).toBe("22:00");
+    expect(root.querySelector<HTMLInputElement>('[data-path="quiet_hours.end_minute"]')?.value).toBe("08:00");
+    enabled.checked = true; enabled.dispatchEvent(new Event("change", { bubbles: true }));
+    const completed = root.querySelector<HTMLInputElement>('[data-path="quiet_hours.bypass.completed"]')!;
+    completed.checked = true; completed.dispatchEvent(new Event("change", { bubbles: true }));
+    const start = root.querySelector<HTMLInputElement>('[data-path="quiet_hours.start_minute"]')!;
+    start.value = "23:30"; start.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(api.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      quiet_hours: { enabled: true, start_minute: 1410, end_minute: 480, bypass: { permission: true, question: true, completed: true, error: true, quota: false } },
+    }));
+    controller.setLocale("en");
+    expect(root.querySelector(".quiet-hours")?.textContent).toContain("Quiet hours");
   });
 });
