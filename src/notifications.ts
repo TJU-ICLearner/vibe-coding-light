@@ -191,14 +191,20 @@ export class NotificationSettingsController {
       this.simulatedFeedback[eventName] = { outcome: "sending", reason: null };
       this.render();
       try {
+        await this.saveQueue;
+        if (this.feedback === "settingsFailure") {
+          this.simulatedFeedback[eventName] = { outcome: "failed", reason: "settingsFailure" };
+          return;
+        }
         const quota = eventName.startsWith("quota") || eventName === "recovered";
         const result = await this.api.sendSimulated({ source: this.testSource, event: eventName, duration_mins: quota ? this.testPeriod : null });
         this.simulatedFeedback[eventName] = { outcome: result.outcome, reason: result.reason };
       } catch (error) {
         this.simulatedFeedback[eventName] = { outcome: "failed", reason: error === "Bark device key not saved" ? "key_missing" : sendErrorFeedback(error) };
+      } finally {
+        this.simulatedPending = false;
+        this.render();
       }
-      this.simulatedPending = false;
-      this.render();
       return;
     }
     if (action === "clear-diagnostics") {

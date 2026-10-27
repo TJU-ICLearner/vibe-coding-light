@@ -79,10 +79,40 @@ describe("notification settings window", () => {
     await controller.init("zh-CN");
     const button = root.querySelector<HTMLButtonElement>('button[data-event="permission"]')!;
     button.click(); button.click();
+    await Promise.resolve();
     expect(sendSimulated).toHaveBeenCalledTimes(1);
     expect(root.querySelector<HTMLButtonElement>('button[data-event="permission"]')!.disabled).toBe(true);
     finish({ outcome: "sent", reason: null });
     await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it("waits for pending settings save before simulated send", async () => {
+    const { root, api, controller, sendSimulated } = setup();
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true, keySaved: true });
+    let finishSave!: () => void;
+    (api.setSettings as ReturnType<typeof vi.fn>).mockImplementationOnce(() => new Promise((resolve) => { finishSave = () => resolve(structuredClone(defaults)); }));
+    await controller.init("zh-CN");
+    const enabled = root.querySelector<HTMLInputElement>('input[data-path="enabled"]')!;
+    enabled.checked = true; enabled.dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelector<HTMLButtonElement>('button[data-event="permission"]')!.click();
+    await Promise.resolve();
+    expect(sendSimulated).not.toHaveBeenCalled();
+    finishSave();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sendSimulated).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not simulate after a settings save fails", async () => {
+    const { root, api, controller, sendSimulated } = setup();
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true, keySaved: true });
+    (api.setSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("disk error"));
+    await controller.init("en");
+    const enabled = root.querySelector<HTMLInputElement>('input[data-path="enabled"]')!;
+    enabled.checked = true; enabled.dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelector<HTMLButtonElement>('button[data-event="permission"]')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sendSimulated).not.toHaveBeenCalled();
+    expect(root.querySelector('[data-test-feedback="permission"]')?.textContent).toContain("save");
   });
 
   it("hides console in stable builds", async () => {
