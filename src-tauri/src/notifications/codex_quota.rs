@@ -1,5 +1,6 @@
 use super::model::{AgentSource, QuotaWindow};
 use serde_json::{json, Value};
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -93,7 +94,15 @@ fn receive_response(
 }
 
 fn locate_codex_binary() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = std::env::var_os("PATH")
+    codex_binary_candidates(std::env::var_os("PATH"), dirs::home_dir())
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+fn codex_binary_candidates(path: Option<OsString>, home: Option<PathBuf>) -> Vec<PathBuf> {
+    let bundled_codex =
+        Path::new("ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex");
+    let mut candidates: Vec<PathBuf> = path
         .map(|path| {
             std::env::split_paths(&path)
                 .map(|dir| dir.join("codex"))
@@ -103,11 +112,16 @@ fn locate_codex_binary() -> Option<PathBuf> {
     candidates.extend([
         PathBuf::from("/opt/homebrew/bin/codex"),
         PathBuf::from("/usr/local/bin/codex"),
+        Path::new("/Applications").join(bundled_codex),
     ]);
-    if let Some(home) = dirs::home_dir() {
-        candidates.extend([home.join(".local/bin/codex"), home.join(".codex/bin/codex")]);
+    if let Some(home) = home {
+        candidates.extend([
+            home.join(".local/bin/codex"),
+            home.join(".codex/bin/codex"),
+            home.join("Applications").join(bundled_codex),
+        ]);
     }
-    candidates.into_iter().find(|path| path.is_file())
+    candidates
 }
 
 pub fn parse_rate_limits(value: &Value) -> Result<Vec<QuotaWindow>, String> {
@@ -216,6 +230,22 @@ mod tests {
             Duration::from_millis(100)
         )
         .is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn candidate_paths_include_chatgpt_bundled_codex_without_cli() {
+        let bundled = PathBuf::from(
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+        );
+        let candidates = codex_binary_candidates(
+            Some(OsString::from("/usr/bin:/bin")),
+            Some(PathBuf::from("/Users/example")),
+        );
+        assert!(candidates.contains(&bundled));
+        assert!(candidates.contains(&PathBuf::from(
+            "/Users/example/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+        )));
     }
 
     #[cfg(unix)]
