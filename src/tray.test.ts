@@ -58,10 +58,51 @@ describe("persistent tray panel", () => {
     expect(root.querySelector('[data-role="language"]')?.getAttribute("aria-label")).toBe("Language");
   });
 
+  it("reports a language save failure without claiming the language changed", async () => {
+    const { root, api, controller } = setup();
+    (api.performAction as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("disk error"));
+    await controller.init();
+    const select = root.querySelector<HTMLSelectElement>('[data-role="language"]')!;
+    select.value = "en"; select.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(root.querySelector<HTMLSelectElement>('[data-role="language"]')?.value).toBe("zh-CN");
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("操作失败");
+  });
+
   it("hides on Escape", async () => {
     const { api, controller } = setup();
     await controller.init();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(api.hide).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves keyboard focus during unchanged polling and action updates", async () => {
+    const { root, controller } = setup();
+    await controller.init();
+    const button = root.querySelector<HTMLButtonElement>('[data-action="check_updates"]')!;
+    button.focus();
+    await controller.refresh();
+    expect(root.querySelector('[data-action="check_updates"]')).toBe(button);
+    expect(document.activeElement).toBe(button);
+    const toggle = root.querySelector<HTMLInputElement>('[data-action="launch_at_login"]')!;
+    toggle.focus();
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect((document.activeElement as HTMLElement)?.dataset.action).toBe("launch_at_login");
+  });
+
+  it("does not replace an open language control during a status refresh", async () => {
+    const { root, api, controller } = setup();
+    (api.getState as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ ...base })
+      .mockResolvedValueOnce({ ...base, checkUpdatesLabel: "当前已是最新版本" });
+    await controller.init();
+    const select = root.querySelector<HTMLSelectElement>('[data-role="language"]')!;
+    select.focus();
+    await controller.refresh();
+    expect(root.querySelector('[data-role="language"]')).toBe(select);
+    select.blur();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(root.textContent).toContain("当前已是最新版本");
   });
 });

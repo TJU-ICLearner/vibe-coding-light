@@ -47,6 +47,7 @@ export class TrayPanelController {
   private state: TrayPanelState | null = null;
   private pending = false;
   private error = false;
+  private deferredRender = false;
 
   constructor(private readonly root: HTMLElement, private readonly api: TrayPanelApi) {
     root.addEventListener("click", (event) => {
@@ -62,6 +63,16 @@ export class TrayPanelController {
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") void this.api.hide();
     });
+    root.addEventListener("focusout", (event) => {
+      if (this.deferredRender && (event.target as HTMLElement).dataset.role === "language") {
+        window.setTimeout(() => {
+          if (this.deferredRender && !this.pending && (document.activeElement as HTMLElement)?.dataset.role !== "language") {
+            this.deferredRender = false;
+            this.render();
+          }
+        }, 0);
+      }
+    });
   }
 
   async init(): Promise<void> {
@@ -70,11 +81,19 @@ export class TrayPanelController {
 
   async refresh(): Promise<void> {
     if (this.pending) return;
+    const wasError = this.error;
     try {
-      this.state = await this.api.getState();
+      const next = await this.api.getState();
+      const changed = JSON.stringify(next) !== JSON.stringify(this.state);
+      this.state = next;
       this.error = false;
+      if (!changed && !wasError) return;
     } catch {
       this.error = true;
+    }
+    if ((document.activeElement as HTMLElement)?.dataset.role === "language") {
+      this.deferredRender = true;
+      return;
     }
     this.render();
   }
@@ -83,13 +102,13 @@ export class TrayPanelController {
     if (this.pending) return;
     this.pending = true;
     this.error = false;
-    this.render();
     try {
       this.state = await this.api.performAction(action);
     } catch {
       this.error = true;
     } finally {
       this.pending = false;
+      this.deferredRender = false;
       this.render();
     }
   }
@@ -99,6 +118,9 @@ export class TrayPanelController {
     if (!s) return;
     const zh = s.locale === "zh-CN";
     const scroll = this.root.scrollTop;
+    const focused = this.root.contains(document.activeElement) ? document.activeElement as HTMLElement : null;
+    const focusAction = focused?.dataset.action;
+    const focusRole = focused?.dataset.role;
     document.documentElement.lang = s.locale;
     const button = (action: string, label: string, extra = "") => `<button type="button" class="tray-row ${extra}" data-action="${action}" ${this.pending ? "disabled" : ""}>${escapeHtml(label)}<span aria-hidden="true">›</span></button>`;
     const toggle = (action: string, label: string, checked: boolean, disabled = false) => `<label class="tray-toggle"><span>${escapeHtml(label)}</span><input type="checkbox" data-action="${action}" aria-label="${escapeHtml(label)}" ${checked ? "checked" : ""} ${disabled || this.pending ? "disabled" : ""}><i aria-hidden="true"></i></label>`;
@@ -111,6 +133,10 @@ export class TrayPanelController {
     const check = this.root.querySelector<HTMLButtonElement>('[data-action="check_updates"]');
     if (check && s.updateRunning) check.disabled = true;
     this.root.scrollTop = scroll;
+    const replacement = focusAction
+      ? this.root.querySelector<HTMLElement>(`[data-action="${focusAction}"]`)
+      : focusRole ? this.root.querySelector<HTMLElement>(`[data-role="${focusRole}"]`) : null;
+    if (replacement && !(replacement as HTMLInputElement).disabled) replacement.focus();
   }
 }
 

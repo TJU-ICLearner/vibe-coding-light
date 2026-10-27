@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{
@@ -457,7 +459,15 @@ fn perform_tray_panel_action(
 ) -> Result<TrayPanelState, String> {
     ensure_tray_panel_window(&window)?;
     let action_kind = tray_panel::TrayAction::parse(&action).ok_or("Unknown tray action")?;
-    handle_tray_menu_action(window.app_handle(), &action);
+    match action_kind {
+        tray_panel::TrayAction::LanguageZh => {
+            set_app_locale_impl(window.app_handle(), ui_locale::AppLocale::ZhCn)?;
+        }
+        tray_panel::TrayAction::LanguageEn => {
+            set_app_locale_impl(window.app_handle(), ui_locale::AppLocale::En)?;
+        }
+        _ => handle_tray_menu_action(window.app_handle(), &action),
+    }
     if action_kind.closes_panel() {
         let _ = window.hide();
     }
@@ -1224,7 +1234,11 @@ fn show_notification_settings(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn toggle_tray_panel(app: &tauri::AppHandle, tray_rect: tauri::Rect) -> Result<(), String> {
+fn toggle_tray_panel(
+    app: &tauri::AppHandle,
+    tray_rect: tauri::Rect,
+    pointer_down: Arc<AtomicBool>,
+) -> Result<(), String> {
     let window = if let Some(window) = app.get_webview_window("tray_panel") {
         if window.is_visible().map_err(|error| error.to_string())? {
             return window.hide().map_err(|error| error.to_string());
@@ -1246,27 +1260,51 @@ fn toggle_tray_panel(app: &tauri::AppHandle, tray_rect: tauri::Rect) -> Result<(
         let close_window = window.clone();
         window.on_window_event(move |event| {
             if matches!(event, tauri::WindowEvent::Focused(false)) {
-                let _ = close_window.hide();
+                let close_window = close_window.clone();
+                let pointer_down = pointer_down.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(150));
+                    let app = close_window.app_handle().clone();
+                    let _ = app.run_on_main_thread(move || {
+                        if !pointer_down.load(Ordering::SeqCst)
+                            && !close_window.is_focused().unwrap_or(false)
+                        {
+                            let _ = close_window.hide();
+                        }
+                    });
+                });
             }
         });
         window
     };
     let tray_position = tray_rect.position.to_physical::<i32>(1.0);
     let tray_size = tray_rect.size.to_physical::<u32>(1.0);
+    let primary = app
+        .primary_monitor()
+        .map_err(|error| error.to_string())?
+        .ok_or("Could not locate primary display")?;
+    let cursor = app.cursor_position().map_err(|error| error.to_string())?;
+    let (logical_x, logical_y) = tray_panel::logical_cursor(
+        cursor.x,
+        cursor.y,
+        primary.scale_factor(),
+        primary.size().height as f64,
+    );
+    let tray = tray_panel::ScreenRect {
+        x: tray_position.x,
+        y: tray_position.y,
+        width: tray_size.width as i32,
+        height: tray_size.height as i32,
+    };
     let monitor = app
-        .monitor_from_point(tray_position.x as f64, tray_position.y as f64)
+        .monitor_from_point(logical_x, logical_y)
         .map_err(|error| error.to_string())?
         .or_else(|| window.current_monitor().ok().flatten())
         .ok_or("Could not locate tray display")?;
     let area = monitor.work_area();
     let panel_size = window.inner_size().map_err(|error| error.to_string())?;
-    let (x, y) = tray_panel::panel_origin(
-        tray_panel::ScreenRect {
-            x: tray_position.x,
-            y: tray_position.y,
-            width: tray_size.width as i32,
-            height: tray_size.height as i32,
-        },
+    let (x, _) = tray_panel::panel_origin(
+        tray,
         tray_panel::ScreenRect {
             x: area.position.x,
             y: area.position.y,
@@ -1276,8 +1314,12 @@ fn toggle_tray_panel(app: &tauri::AppHandle, tray_rect: tauri::Rect) -> Result<(
         panel_size.width as i32,
         panel_size.height as i32,
     );
+    let scale = monitor.scale_factor();
     window
-        .set_position(tauri::PhysicalPosition::new(x, y))
+        .set_position(tauri::LogicalPosition::new(
+            x as f64 / scale,
+            area.position.y as f64 / scale,
+        ))
         .map_err(|error| error.to_string())?;
     window.show().map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())
@@ -1583,19 +1625,31 @@ pub fn run() {
                 .tooltip(ui_copy::status_text(locale, State::Idle, "", 0, 0));
             #[cfg(target_os = "macos")]
             let tray_builder = tray_builder.show_menu_on_left_click(false);
+            #[cfg(target_os = "macos")]
+            let pointer_down = Arc::new(AtomicBool::new(false));
             let _tray = tray_builder
                 .on_menu_event(|app, event| handle_tray_menu_action(app, event.id().as_ref()))
-                .on_tray_icon_event(|tray, event| {
+                .on_tray_icon_event(move |tray, event| {
                     #[cfg(target_os = "macos")]
                     if let tauri::tray::TrayIconEvent::Click {
                         rect,
                         button: tauri::tray::MouseButton::Left,
-                        button_state: tauri::tray::MouseButtonState::Up,
+                        button_state,
                         ..
                     } = event
                     {
-                        if let Err(error) = toggle_tray_panel(tray.app_handle(), rect) {
-                            eprintln!("Could not show tray panel: {error}");
+                        match button_state {
+                            tauri::tray::MouseButtonState::Down => {
+                                pointer_down.store(true, Ordering::SeqCst)
+                            }
+                            tauri::tray::MouseButtonState::Up => {
+                                if let Err(error) =
+                                    toggle_tray_panel(tray.app_handle(), rect, pointer_down.clone())
+                                {
+                                    eprintln!("Could not show tray panel: {error}");
+                                }
+                                pointer_down.store(false, Ordering::SeqCst);
+                            }
                         }
                     }
                     #[cfg(not(target_os = "macos"))]

@@ -60,6 +60,21 @@ pub fn panel_origin(tray: ScreenRect, screen: ScreenRect, width: i32, height: i3
     )
 }
 
+pub fn logical_cursor(
+    cursor_x: f64,
+    cursor_y: f64,
+    primary_scale: f64,
+    primary_physical_height: f64,
+) -> (f64, f64) {
+    // Tao scales NSEvent.mouseLocation by the primary display and flips Y using
+    // the primary display's physical height. Reverse both before CGDisplayBounds.
+    let primary_logical_height = primary_physical_height / primary_scale;
+    (
+        cursor_x / primary_scale,
+        cursor_y / primary_scale - (primary_physical_height - primary_logical_height),
+    )
+}
+
 pub fn authorized_window(label: &str) -> bool {
     label == "tray_panel"
 }
@@ -147,5 +162,11 @@ mod tests {
             600,
         );
         assert!(other.0 >= -1920 && other.0 <= -360);
+    }
+
+    #[test]
+    fn converts_primary_scaled_cursor_to_logical_display_coordinates() {
+        assert_eq!(logical_cursor(4000.0, 1820.0, 2.0, 1800.0), (2000.0, 10.0));
+        assert_eq!(logical_cursor(-400.0, 20.0, 1.0, 900.0), (-400.0, 20.0));
     }
 }
