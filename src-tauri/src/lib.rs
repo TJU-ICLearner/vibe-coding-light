@@ -9,6 +9,8 @@ mod pet_panel_macos;
 mod pet_store;
 #[cfg(target_os = "macos")]
 mod pet_vision;
+#[cfg(target_os = "macos")]
+mod tray_panel;
 mod ui_copy;
 mod ui_locale;
 
@@ -53,6 +55,7 @@ struct TrayUi {
     login_failed: bool,
     login_needs_install: bool,
     auto_updates: CheckMenuItem<tauri::Wry>,
+    auto_updates_failed: bool,
     check_updates: MenuItem<tauri::Wry>,
     release_item: MenuItem<tauri::Wry>,
     release_visible: bool,
@@ -166,11 +169,302 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
     }
 }
 
+fn handle_tray_menu_action(app: &tauri::AppHandle, id: &str) {
+    match id {
+        "toggle_pet" => {
+            if let Some(window) = app.get_webview_window("pet") {
+                if let Ok(visible) = window.is_visible() {
+                    if visible {
+                        let _ = window.hide();
+                    } else {
+                        #[cfg(target_os = "macos")]
+                        if let Err(error) = pet_panel_macos::show_without_activation(app) {
+                            eprintln!("Could not show pet panel: {error}");
+                            let _ = window.show();
+                        }
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    app.state::<Arc<Mutex<TrayUi>>>()
+                        .lock()
+                        .unwrap()
+                        .pet_visible = !visible;
+                    refresh_tray_ui(app, current_locale(app));
+                }
+            }
+        }
+        "pet_action" => {
+            let _ = app.emit("pet", ());
+        }
+        #[cfg(target_os = "macos")]
+        "customize_pet" => {
+            if let Err(error) = show_pet_settings(app) {
+                eprintln!("Could not open pet settings: {error}");
+            }
+        }
+        #[cfg(target_os = "macos")]
+        "notification_settings" => {
+            if let Err(error) = show_notification_settings(app) {
+                eprintln!("Could not open notification settings: {error}");
+            }
+        }
+        "setup_claude" => match setup_hooks() {
+            Ok(()) => {
+                app.state::<Arc<Mutex<TrayUi>>>()
+                    .lock()
+                    .unwrap()
+                    .claude_feedback = ui_copy::HookFeedback::Installed;
+                refresh_tray_ui(app, current_locale(app));
+            }
+            Err(error) => {
+                eprintln!("Vibe Coding Light Claude hook setup failed: {error}");
+                app.state::<Arc<Mutex<TrayUi>>>()
+                    .lock()
+                    .unwrap()
+                    .claude_feedback = ui_copy::HookFeedback::Failed(error);
+                refresh_tray_ui(app, current_locale(app));
+            }
+        },
+        "setup_codex" => match setup_codex_hooks() {
+            Ok(()) => {
+                app.state::<Arc<Mutex<TrayUi>>>()
+                    .lock()
+                    .unwrap()
+                    .codex_feedback = ui_copy::HookFeedback::Installed;
+                refresh_tray_ui(app, current_locale(app));
+            }
+            Err(error) => {
+                eprintln!("Vibe Coding Light Codex hook setup failed: {error}");
+                app.state::<Arc<Mutex<TrayUi>>>()
+                    .lock()
+                    .unwrap()
+                    .codex_feedback = ui_copy::HookFeedback::Failed(error);
+                refresh_tray_ui(app, current_locale(app));
+            }
+        },
+        "language_zh" => {
+            if let Err(error) = set_app_locale_impl(app, ui_locale::AppLocale::ZhCn) {
+                eprintln!("Could not save interface language: {error}");
+            }
+            refresh_tray_ui(app, current_locale(app));
+        }
+        "language_en" => {
+            if let Err(error) = set_app_locale_impl(app, ui_locale::AppLocale::En) {
+                eprintln!("Could not save interface language: {error}");
+            }
+            refresh_tray_ui(app, current_locale(app));
+        }
+        #[cfg(target_os = "macos")]
+        "launch_at_login" => {
+            let enabled = app
+                .state::<Arc<Mutex<TrayUi>>>()
+                .lock()
+                .unwrap()
+                .login_enabled;
+            let result = login_item_macos::set_enabled(!enabled);
+            let state = app.state::<Arc<Mutex<TrayUi>>>();
+            let mut ui = state.lock().unwrap();
+            match result {
+                Ok(status) => {
+                    ui.login_enabled = matches!(
+                        status,
+                        login_item_macos::LoginStatus::Enabled
+                            | login_item_macos::LoginStatus::RequiresApproval
+                    );
+                    ui.login_pending_approval =
+                        status == login_item_macos::LoginStatus::RequiresApproval;
+                    ui.login_failed = false;
+                    ui.login_needs_install = false;
+                }
+                Err(error) => {
+                    eprintln!("Login item change failed: {error}");
+                    ui.login_failed = true;
+                    ui.login_needs_install =
+                        error.starts_with("Move Vibe Coding Light.app to Applications");
+                }
+            }
+            drop(ui);
+            refresh_tray_ui(app, current_locale(app));
+        }
+        "auto_updates" => {
+            let state = app.state::<Arc<Mutex<app_updates::UpdatePreferencesStore>>>();
+            let enabled = state.lock().unwrap().get().auto_check;
+            let saved = { state.lock().unwrap().set_auto_check(!enabled) };
+            if let Err(error) = saved {
+                eprintln!("Could not save automatic update setting: {error}");
+                app.state::<Arc<Mutex<TrayUi>>>()
+                    .lock()
+                    .unwrap()
+                    .auto_updates_failed = true;
+            } else if !enabled {
+                app.state::<Arc<Mutex<TrayUi>>>()
+                    .lock()
+                    .unwrap()
+                    .auto_updates_failed = false;
+                request_update_check(app, true);
+            } else {
+                app.state::<Arc<Mutex<TrayUi>>>()
+                    .lock()
+                    .unwrap()
+                    .auto_updates_failed = false;
+            }
+            refresh_tray_ui(app, current_locale(app));
+        }
+        "check_updates" => request_update_check(app, false),
+        "open_release" => {
+            use tauri_plugin_opener::OpenerExt;
+            let release = app
+                .state::<Arc<Mutex<TrayUi>>>()
+                .lock()
+                .unwrap()
+                .release_info
+                .clone();
+            if let Some(release) = release {
+                if let Err(error) = app.opener().open_url(release.url, None::<&str>) {
+                    eprintln!("Could not open release page: {error}");
+                }
+            }
+        }
+        "quit" => {
+            app.exit(0);
+        }
+        _ => {}
+    }
+}
+
 fn current_locale(app: &tauri::AppHandle) -> ui_locale::AppLocale {
     app.state::<Arc<Mutex<ui_locale::UiLocaleStore>>>()
         .lock()
         .unwrap()
         .get()
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrayPanelState {
+    locale: ui_locale::AppLocale,
+    pet_visible: bool,
+    toggle_pet_label: String,
+    pet_action_label: String,
+    customize_pet_label: String,
+    notification_settings_label: String,
+    setup_claude_label: String,
+    setup_codex_label: String,
+    sessions_title: String,
+    sessions: Vec<String>,
+    language_title: String,
+    chinese_label: String,
+    english_label: String,
+    login_label: String,
+    login_enabled: bool,
+    login_available: bool,
+    auto_updates_label: String,
+    auto_updates_enabled: bool,
+    auto_updates_failed: bool,
+    check_updates_label: String,
+    update_running: bool,
+    release_label: Option<String>,
+    quit_label: String,
+}
+
+#[cfg(target_os = "macos")]
+fn tray_panel_state(app: &tauri::AppHandle) -> TrayPanelState {
+    let locale = current_locale(app);
+    refresh_session_menu(app, locale);
+    let ui = app.state::<Arc<Mutex<TrayUi>>>().lock().unwrap().clone();
+    let labels = ui_copy::menu_labels(
+        locale,
+        ui.pet_visible,
+        &ui.claude_feedback,
+        &ui.codex_feedback,
+    );
+    let auto_updates_enabled = app
+        .state::<Arc<Mutex<app_updates::UpdatePreferencesStore>>>()
+        .lock()
+        .unwrap()
+        .get()
+        .auto_check;
+    TrayPanelState {
+        locale,
+        pet_visible: ui.pet_visible,
+        toggle_pet_label: labels.toggle_pet,
+        pet_action_label: labels.pet_action,
+        customize_pet_label: labels.customize_pet,
+        notification_settings_label: labels.notification_settings,
+        setup_claude_label: labels.claude_hooks,
+        setup_codex_label: labels.codex_hooks,
+        sessions_title: ui_copy::session_menu_title(locale).into(),
+        sessions: ui.session_labels.clone(),
+        language_title: labels.language,
+        chinese_label: labels.chinese,
+        english_label: labels.english,
+        login_label: ui_copy::login_item_label(
+            locale,
+            ui.login_pending_approval,
+            ui.login_failed,
+            ui.login_needs_install,
+        )
+        .into(),
+        login_enabled: ui.login_enabled,
+        login_available: ui.login_item.is_some(),
+        auto_updates_label: ui_copy::automatic_update_label(locale).into(),
+        auto_updates_enabled,
+        auto_updates_failed: ui.auto_updates_failed,
+        check_updates_label: ui_copy::update_check_label(
+            locale,
+            ui.update_running,
+            ui.update_failed,
+            ui.update_checked && ui.release_info.is_none(),
+        )
+        .into(),
+        update_running: ui.update_running,
+        release_label: ui.release_info.as_ref().map(|release| {
+            ui_copy::release_label(locale, Some(&release.version), ui.update_checked)
+        }),
+        quit_label: labels.quit,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_tray_panel_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    if tray_panel::authorized_window(window.label()) {
+        Ok(())
+    } else {
+        Err("Tray panel action is only available from the tray panel".into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn get_tray_panel_state(window: tauri::WebviewWindow) -> Result<TrayPanelState, String> {
+    ensure_tray_panel_window(&window)?;
+    Ok(tray_panel_state(window.app_handle()))
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn perform_tray_panel_action(
+    window: tauri::WebviewWindow,
+    action: String,
+) -> Result<TrayPanelState, String> {
+    ensure_tray_panel_window(&window)?;
+    let action_kind = tray_panel::TrayAction::parse(&action).ok_or("Unknown tray action")?;
+    handle_tray_menu_action(window.app_handle(), &action);
+    if action_kind.closes_panel() {
+        let _ = window.hide();
+    }
+    Ok(tray_panel_state(window.app_handle()))
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn hide_tray_panel(window: tauri::WebviewWindow) -> Result<(), String> {
+    ensure_tray_panel_window(&window)?;
+    window.hide().map_err(|error| error.to_string())
 }
 
 fn request_update_check(app: &tauri::AppHandle, automatic: bool) {
@@ -979,6 +1273,12 @@ pub fn run() {
             notifications::service::get_notification_status,
             notifications::service::get_notification_diagnostics,
             notifications::service::clear_notification_diagnostics,
+            #[cfg(target_os = "macos")]
+            get_tray_panel_state,
+            #[cfg(target_os = "macos")]
+            perform_tray_panel_action,
+            #[cfg(target_os = "macos")]
+            hide_tray_panel,
             open_pet_settings
         ])
         .setup(move |app| {
@@ -1197,6 +1497,7 @@ pub fn run() {
                 login_failed: false,
                 login_needs_install: false,
                 auto_updates: auto_updates_item,
+                auto_updates_failed: false,
                 check_updates: check_updates_item,
                 release_item,
                 release_visible: cached_release.is_some(),
@@ -1216,158 +1517,7 @@ pub fn run() {
                 .icon(initial_icon)
                 .menu(&menu)
                 .tooltip(ui_copy::status_text(locale, State::Idle, "", 0, 0))
-                .on_menu_event(move |app, event| match event.id().as_ref() {
-                    "toggle_pet" => {
-                        if let Some(window) = app.get_webview_window("pet") {
-                            if let Ok(visible) = window.is_visible() {
-                                if visible {
-                                    let _ = window.hide();
-                                } else {
-                                    #[cfg(target_os = "macos")]
-                                    if let Err(error) =
-                                        pet_panel_macos::show_without_activation(app)
-                                    {
-                                        eprintln!("Could not show pet panel: {error}");
-                                        let _ = window.show();
-                                    }
-                                    #[cfg(not(target_os = "macos"))]
-                                    {
-                                        let _ = window.show();
-                                        let _ = window.set_focus();
-                                    }
-                                }
-                                app.state::<Arc<Mutex<TrayUi>>>()
-                                    .lock()
-                                    .unwrap()
-                                    .pet_visible = !visible;
-                                refresh_tray_ui(app, current_locale(app));
-                            }
-                        }
-                    }
-                    "pet_action" => {
-                        let _ = app.emit("pet", ());
-                    }
-                    #[cfg(target_os = "macos")]
-                    "customize_pet" => {
-                        if let Err(error) = show_pet_settings(app) {
-                            eprintln!("Could not open pet settings: {error}");
-                        }
-                    }
-                    #[cfg(target_os = "macos")]
-                    "notification_settings" => {
-                        if let Err(error) = show_notification_settings(app) {
-                            eprintln!("Could not open notification settings: {error}");
-                        }
-                    }
-                    "setup_claude" => match setup_hooks() {
-                        Ok(()) => {
-                            app.state::<Arc<Mutex<TrayUi>>>()
-                                .lock()
-                                .unwrap()
-                                .claude_feedback = ui_copy::HookFeedback::Installed;
-                            refresh_tray_ui(app, current_locale(app));
-                        }
-                        Err(error) => {
-                            eprintln!("Vibe Coding Light Claude hook setup failed: {error}");
-                            app.state::<Arc<Mutex<TrayUi>>>()
-                                .lock()
-                                .unwrap()
-                                .claude_feedback = ui_copy::HookFeedback::Failed(error);
-                            refresh_tray_ui(app, current_locale(app));
-                        }
-                    },
-                    "setup_codex" => match setup_codex_hooks() {
-                        Ok(()) => {
-                            app.state::<Arc<Mutex<TrayUi>>>()
-                                .lock()
-                                .unwrap()
-                                .codex_feedback = ui_copy::HookFeedback::Installed;
-                            refresh_tray_ui(app, current_locale(app));
-                        }
-                        Err(error) => {
-                            eprintln!("Vibe Coding Light Codex hook setup failed: {error}");
-                            app.state::<Arc<Mutex<TrayUi>>>()
-                                .lock()
-                                .unwrap()
-                                .codex_feedback = ui_copy::HookFeedback::Failed(error);
-                            refresh_tray_ui(app, current_locale(app));
-                        }
-                    },
-                    "language_zh" => {
-                        if let Err(error) = set_app_locale_impl(app, ui_locale::AppLocale::ZhCn) {
-                            eprintln!("Could not save interface language: {error}");
-                        }
-                        refresh_tray_ui(app, current_locale(app));
-                    }
-                    "language_en" => {
-                        if let Err(error) = set_app_locale_impl(app, ui_locale::AppLocale::En) {
-                            eprintln!("Could not save interface language: {error}");
-                        }
-                        refresh_tray_ui(app, current_locale(app));
-                    }
-                    #[cfg(target_os = "macos")]
-                    "launch_at_login" => {
-                        let enabled = app
-                            .state::<Arc<Mutex<TrayUi>>>()
-                            .lock()
-                            .unwrap()
-                            .login_enabled;
-                        let result = login_item_macos::set_enabled(!enabled);
-                        let state = app.state::<Arc<Mutex<TrayUi>>>();
-                        let mut ui = state.lock().unwrap();
-                        match result {
-                            Ok(status) => {
-                                ui.login_enabled = matches!(
-                                    status,
-                                    login_item_macos::LoginStatus::Enabled
-                                        | login_item_macos::LoginStatus::RequiresApproval
-                                );
-                                ui.login_pending_approval =
-                                    status == login_item_macos::LoginStatus::RequiresApproval;
-                                ui.login_failed = false;
-                                ui.login_needs_install = false;
-                            }
-                            Err(error) => {
-                                eprintln!("Login item change failed: {error}");
-                                ui.login_failed = true;
-                                ui.login_needs_install =
-                                    error.starts_with("Move Vibe Coding Light.app to Applications");
-                            }
-                        }
-                        drop(ui);
-                        refresh_tray_ui(app, current_locale(app));
-                    }
-                    "auto_updates" => {
-                        let state = app.state::<Arc<Mutex<app_updates::UpdatePreferencesStore>>>();
-                        let enabled = state.lock().unwrap().get().auto_check;
-                        let saved = { state.lock().unwrap().set_auto_check(!enabled) };
-                        if let Err(error) = saved {
-                            eprintln!("Could not save automatic update setting: {error}");
-                        } else if !enabled {
-                            request_update_check(app, true);
-                        }
-                        refresh_tray_ui(app, current_locale(app));
-                    }
-                    "check_updates" => request_update_check(app, false),
-                    "open_release" => {
-                        use tauri_plugin_opener::OpenerExt;
-                        let release = app
-                            .state::<Arc<Mutex<TrayUi>>>()
-                            .lock()
-                            .unwrap()
-                            .release_info
-                            .clone();
-                        if let Some(release) = release {
-                            if let Err(error) = app.opener().open_url(release.url, None::<&str>) {
-                                eprintln!("Could not open release page: {error}");
-                            }
-                        }
-                    }
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    _ => {}
-                })
+                .on_menu_event(|app, event| handle_tray_menu_action(app, event.id().as_ref()))
                 .on_tray_icon_event(|_tray, event| {
                     let _ = event;
                 })
