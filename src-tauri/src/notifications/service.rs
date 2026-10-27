@@ -6,6 +6,7 @@ use super::events::EventSpool;
 use super::keychain::{KeyStore, MacKeyStore};
 use super::model::{AgentSource, NotificationSettings, PushCandidate};
 use super::settings::NotificationSettingsStore;
+use super::test_console::{self, TestEvent, TestOutcome, TestRequest, TestResult};
 use super::{should_poll_quota, NotificationCore};
 use chrono::Timelike;
 use serde::Serialize;
@@ -16,6 +17,11 @@ use tauri::{AppHandle, Emitter};
 
 const QUOTA_POLL_MS: u64 = 300_000;
 
+enum DeliveryFailure {
+    KeyMissing,
+    Bark(BarkError),
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationStatus {
@@ -25,6 +31,7 @@ pub struct NotificationStatus {
     pub codex_hooks_installed: bool,
     pub claude_quota_available: bool,
     pub codex_quota_available: bool,
+    pub test_console_available: bool,
     pub last_send_error: Option<String>,
 }
 
@@ -55,6 +62,7 @@ impl NotificationService {
         let status = NotificationStatus {
             service_available: true,
             key_saved: key_store.has_key().unwrap_or(false),
+            test_console_available: test_console::rc_available(env!("CARGO_PKG_VERSION")),
             ..Default::default()
         };
         let service = Arc::new(Self {
@@ -151,6 +159,19 @@ impl NotificationService {
             reason,
         });
         result.map_err(|error| format!("Bark send failed: {error:?}"))
+    }
+
+    pub fn send_simulated(&self, request: TestRequest) -> Result<TestResult, String> {
+        if !test_console::rc_available(env!("CARGO_PKG_VERSION")) {
+            return Err("Simulated notifications are only available in RC builds".into());
+        }
+        let candidate =
+            test_console::candidate(&request, now_ms(), crate::current_locale(&self.app))?;
+        self.deliver_candidate(candidate, Some(request.event))
+            .map_err(|error| match error {
+                DeliveryFailure::KeyMissing => "Bark device key not saved".into(),
+                DeliveryFailure::Bark(error) => format!("Bark send failed: {error:?}"),
+            })
     }
 
     pub fn status(&self) -> NotificationStatus {
@@ -254,59 +275,83 @@ impl NotificationService {
     }
 
     fn send_candidate(&self, candidate: PushCandidate) -> Result<(), BarkError> {
+        self.deliver_candidate(candidate, None)
+            .map(|_| ())
+            .map_err(|error| match error {
+                DeliveryFailure::KeyMissing => BarkError::Unsent,
+                DeliveryFailure::Bark(error) => error,
+            })
+    }
+
+    fn record_candidate_result(
+        &self,
+        candidate: &PushCandidate,
+        test_event: Option<TestEvent>,
+        at_ms: u64,
+        outcome: DiagnosticOutcome,
+        reason: Option<DiagnosticReason>,
+    ) {
+        let mut entry = DiagnosticEntry::from_candidate(candidate, at_ms, outcome, reason);
+        if let Some(event) = test_event {
+            entry.kind = test_console::diagnostic_kind(event);
+        }
+        self.record_diagnostic(entry);
+    }
+
+    fn deliver_candidate(
+        &self,
+        candidate: PushCandidate,
+        test_event: Option<TestEvent>,
+    ) -> Result<TestResult, DeliveryFailure> {
         let settings = self.settings();
         let now = now_ms();
-        if !super::candidate_allowed(&candidate, &settings, now) {
-            let reason = super::candidate_skip_reason(&candidate, &settings, now);
-            self.record_diagnostic(DiagnosticEntry::from_candidate(
-                &candidate,
-                now,
-                DiagnosticOutcome::Skipped,
-                Some(reason),
-            ));
-            return Ok(());
-        }
         let local = chrono::Local::now();
         let minute = (local.hour() * 60 + local.minute()) as u16;
-        if settings.quiet_hours.blocks(&candidate.kind, minute) {
-            self.record_diagnostic(DiagnosticEntry::from_candidate(
+        let decision = test_console::decision(&candidate, &settings, now, minute);
+        if decision.outcome == TestOutcome::Skipped {
+            self.record_candidate_result(
                 &candidate,
+                test_event,
                 now,
                 DiagnosticOutcome::Skipped,
-                Some(DiagnosticReason::QuietHours),
-            ));
-            return Ok(());
+                decision.reason,
+            );
+            return Ok(decision);
         }
         let key = match self.key_store.read().ok().flatten() {
             Some(key) => key,
             None => {
-                self.record_diagnostic(DiagnosticEntry::from_candidate(
+                self.record_candidate_result(
                     &candidate,
+                    test_event,
                     now,
                     DiagnosticOutcome::Failed,
                     Some(DiagnosticReason::KeyMissing),
-                ));
-                return Err(BarkError::Unsent);
+                );
+                return Err(DeliveryFailure::KeyMissing);
             }
         };
-        let payload = crate::ui_copy::notification_payload_with_settings(
+        let mut payload = crate::ui_copy::notification_payload_with_settings(
             &candidate,
             crate::current_locale(&self.app),
             &settings,
         );
+        if test_event.is_some() {
+            payload = test_console::marked_payload(payload, crate::current_locale(&self.app));
+        }
         let result = match super::keychain::validate_bark_key(&key) {
             Ok(valid_key) => self.bark.send(valid_key, &payload),
             Err(_) => Err(BarkError::Rejected),
         };
         self.record_send_result(&result);
         let (outcome, reason) = diagnostic_send_result(&result);
-        self.record_diagnostic(DiagnosticEntry::from_candidate(
-            &candidate,
-            now_ms(),
-            outcome,
-            reason,
-        ));
+        self.record_candidate_result(&candidate, test_event, now_ms(), outcome, reason);
         result
+            .map(|_| TestResult {
+                outcome: TestOutcome::Sent,
+                reason: None,
+            })
+            .map_err(DeliveryFailure::Bark)
     }
 
     fn record_send_result(&self, result: &Result<(), BarkError>) {
@@ -480,6 +525,19 @@ pub fn send_test_notification(
         .as_deref()
         .ok_or("Notification service unavailable")?
         .send_test()
+}
+
+#[tauri::command]
+pub fn send_simulated_notification(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+    request: TestRequest,
+) -> Result<TestResult, String> {
+    ensure_notification_window(&window)?;
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .send_simulated(request)
 }
 
 #[tauri::command]

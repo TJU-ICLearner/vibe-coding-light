@@ -8,6 +8,7 @@ pub mod events;
 pub mod keychain;
 pub mod model;
 pub mod service;
+pub mod test_console;
 
 #[cfg(test)]
 mod integration_tests;
