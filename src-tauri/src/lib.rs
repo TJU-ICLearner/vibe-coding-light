@@ -40,6 +40,9 @@ struct TrayUi {
     notification_settings: Option<MenuItem<tauri::Wry>>,
     setup_claude: MenuItem<tauri::Wry>,
     setup_codex: MenuItem<tauri::Wry>,
+    sessions: Submenu<tauri::Wry>,
+    session_items: Vec<MenuItem<tauri::Wry>>,
+    session_labels: Vec<String>,
     language: Submenu<tauri::Wry>,
     chinese: CheckMenuItem<tauri::Wry>,
     english: CheckMenuItem<tauri::Wry>,
@@ -70,12 +73,14 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
     }
     let _ = ui.setup_claude.set_text(labels.claude_hooks);
     let _ = ui.setup_codex.set_text(labels.codex_hooks);
+    let _ = ui.sessions.set_text(ui_copy::session_menu_title(locale));
     let _ = ui.language.set_text(labels.language);
     let _ = ui.chinese.set_text(labels.chinese);
     let _ = ui.english.set_text(labels.english);
     let _ = ui.chinese.set_checked(locale == ui_locale::AppLocale::ZhCn);
     let _ = ui.english.set_checked(locale == ui_locale::AppLocale::En);
     let _ = ui.quit.set_text(labels.quit);
+    refresh_session_menu(app, locale);
     if let Some(window) = app.get_webview_window("settings") {
         let _ = window.set_title(ui_copy::settings_title(locale));
     }
@@ -183,6 +188,133 @@ struct SessionData {
     #[allow(dead_code)]
     message: Option<String>,
     timestamp: Option<u64>,
+    agent: Option<String>,
+    project: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionSource {
+    Claude,
+    Codex,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SessionSummary {
+    source: SessionSource,
+    project: String,
+    state: State,
+    last_activity: u64,
+}
+
+fn clean_project_name(raw: &str) -> String {
+    let name = Path::new(raw)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(raw);
+    let clean = name
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(40)
+        .collect::<String>();
+    if clean.trim().is_empty() {
+        "—".into()
+    } else {
+        clean
+    }
+}
+
+fn read_session_summaries_in(dir: &Path, now: u64) -> Vec<SessionSummary> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut summaries = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        let activity = modified
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now.saturating_sub(activity) > SESSION_STALE_SECS {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(data) = serde_json::from_str::<SessionData>(&content) else {
+            continue;
+        };
+        let source = match data.agent.as_deref() {
+            Some("claude") => SessionSource::Claude,
+            Some("codex") => SessionSource::Codex,
+            _ => continue,
+        };
+        let state = State::from_str(&data.state);
+        if !matches!(
+            state,
+            State::Working | State::Waiting | State::Error | State::Completed
+        ) {
+            continue;
+        }
+        summaries.push(SessionSummary {
+            source,
+            project: clean_project_name(data.project.as_deref().unwrap_or("")),
+            state,
+            last_activity: activity,
+        });
+    }
+    summaries.sort_by(|a, b| {
+        b.last_activity
+            .cmp(&a.last_activity)
+            .then_with(|| a.project.cmp(&b.project))
+    });
+    summaries.truncate(8);
+    summaries
+}
+
+fn refresh_session_menu(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
+    let summaries = read_session_summaries_in(&sessions_dir(), now_secs());
+    let labels = if summaries.is_empty() {
+        vec![ui_copy::session_menu_empty(locale).to_string()]
+    } else {
+        summaries
+            .iter()
+            .map(|item| ui_copy::session_menu_item(locale, item, now_secs()))
+            .collect()
+    };
+    let Some(ui) = app.try_state::<Arc<Mutex<TrayUi>>>() else {
+        return;
+    };
+    let mut ui = ui.lock().unwrap();
+    if ui.session_labels == labels {
+        return;
+    }
+    let mut new_items = Vec::new();
+    for (index, label) in labels.iter().enumerate() {
+        let Ok(item) = MenuItemBuilder::with_id(format!("session_{index}"), label)
+            .enabled(false)
+            .build(app)
+        else {
+            return;
+        };
+        new_items.push(item);
+    }
+    for item in &ui.session_items {
+        let _ = ui.sessions.remove(item);
+    }
+    for item in &new_items {
+        let _ = ui.sessions.append(item);
+    }
+    ui.session_items = new_items;
+    ui.session_labels = labels;
 }
 
 struct AppState {
@@ -776,6 +908,14 @@ pub fn run() {
                 .item(&chinese_item)
                 .item(&english_item)
                 .build()?;
+            let empty_session_item =
+                MenuItemBuilder::with_id("session_empty", ui_copy::session_menu_empty(locale))
+                    .enabled(false)
+                    .build(app)?;
+            let sessions_menu =
+                SubmenuBuilder::with_id(app, "sessions", ui_copy::session_menu_title(locale))
+                    .item(&empty_session_item)
+                    .build()?;
             let quit_item = MenuItemBuilder::with_id("quit", &labels.quit).build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&toggle_pet_item)
@@ -788,6 +928,7 @@ pub fn run() {
                 .separator()
                 .item(&setup_claude_item)
                 .item(&setup_codex_item)
+                .item(&sessions_menu)
                 .separator()
                 .item(&language_menu)
                 .separator()
@@ -822,6 +963,9 @@ pub fn run() {
                 },
                 setup_claude: setup_claude_item,
                 setup_codex: setup_codex_item,
+                sessions: sessions_menu,
+                session_items: vec![empty_session_item],
+                session_labels: vec![ui_copy::session_menu_empty(locale).to_string()],
                 language: language_menu,
                 chinese: chinese_item,
                 english: english_item,
@@ -932,6 +1076,7 @@ pub fn run() {
                     let _ = event;
                 })
                 .build(app)?;
+            refresh_session_menu(app.handle(), locale);
 
             // Place the pet in other apps' full-screen Spaces without activating this app.
             #[cfg(target_os = "macos")]
@@ -955,6 +1100,7 @@ pub fn run() {
             // Poll thread
             let poll_app = app.handle().clone();
             let poll_state = app_state.clone();
+            let mut previous_session_labels = Vec::<String>::new();
             std::thread::spawn(move || loop {
                 std::thread::sleep(POLL_INTERVAL);
                 let (state, message, ts, count) = read_all_sessions();
@@ -1013,6 +1159,22 @@ pub fn run() {
                         let _ = tray.set_tooltip(Some(&text));
                     }
                 });
+                let locale = current_locale(&poll_app);
+                let now = now_secs();
+                let summaries = read_session_summaries_in(&sessions_dir(), now);
+                let labels = if summaries.is_empty() {
+                    vec![ui_copy::session_menu_empty(locale).to_string()]
+                } else {
+                    summaries
+                        .iter()
+                        .map(|item| ui_copy::session_menu_item(locale, item, now))
+                        .collect()
+                };
+                if labels != previous_session_labels {
+                    previous_session_labels = labels;
+                    let app = poll_app.clone();
+                    let _ = poll_app.run_on_main_thread(move || refresh_session_menu(&app, locale));
+                }
             });
 
             // Blink thread
@@ -1040,6 +1202,66 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::fs::{File, FileTimes};
+
+    #[test]
+    fn session_summaries_filter_malformed_stale_and_unknown_sources_then_sort_and_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = now_secs();
+        for index in 0..10 {
+            let path = dir.path().join(format!("valid-{index}.json"));
+            fs::write(&path, format!(r#"{{"state":"working","agent":"codex","project":"project-{index}","message":"private command","timestamp":{}}}"#, now - index)).unwrap();
+            File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_times(
+                    FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(now - index)),
+                )
+                .unwrap();
+        }
+        fs::write(dir.path().join("bad.json"), "not json").unwrap();
+        fs::write(
+            dir.path().join("unknown.json"),
+            format!(
+                r#"{{"state":"working","agent":"other","project":"secret","timestamp":{now}}}"#
+            ),
+        )
+        .unwrap();
+        let stale = dir.path().join("stale.json");
+        fs::write(
+            &stale,
+            format!(r#"{{"state":"waiting","agent":"claude","project":"old","timestamp":{now}}}"#),
+        )
+        .unwrap();
+        File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_times(
+                FileTimes::new()
+                    .set_modified(UNIX_EPOCH + Duration::from_secs(now - SESSION_STALE_SECS - 1)),
+            )
+            .unwrap();
+        let summaries = read_session_summaries_in(dir.path(), now);
+        assert_eq!(summaries.len(), 8);
+        assert_eq!(summaries[0].project, "project-0");
+        assert_eq!(summaries[7].project, "project-7");
+        assert_eq!(summaries[0].source, SessionSource::Codex);
+        assert!(summaries.iter().all(|item| item.state == State::Working));
+    }
+
+    #[test]
+    fn session_summaries_sanitize_project_and_keep_recent_completed() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = now_secs();
+        fs::write(dir.path().join("done.json"), format!(r#"{{"state":"completed","agent":"claude","project":"/private/path/demo\ncommand","timestamp":{now}}}"#)).unwrap();
+        let summaries = read_session_summaries_in(dir.path(), now);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].source, SessionSource::Claude);
+        assert_eq!(summaries[0].state, State::Completed);
+        assert!(!summaries[0].project.contains('/'));
+        assert!(!summaries[0].project.contains('\n'));
+    }
 
     #[test]
     fn change_locale_publishes_only_after_save() {

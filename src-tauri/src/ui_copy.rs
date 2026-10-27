@@ -1,7 +1,47 @@
 use crate::notifications::bark::PushPayload;
 use crate::notifications::model::{AgentSource, NotificationSettings, PushCandidate, PushKind};
 use crate::ui_locale::AppLocale;
-use crate::State;
+use crate::{SessionSource, SessionSummary, State};
+
+pub fn session_menu_title(locale: AppLocale) -> &'static str {
+    match locale {
+        AppLocale::ZhCn => "当前会话",
+        AppLocale::En => "Sessions",
+    }
+}
+
+pub fn session_menu_empty(locale: AppLocale) -> &'static str {
+    match locale {
+        AppLocale::ZhCn => "暂无活动会话",
+        AppLocale::En => "No active sessions",
+    }
+}
+
+pub fn session_menu_item(locale: AppLocale, item: &SessionSummary, now: u64) -> String {
+    let source = match item.source {
+        SessionSource::Claude => "Claude",
+        SessionSource::Codex => "Codex",
+    };
+    let state = match (locale, item.state) {
+        (AppLocale::ZhCn, State::Working) => "工作中",
+        (AppLocale::ZhCn, State::Waiting) => "等待确认",
+        (AppLocale::ZhCn, State::Error) => "出错",
+        (AppLocale::ZhCn, State::Completed) => "完成",
+        (AppLocale::En, State::Working) => "Working",
+        (AppLocale::En, State::Waiting) => "Waiting",
+        (AppLocale::En, State::Error) => "Error",
+        (AppLocale::En, State::Completed) => "Completed",
+        _ => "—",
+    };
+    let minutes = now.saturating_sub(item.last_activity) / 60;
+    let ago = match locale {
+        AppLocale::ZhCn if minutes == 0 => "刚刚".into(),
+        AppLocale::ZhCn => format!("{minutes} 分钟前"),
+        AppLocale::En if minutes == 0 => "now".into(),
+        AppLocale::En => format!("{minutes}m ago"),
+    };
+    format!("{source} · {} · {state} · {ago}", item.project)
+}
 
 #[derive(Clone)]
 pub enum HookFeedback {
@@ -418,6 +458,24 @@ mod tests {
     use super::{menu_labels, settings_title, status_text, HookFeedback};
     use crate::ui_locale::AppLocale;
     use crate::State;
+
+    #[test]
+    fn session_menu_labels_localize_status_and_elapsed_time_without_raw_message() {
+        use crate::{SessionSource, SessionSummary};
+        let item = SessionSummary {
+            source: SessionSource::Claude,
+            project: "demo".into(),
+            state: State::Waiting,
+            last_activity: 1_000,
+        };
+        assert_eq!(super::session_menu_title(AppLocale::ZhCn), "当前会话");
+        assert_eq!(super::session_menu_title(AppLocale::En), "Sessions");
+        assert!(
+            super::session_menu_item(AppLocale::ZhCn, &item, 1_120).contains("等待确认 · 2 分钟前")
+        );
+        assert!(super::session_menu_item(AppLocale::En, &item, 1_120).contains("Waiting · 2m ago"));
+        assert_eq!(super::session_menu_empty(AppLocale::ZhCn), "暂无活动会话");
+    }
 
     #[test]
     fn notification_copy_uses_current_locale_and_period() {

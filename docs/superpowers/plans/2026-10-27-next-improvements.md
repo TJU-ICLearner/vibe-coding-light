@@ -51,10 +51,10 @@
 
 **Files:** Modify `src-tauri/src/lib.rs`, `src-tauri/src/ui_copy.rs`; add focused parser/menu-label tests.
 
-- [ ] Write failing tests for source/project/state/recency, stale/malformed files, cap, and localization.
-- [ ] Run targeted tests and confirm expected failures.
-- [ ] Add menu-only session snapshots from existing hook files and refresh submenu when they change.
-- [ ] Run Rust and hook tests; commit.
+- [x] Write failing tests for source/project/state/recency, stale/malformed files, cap, and localization.
+- [x] Run targeted tests and confirm expected failures.
+- [x] Add menu-only session snapshots from existing hook files and refresh submenu when they change.
+- [x] Run Rust and hook tests; commit.
 
 ### Task 4: Startup and update notice
 
