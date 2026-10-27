@@ -63,4 +63,4 @@
 - [x] Verify current official macOS/Tauri APIs and write failing tests for version comparison, response validation, opt-in settings, and failed checks.
 - [x] Implement launch-at-login toggle and manual/daily GitHub release notice without automatic installation.
 - [x] Wire localized tray feedback and official release link opening.
-- [ ] Run all tests and a macOS DMG build; commit, publish a prerelease, and provide manual smoke-test steps.
+- [x] Run all tests and a macOS DMG build; commit, publish a prerelease, and provide manual smoke-test steps.
