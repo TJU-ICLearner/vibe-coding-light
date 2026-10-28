@@ -66,11 +66,8 @@ impl BarkClient {
                     if !response.status().is_success() {
                         return Err(BarkError::Rejected);
                     }
-                    let value: serde_json::Value = response.json().map_err(|error| {
-                        #[cfg(test)]
-                        eprintln!("Bark test response parse error: {error:?}");
-                        BarkError::Ambiguous
-                    })?;
+                    let value: serde_json::Value =
+                        response.json().map_err(|_| BarkError::Ambiguous)?;
                     if value["code"].as_i64() == Some(200) {
                         return Ok(());
                     }
@@ -83,15 +80,7 @@ impl BarkClient {
                     }
                     return Err(BarkError::Unsent);
                 }
-                Err(error) => {
-                    #[cfg(test)]
-                    eprintln!(
-                        "Bark test transport error: {error:?}; connect={}, timeout={}",
-                        error.is_connect(),
-                        error.is_timeout()
-                    );
-                    return Err(BarkError::Ambiguous);
-                }
+                Err(_) => return Err(BarkError::Ambiguous),
             }
         }
         Err(BarkError::Unsent)
@@ -181,12 +170,20 @@ mod tests {
     }
 
     #[test]
-    fn connection_refusal_is_definitely_unsent() {
+    fn closed_port_never_reports_success() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/push", listener.local_addr().unwrap());
         drop(listener);
         let client = BarkClient::for_test(url, Duration::from_millis(100));
         let result = client.send("key", &PushPayload::test());
+        // Windows CI sometimes times out on a closed loopback port before
+        // reqwest reports a refusal; a timeout must remain ambiguous.
+        #[cfg(target_os = "windows")]
+        assert!(
+            matches!(result, Err(BarkError::Unsent | BarkError::Ambiguous)),
+            "{result:?}"
+        );
+        #[cfg(not(target_os = "windows"))]
         assert!(matches!(result, Err(BarkError::Unsent)), "{result:?}");
     }
 

@@ -1009,18 +1009,36 @@ fn windows_bash_path(path: &str) -> String {
     }
 }
 
+#[cfg(any(test, target_os = "windows"))]
+fn is_git_bash_path(path: &Path) -> bool {
+    let normalized = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    normalized.contains("/git/") && normalized.ends_with("/bash.exe")
+}
+
 #[cfg(target_os = "windows")]
 fn windows_bash_executable() -> Option<PathBuf> {
-    let from_path = std::env::var_os("PATH").into_iter().flat_map(|path| {
-        std::env::split_paths(&path)
-            .map(|dir| dir.join("bash.exe"))
-            .collect::<Vec<_>>()
-    });
-    let program_files = ["ProgramFiles", "ProgramFiles(x86)"]
+    let from_path = std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join("bash.exe"))
+                .collect::<Vec<_>>()
+        })
+        .filter(|path| is_git_bash_path(path));
+    let program_files = ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
         .into_iter()
         .filter_map(std::env::var_os)
-        .map(|root| PathBuf::from(root).join("Git/bin/bash.exe"));
-    from_path.chain(program_files).find(|path| path.is_file())
+        .flat_map(|root| {
+            let root = PathBuf::from(root);
+            [
+                root.join("Git/bin/bash.exe"),
+                root.join("Programs/Git/bin/bash.exe"),
+            ]
+        });
+    program_files.chain(from_path).find(|path| path.is_file())
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1997,6 +2015,16 @@ mod tests {
             windows_bash_path(r"D:\AI\hooks\stop.sh"),
             "/d/AI/hooks/stop.sh"
         );
+    }
+
+    #[test]
+    fn windows_hook_runtime_excludes_wsl_bash() {
+        assert!(is_git_bash_path(Path::new(
+            r"C:\Program Files\Git\bin\bash.exe"
+        )));
+        assert!(!is_git_bash_path(Path::new(
+            r"C:\Windows\System32\bash.exe"
+        )));
     }
 
     #[cfg(unix)]
