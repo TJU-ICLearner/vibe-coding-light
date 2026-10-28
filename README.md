@@ -12,7 +12,7 @@
 
 It shows a colored indicator in your system tray so you can tell at a glance what your AI agent is doing — without keeping the terminal visible. Bubu, the built-in animated desktop pet, reacts to your agent's status.
 
-Currently supports **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** and **[OpenAI Codex CLI](https://github.com/openai/codex)**.
+Stable 1.0.0 supports **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** and **[OpenAI Codex CLI](https://github.com/openai/codex)**. This development branch also adds optional hooks for Cursor, TRAE, Grok Build, and DeepSeek Harness; the latter needs its official bridge mounted separately.
 
 **Current stable release: 1.0.0.** Earlier GitHub releases were development test builds. Because the stable release restarts version numbering, install 1.0.0 manually from the [latest release](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest); older builds may not detect the smaller version number as an update.
 
@@ -107,7 +107,7 @@ The tray controls also offer **Launch at login** and **Automatically check for u
 
 Active states blink every 500ms to catch your attention. The tray tooltip shows the current state, active session count, and last update time.
 
-**Sessions** lists up to eight recent Claude/Codex sessions with source, project, state, and last activity. It omits raw task, command, and error text, and excludes sessions inactive for more than five minutes.
+**Sessions** lists up to eight recent sessions with source, project, state, and last activity. It omits raw task, command, and error text, and excludes sessions inactive for more than five minutes.
 
 **When does Waiting appear?** Claude Code permission or interactive notifications and Codex `PermissionRequest` hooks trigger it. Ordinary work without an approval prompt can go directly from Working to Completed, then return to Idle. It does not mean that the app detects every moment an agent is waiting for a free-form user reply.
 

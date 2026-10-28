@@ -12,7 +12,7 @@
 
 让你一眼就能看到 AI 编程助手正在做什么 —— 不需要一直盯着终端窗口。内置桌宠布布也会根据 Agent 的状态做出反应。
 
-目前支持 **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** 和 **[OpenAI Codex CLI](https://github.com/openai/codex)**。
+正式版 1.0.0 支持 **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** 和 **[OpenAI Codex CLI](https://github.com/openai/codex)**。当前开发分支还加入了 Cursor、TRAE、Grok Build 与 DeepSeek Harness 的可选 Hook 接入；后者需额外挂载官方桥接插件。
 
 **当前正式版：1.0.0。** GitHub 上此前发布的版本均为开发测试版。因正式版重新编号，已安装测试版的用户请从[最新发布页](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest)手动下载 1.0.0；旧版的自动检查可能无法识别较小的新版本号。
 
@@ -107,7 +107,7 @@ pnpm tauri build
 
 活跃状态（工作 / 等待 / 出错）每 500ms 闪烁一次，提醒你注意。托盘图标的提示文字会显示当前状态、活跃会话数和最后更新时间。
 
-菜单栏的**“当前会话”**可查看最多 8 个近期 Claude/Codex 会话，显示来源、项目名、状态和最近活动时间；不会展示任务、命令或错误原文。超过 5 分钟未活动的会话不会列在此菜单中。
+菜单栏的**“当前会话”**可查看最多 8 个近期会话，显示来源、项目名、状态和最近活动时间；不会展示任务、命令或错误原文。超过 5 分钟未活动的会话不会列在此菜单中。
 
 同时运行多个会话时，图标显示优先级最高的状态：**出错 → 等待 → 工作 → 完成 → 状态未知 → 空闲**。例如一个会话仍在工作、另一个等待批准时，图标会显示黄色。灰色“状态未知”并不等于任务已经结束，可能只是暂时没有新的 Hook 事件。
 
