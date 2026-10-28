@@ -5,7 +5,18 @@ pub trait KeyStore: Send + Sync {
     fn delete(&self) -> Result<(), String>;
 }
 
+#[derive(Default)]
 pub struct MacKeyStore;
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[derive(Default)]
+pub struct NativeKeyStore;
+
+#[cfg(target_os = "macos")]
+pub type PlatformKeyStore = MacKeyStore;
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub type PlatformKeyStore = NativeKeyStore;
 
 pub fn validate_bark_key(key: &str) -> Result<&str, &'static str> {
     let key = key.trim();
@@ -61,20 +72,38 @@ impl KeyStore for MacKeyStore {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-impl KeyStore for MacKeyStore {
-    fn save(&self, _key: &str) -> Result<(), String> {
-        Err("Bark Keychain is available on macOS only".into())
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+impl KeyStore for NativeKeyStore {
+    fn save(&self, key: &str) -> Result<(), String> {
+        let key = validate_bark_key(key)?;
+        native_entry()?.set_password(key).map_err(native_error)
     }
     fn has_key(&self) -> Result<bool, String> {
-        Ok(false)
+        Ok(self.read()?.is_some())
     }
     fn read(&self) -> Result<Option<String>, String> {
-        Ok(None)
+        match native_entry()?.get_password() {
+            Ok(key) => Ok(Some(key)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(native_error(error)),
+        }
     }
     fn delete(&self) -> Result<(), String> {
-        Ok(())
+        match native_entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(native_error(error)),
+        }
     }
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn native_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new("com.cuihuapeng.code-light.bark", "device-key").map_err(native_error)
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn native_error(error: keyring::Error) -> String {
+    format!("System credential store unavailable: {error}")
 }
 
 #[cfg(test)]

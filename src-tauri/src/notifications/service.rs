@@ -3,7 +3,7 @@ use super::claude_quota::ClaudeQuota;
 use super::codex_quota::CodexQuota;
 use super::diagnostics::{DiagnosticEntry, DiagnosticOutcome, DiagnosticReason, DiagnosticStore};
 use super::events::EventSpool;
-use super::keychain::{KeyStore, MacKeyStore};
+use super::keychain::{KeyStore, PlatformKeyStore};
 use super::model::{AgentSource, NotificationSettings, PushCandidate};
 use super::settings::NotificationSettingsStore;
 use super::test_console::{self, TestEvent, TestOutcome, TestRequest, TestResult};
@@ -46,7 +46,7 @@ pub struct NotificationService {
     diagnostics: Mutex<DiagnosticStore>,
     last_claude_poll: Mutex<u64>,
     last_codex_poll: Mutex<u64>,
-    key_store: MacKeyStore,
+    key_store: PlatformKeyStore,
     bark: BarkClient,
 }
 
@@ -58,7 +58,7 @@ impl NotificationService {
         let mut spool = EventSpool::new(event_dir);
         spool.baseline()?;
         let store = NotificationSettingsStore::load(data_dir.join("notification-settings.json"));
-        let key_store = MacKeyStore;
+        let key_store = PlatformKeyStore::default();
         let status = NotificationStatus {
             service_available: true,
             key_saved: key_store.has_key().unwrap_or(false),

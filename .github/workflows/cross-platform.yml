@@ -1,0 +1,48 @@
+name: Cross-platform test builds
+
+on:
+  push:
+    branches: [codex/windows-linux-port]
+  workflow_dispatch:
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            bundle: nsis
+            artifact: windows-nsis
+            path: src-tauri/target/release/bundle/nsis/*.exe
+          - os: ubuntu-22.04
+            bundle: appimage
+            artifact: linux-appimage
+            path: src-tauri/target/release/bundle/appimage/*.AppImage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev librsvg2-dev libayatana-appindicator3-dev libdbus-1-dev libssl-dev patchelf
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Frontend tests
+        run: pnpm test -- --run
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Build installer
+        run: pnpm tauri build --bundles ${{ matrix.bundle }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ github.sha }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error

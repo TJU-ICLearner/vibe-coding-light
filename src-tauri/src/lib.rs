@@ -35,8 +35,9 @@ use tauri::{
     tray::TrayIconBuilder,
     Emitter, Manager,
 };
-#[cfg(target_os = "macos")]
 use tauri::{WebviewUrl, WebviewWindowBuilder};
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[derive(Clone)]
@@ -201,13 +202,11 @@ fn handle_tray_menu_action(app: &tauri::AppHandle, id: &str) {
         "pet_action" => {
             let _ = app.emit("pet", ());
         }
-        #[cfg(target_os = "macos")]
         "customize_pet" => {
             if let Err(error) = show_pet_settings(app) {
                 eprintln!("Could not open pet settings: {error}");
             }
         }
-        #[cfg(target_os = "macos")]
         "notification_settings" => {
             if let Err(error) = show_notification_settings(app) {
                 eprintln!("Could not open notification settings: {error}");
@@ -289,6 +288,31 @@ fn handle_tray_menu_action(app: &tauri::AppHandle, id: &str) {
                 }
             }
             drop(ui);
+            refresh_tray_ui(app, current_locale(app));
+        }
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        "launch_at_login" => {
+            let current = app
+                .state::<Arc<Mutex<TrayUi>>>()
+                .lock()
+                .unwrap()
+                .login_enabled;
+            let manager = app.autolaunch();
+            let result = if current {
+                manager.disable()
+            } else {
+                manager.enable()
+            };
+            let state = app.state::<Arc<Mutex<TrayUi>>>();
+            let mut ui = state.lock().unwrap();
+            ui.login_failed = result.is_err();
+            if result.is_ok() {
+                ui.login_enabled = !current;
+            }
+            drop(ui);
+            if let Err(error) = result {
+                eprintln!("Login item change failed: {error}");
+            }
             refresh_tray_ui(app, current_locale(app));
         }
         "auto_updates" => {
@@ -954,10 +978,59 @@ fn shell_command(hooks_dir: &std::path::Path, script: &str) -> String {
     let script_path = hooks_dir.join(script);
     let path = script_path.display().to_string();
     if cfg!(target_os = "windows") {
-        let path = path.replace('\\', "/");
-        format!("bash '{}'", path)
+        let bash = windows_bash_executable()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "bash".into());
+        format!("\"{bash}\" \"{}\"", windows_bash_path(&path))
     } else {
-        format!("bash '{}'", path)
+        format!("bash '{}'", path.replace('\'', "'\\''"))
+    }
+}
+
+fn windows_bash_path(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let bytes = path.as_bytes();
+    if bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/' {
+        format!("/{}{}", (bytes[0] as char).to_ascii_lowercase(), &path[2..])
+    } else {
+        path
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_bash_executable() -> Option<PathBuf> {
+    let from_path = std::env::var_os("PATH").into_iter().flat_map(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("bash.exe"))
+            .collect::<Vec<_>>()
+    });
+    let program_files = ["ProgramFiles", "ProgramFiles(x86)"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .map(|root| PathBuf::from(root).join("Git/bin/bash.exe"));
+    from_path.chain(program_files).find(|path| path.is_file())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_bash_executable() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_windows_hook_runtime() -> Result<(), String> {
+    let bash = windows_bash_executable()
+        .ok_or("Install Git for Windows (Git Bash) before setting up hooks")?;
+    let status = std::process::Command::new(bash)
+        .args([
+            "-lc",
+            "command -v perl >/dev/null && perl -MJSON::PP -e 1 && command -v uuidgen >/dev/null",
+        ])
+        .status()
+        .map_err(|_| "Could not start Git Bash".to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Git Bash needs Perl JSON::PP and uuidgen for hooks".into())
     }
 }
 
@@ -1108,18 +1181,25 @@ fn write_hook_config(path: &Path, config: &serde_json::Value) -> Result<(), Stri
         .parent()
         .ok_or("Hook configuration has no parent directory")?;
     fs::create_dir_all(parent).map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
-    let temp = path.with_extension(format!("code-light-{}.tmp", std::process::id()));
+    let mut temp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| format!("Cannot create temporary hook configuration: {e}"))?;
     let content = serde_json::to_vec_pretty(config).map_err(|e| e.to_string())?;
-    fs::write(&temp, content).map_err(|e| format!("Cannot write {}: {e}", temp.display()))?;
+    use std::io::Write;
+    temp.write_all(&content)
+        .map_err(|e| format!("Cannot write {}: {e}", path.display()))?;
     if let Ok(metadata) = fs::metadata(path) {
-        fs::set_permissions(&temp, metadata.permissions())
+        temp.as_file()
+            .set_permissions(metadata.permissions())
             .map_err(|e| format!("Cannot preserve permissions for {}: {e}", path.display()))?;
     }
-    fs::rename(&temp, path).map_err(|e| format!("Cannot replace {}: {e}", path.display()))?;
+    temp.persist(path)
+        .map_err(|e| format!("Cannot replace {}: {e}", path.display()))?;
     Ok(())
 }
 
 fn setup_hooks() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    ensure_windows_hook_runtime()?;
     let settings_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".claude")
@@ -1147,6 +1227,8 @@ fn setup_hooks() -> Result<(), String> {
 }
 
 fn setup_codex_hooks() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    ensure_windows_hook_runtime()?;
     let codex_dir = dirs::home_dir().unwrap_or_default().join(".codex");
 
     let hooks_json_path = codex_dir.join("hooks.json");
@@ -1197,7 +1279,6 @@ fn get_current_state(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> serde_jso
     })
 }
 
-#[cfg(target_os = "macos")]
 fn show_pet_settings(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("settings") {
         window.show().map_err(|error| error.to_string())?;
@@ -1213,7 +1294,6 @@ fn show_pet_settings(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
 fn show_notification_settings(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("notifications") {
         window.show().map_err(|error| error.to_string())?;
@@ -1327,15 +1407,7 @@ fn toggle_tray_panel(
 
 #[tauri::command]
 fn open_pet_settings(app: tauri::AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        show_pet_settings(&app)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = app;
-        Err("Photo import is available on macOS".into())
-    }
+    show_pet_settings(&app)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1356,6 +1428,11 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build());
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        None,
+    ));
     builder
         .manage(app_state.clone())
         .invoke_handler(tauri::generate_handler![
@@ -1417,10 +1494,8 @@ pub fn run() {
                 MenuItemBuilder::with_id("toggle_pet", &labels.toggle_pet).build(app)?;
             let pet_action_item =
                 MenuItemBuilder::with_id("pet_action", &labels.pet_action).build(app)?;
-            #[cfg(target_os = "macos")]
             let customize_item =
                 MenuItemBuilder::with_id("customize_pet", &labels.customize_pet).build(app)?;
-            #[cfg(target_os = "macos")]
             let notification_settings_item =
                 MenuItemBuilder::with_id("notification_settings", &labels.notification_settings)
                     .build(app)?;
@@ -1440,6 +1515,8 @@ pub fn run() {
                 .build()?;
             #[cfg(target_os = "macos")]
             let initial_login = login_item_macos::status().ok();
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            let initial_login_other = app.autolaunch().is_enabled().ok();
             #[cfg(target_os = "macos")]
             let login_item = CheckMenuItemBuilder::with_id(
                 "launch_at_login",
@@ -1461,6 +1538,14 @@ pub fn run() {
                 )
             ))
             .enabled(initial_login.is_some())
+            .build(app)?;
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            let login_item = CheckMenuItemBuilder::with_id(
+                "launch_at_login",
+                ui_copy::login_item_label(locale, false, false, false),
+            )
+            .checked(initial_login_other.unwrap_or(false))
+            .enabled(initial_login_other.is_some())
             .build(app)?;
             let update_store = app.state::<Arc<Mutex<app_updates::UpdatePreferencesStore>>>();
             let (auto_check, update_checked, cached_release) = {
@@ -1508,9 +1593,7 @@ pub fn run() {
             let menu = MenuBuilder::new(app)
                 .item(&toggle_pet_item)
                 .item(&pet_action_item);
-            #[cfg(target_os = "macos")]
             let menu = menu.item(&customize_item);
-            #[cfg(target_os = "macos")]
             let menu = menu.item(&notification_settings_item);
             let menu = menu
                 .separator()
@@ -1519,7 +1602,6 @@ pub fn run() {
                 .item(&sessions_menu)
                 .separator()
                 .item(&language_menu);
-            #[cfg(target_os = "macos")]
             let menu = menu.item(&login_item);
             let menu = menu.item(&auto_updates_item).item(&check_updates_item);
             let menu = if cached_release.is_some() {
@@ -1536,41 +1618,14 @@ pub fn run() {
                 menu: menu.clone(),
                 toggle_pet: toggle_pet_item,
                 pet_action: pet_action_item,
-                customize_pet: {
-                    #[cfg(target_os = "macos")]
-                    {
-                        Some(customize_item)
-                    }
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        None
-                    }
-                },
-                notification_settings: {
-                    #[cfg(target_os = "macos")]
-                    {
-                        Some(notification_settings_item)
-                    }
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        None
-                    }
-                },
+                customize_pet: { Some(customize_item) },
+                notification_settings: { Some(notification_settings_item) },
                 setup_claude: setup_claude_item,
                 setup_codex: setup_codex_item,
                 sessions: sessions_menu,
                 session_items: vec![empty_session_item],
                 session_labels: vec![ui_copy::session_menu_empty(locale).to_string()],
-                login_item: {
-                    #[cfg(target_os = "macos")]
-                    {
-                        Some(login_item)
-                    }
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        None
-                    }
-                },
+                login_item: { Some(login_item) },
                 login_enabled: {
                     #[cfg(target_os = "macos")]
                     {
@@ -1584,7 +1639,7 @@ pub fn run() {
                     }
                     #[cfg(not(target_os = "macos"))]
                     {
-                        false
+                        initial_login_other.unwrap_or(false)
                     }
                 },
                 login_pending_approval: {
@@ -1903,13 +1958,28 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
     static HOME_LOCK: Mutex<()> = Mutex::new(());
 
+    #[test]
+    fn windows_hook_path_uses_git_bash_mount_syntax() {
+        assert_eq!(
+            windows_bash_path(r"C:\Users\Jane Doe\.code-light\hooks\codex\stop.sh"),
+            "/c/Users/Jane Doe/.code-light/hooks/codex/stop.sh"
+        );
+        assert_eq!(
+            windows_bash_path(r"D:\AI\hooks\stop.sh"),
+            "/d/AI/hooks/stop.sh"
+        );
+    }
+
+    #[cfg(unix)]
     struct TestHome {
         path: PathBuf,
         old: Option<OsString>,
     }
 
+    #[cfg(unix)]
     impl TestHome {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
@@ -1924,6 +1994,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     impl Drop for TestHome {
         fn drop(&mut self) {
             if let Some(old) = &self.old {
@@ -1999,6 +2070,7 @@ mod tests {
         fs::remove_dir_all(&home).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn setup_preserves_other_hooks_and_does_not_duplicate_own_hooks() {
         let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -2031,6 +2103,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn setup_does_not_replace_invalid_existing_config() {
         let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -2044,6 +2117,7 @@ mod tests {
         assert_eq!(fs::read_to_string(path).unwrap(), "{ broken json");
     }
 
+    #[cfg(unix)]
     #[test]
     fn startup_upgrades_previously_installed_hooks_without_replacing_other_hooks() {
         let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());

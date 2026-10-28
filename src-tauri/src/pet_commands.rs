@@ -73,21 +73,19 @@ pub struct ImportCapabilities {
 
 #[tauri::command]
 pub fn get_pet_import_capabilities() -> ImportCapabilities {
-    #[cfg(target_os = "macos")]
-    {
-        ImportCapabilities {
-            automatic: crate::pet_vision::automatic_available(),
-            transparent_png: true,
-            transparent_gif: true,
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        ImportCapabilities {
-            automatic: false,
-            transparent_png: false,
-            transparent_gif: false,
-        }
+    ImportCapabilities {
+        automatic: {
+            #[cfg(target_os = "macos")]
+            {
+                crate::pet_vision::automatic_available()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                false
+            }
+        },
+        transparent_png: true,
+        transparent_gif: true,
     }
 }
 
@@ -233,21 +231,13 @@ pub async fn prepare_pet_preview(
     input: Vec<u8>,
     mode: PetImageMode,
 ) -> Result<PreparedAssetPayload, PetCommandError> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (input, mode);
-        return Err(PetCommandError::new("unsupported_platform"));
-    }
-    #[cfg(target_os = "macos")]
-    {
-        tauri::async_runtime::spawn_blocking(move || {
-            prepare_pet_asset(&input, mode)
-                .map(|asset| asset_payload(&asset))
-                .map_err(PetCommandError::from)
-        })
-        .await
-        .map_err(|error| PetCommandError::internal(error.to_string()))?
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        prepare_pet_asset(&input, mode)
+            .map(|asset| asset_payload(&asset))
+            .map_err(PetCommandError::from)
+    })
+    .await
+    .map_err(|error| PetCommandError::internal(error.to_string()))?
 }
 
 #[tauri::command]
@@ -259,21 +249,13 @@ pub fn save_pet_profile(
     scale: f32,
     motions: BTreeMap<PetSlot, PetMotion>,
 ) -> Result<PetManifest, PetCommandError> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (app, store, name, assets, scale, motions);
-        return Err(PetCommandError::new("unsupported_platform"));
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let decoded = decode_profile_assets(&assets)?;
-        let manifest = store
-            .save_profile(&name, &decoded, scale, &motions)
-            .map_err(PetCommandError::from)?;
-        store.select(&manifest.id).map_err(PetCommandError::from)?;
-        let _ = app.emit("pet-changed", ());
-        Ok(manifest)
-    }
+    let decoded = decode_profile_assets(&assets)?;
+    let manifest = store
+        .save_profile(&name, &decoded, scale, &motions)
+        .map_err(PetCommandError::from)?;
+    store.select(&manifest.id).map_err(PetCommandError::from)?;
+    let _ = app.emit("pet-changed", ());
+    Ok(manifest)
 }
 
 #[tauri::command]
@@ -284,21 +266,13 @@ pub fn save_photo_pet(
     png_data_url: String,
     scale: f32,
 ) -> Result<PetManifest, PetCommandError> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (app, store, name, png_data_url, scale);
-        return Err(PetCommandError::new("unsupported_platform"));
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let png = decode_png_data_url(&png_data_url)?;
-        let manifest = store
-            .save(&name, &png, scale)
-            .map_err(PetCommandError::from)?;
-        store.select(&manifest.id).map_err(PetCommandError::from)?;
-        let _ = app.emit("pet-changed", ());
-        Ok(manifest)
-    }
+    let png = decode_png_data_url(&png_data_url)?;
+    let manifest = store
+        .save(&name, &png, scale)
+        .map_err(PetCommandError::from)?;
+    store.select(&manifest.id).map_err(PetCommandError::from)?;
+    let _ = app.emit("pet-changed", ());
+    Ok(manifest)
 }
 
 #[tauri::command]
@@ -338,6 +312,15 @@ mod tests {
     use super::*;
     use crate::pet_image::{PetAsset, PetAssetKind};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn transparent_import_is_available_on_every_desktop_platform() {
+        let capabilities = get_pet_import_capabilities();
+        assert!(capabilities.transparent_png);
+        assert!(capabilities.transparent_gif);
+        #[cfg(not(target_os = "macos"))]
+        assert!(!capabilities.automatic);
+    }
 
     #[test]
     fn serializes_known_pet_error_codes() {

@@ -43,23 +43,23 @@ Vibe Coding Light includes Bubu as its built-in desktop pet. New installations s
 
 **Toggle the pet:** Right-click the tray icon and select **"Show Pet"** or **"Hide Pet"** to control visibility.
 
-**Interface language:** Open the tray menu and choose **Language → English** or **Language → Chinese**. Menu items, status tooltip, settings title, and pet settings change immediately. Your choice is saved across launches; the first launch follows your Mac's preferred language (Chinese for a Chinese system language, English otherwise).
+**Interface language:** Open the tray menu and choose **Language → English** or **Language → Chinese**. Menu items, status tooltip, settings title, and pet settings change immediately. Your choice is saved across launches; the first launch follows your system's preferred language (Chinese for a Chinese system language, English otherwise).
 
 The pet window is always on top and draggable, so you can position it anywhere on your screen. On macOS 13 and later, it also attempts to stay visible in other apps' native full-screen spaces.
 Choose **Pet the Pet** in the tray menu, or press **⌘B**, to see a hand gently pat the active pet twice. The action works with Bubu and custom pets. Some Bubu GIFs contain Chinese text as part of their original artwork, including when the interface language is English.
 
-### Create a custom pet (macOS)
+### Create a custom pet
 
 1. Open the tray menu and choose **Customize Pet**.
-   With the pet window focused, **⌘,** also opens this window.
+   With the pet window focused, **⌘,** on macOS or **Ctrl+,** on Windows/Linux also opens this window.
 2. Choose **One image for every state** to use one asset, or **Different images for each state** to edit five clearly separated tabs: required Default / Rest plus optional Working, Waiting, Error, and Completed. The preview stays next to the editor on wide windows and above it on narrow windows. Missing state assets use the default. Switching modes keeps your draft; saving in single image mode stores only the default.
-3. Each slot accepts PNG, JPEG, or a transparent GIF (up to 10 MiB). Static images can be cut out locally with **Remove Background** on macOS 14+; transparent PNG and GIF work on macOS 12–13. GIFs retain their original animation and must already have a transparent background. Static images may be up to 4096 pixels per side; GIFs may be up to 1024 pixels per side and 120 frames.
+3. Each slot accepts PNG, JPEG, or a transparent GIF (up to 10 MiB). Static images can be cut out locally with **Remove Background** on macOS 14+; transparent PNG and GIF work on all supported desktop systems. GIFs retain their original animation and must already have a transparent background. Static images may be up to 4096 pixels per side; GIFs may be up to 1024 pixels per side and 120 frames.
 4. For each static image, choose its own motion: follow the agent state, still, sway, float, breathe, bounce, or wobble. GIFs keep their own animation and do not offer an extra motion effect. An empty state uses the default image and its motion.
 5. Preview each state, choose a name and size from **0.5 to 3**, then click **Save and Use**. The pet window grows with the image, and the preview shows its actual window dimensions. Previewing alone does not replace the active pet. You can select or delete saved pets and return to built-in Bubu in the same window.
 
-Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop settings are kept. Everything stays in Vibe Coding Light's local app data; source photos are not uploaded. Existing single-image pets remain usable, including their saved placement. New pets are centered; horizontal and vertical offset controls have been removed. Windows and Linux use Bubu as the built-in pet when built from source.
+Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop settings are kept. Everything stays in Vibe Coding Light's local app data; source photos are not uploaded. Existing single-image pets remain usable, including their saved placement. New pets are centered; horizontal and vertical offset controls have been removed. Windows and Linux also support transparent PNG/GIF custom pets.
 
-## Optional watch notifications (macOS)
+## Optional watch notifications
 
 Open **Notification Settings** from the menu bar and save only the Bark device key—the part of its test URL after the domain and before the next `/`, without `/title/body` or query parameters. Turn on the master switch, then choose Claude Code, Codex, and the events you want: approval, questions, completed turns, errors, and quota alerts. The app currently connects to Bark's official `api.day.app` server. Quota choices are 80%, 50%, and 20% remaining, 0% for other periods, a separate 0% alert for the seven-day period, plus recovery. Each agent and quota period alerts separately; the first reading sets a baseline. Previously installed app hooks are updated on upgrade.
 
@@ -69,9 +69,9 @@ Install Bark on your iPhone and allow its notifications, then configure Apple Wa
 
 The **Sessions** tray submenu lists up to eight recent Claude/Codex sessions with source, project, state, and last activity. It omits task, command, and error text and excludes sessions inactive for more than five minutes.
 
-Notification Settings also includes a local **delivery history** and **quiet hours**. History keeps at most 100 metadata-only results and can be cleared. Quiet hours are off by default; the initial interval is 22:00–08:00 in the Mac's local time. Permission, question, and error alerts bypass quiet hours by default, and each category can be changed. Muted alerts are discarded. Bark connection tests and simulated event tests are skipped during quiet hours; bypass switches apply only to real events.
+Notification Settings also includes a local **delivery history** and **quiet hours**. History keeps at most 100 metadata-only results and can be cleared. Quiet hours are off by default; the initial interval is 22:00–08:00 in the computer's local time. Permission, question, and error alerts bypass quiet hours by default, and each category can be changed. Muted alerts are discarded. Bark connection tests and simulated event tests are skipped during quiet hours; bypass switches apply only to real events.
 
-The tray offers optional **Launch at login** and **Automatically check for updates** switches, plus a manual update check. Automatic checks run at most once per day and fall back to GitHub's release feed if the API is unavailable. A newer version opens the project's GitHub release page when selected; the app does not install updates automatically. Move the app to Applications before enabling launch at login. macOS may require approval for its login item; a user LaunchAgent is available as a fallback.
+The tray offers optional **Launch at login** and **Automatically check for updates** switches, plus a manual update check. Automatic checks run at most once per day and fall back to GitHub's release feed if the API is unavailable. A newer version opens the project's GitHub release page when selected; the app does not install updates automatically. On macOS, move the app to Applications before enabling launch at login. macOS may require approval for its login item; a user LaunchAgent is available as a fallback.
 
 ## How It Works
 
@@ -100,7 +100,7 @@ The app keeps the existing `com.cuihuapeng.code-light` bundle identifier and `~/
 - macOS 12+ / Linux / Windows 10+
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) and/or [Codex CLI](https://github.com/openai/codex) installed
 - Node.js 18+, [pnpm](https://pnpm.io/), and the [Rust](https://rustup.rs/) toolchain for source builds
-- Windows users need [Git for Windows](https://git-scm.com/) (provides bash)
+- Windows users need [Git for Windows](https://git-scm.com/) with Git Bash, Perl JSON::PP, and uuidgen for Claude/Codex hooks. Linux Bark keys require a running Secret Service provider (such as GNOME Keyring or KWallet).
 
 ### Build from source
 
@@ -116,7 +116,7 @@ Built artifacts:
 | Platform | Location |
 |----------|----------|
 | macOS | `src-tauri/target/release/bundle/macos/Vibe Coding Light.app` |
-| Linux | `src-tauri/target/release/bundle/deb/vibe-coding-light_*.deb` |
+| Linux | `src-tauri/target/release/bundle/appimage/*.AppImage` |
 | Windows | `src-tauri/target/release/bundle/nsis/Vibe Coding Light_*.exe` |
 
 ## Usage

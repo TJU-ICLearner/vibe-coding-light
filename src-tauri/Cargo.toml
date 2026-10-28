@@ -1,6 +1,6 @@
 [package]
 name = "vibe-coding-light"
-version = "1.7.0-rc.6"
+version = "1.8.0-rc.1"
 description = "A system tray status light with a customizable desktop pet for AI coding agents"
 authors = ["you"]
 edition = "2021"
@@ -35,3 +35,7 @@ block2 = "0.6"
 objc = "0.2"
 security-framework = "3.7.0"
 tauri-nspanel = "2.1.1"
+
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["windows-native", "sync-secret-service"] }
+tauri-plugin-autostart = "2"

@@ -100,26 +100,41 @@ fn locate_codex_binary() -> Option<PathBuf> {
 }
 
 fn codex_binary_candidates(path: Option<OsString>, home: Option<PathBuf>) -> Vec<PathBuf> {
+    #[cfg(target_os = "macos")]
     let bundled_codex =
         Path::new("ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex");
+    let executable = if cfg!(target_os = "windows") {
+        "codex.exe"
+    } else {
+        "codex"
+    };
     let mut candidates: Vec<PathBuf> = path
         .map(|path| {
             std::env::split_paths(&path)
-                .map(|dir| dir.join("codex"))
+                .map(|dir| dir.join(executable))
                 .collect()
         })
         .unwrap_or_default();
+    #[cfg(target_os = "macos")]
     candidates.extend([
         PathBuf::from("/opt/homebrew/bin/codex"),
         PathBuf::from("/usr/local/bin/codex"),
         Path::new("/Applications").join(bundled_codex),
     ]);
+    #[cfg(target_os = "linux")]
+    candidates.extend([
+        PathBuf::from("/usr/local/bin/codex"),
+        PathBuf::from("/usr/bin/codex"),
+    ]);
     if let Some(home) = home {
         candidates.extend([
-            home.join(".local/bin/codex"),
-            home.join(".codex/bin/codex"),
-            home.join("Applications").join(bundled_codex),
+            home.join(".local/bin").join(executable),
+            home.join(".codex/bin").join(executable),
         ]);
+        #[cfg(target_os = "macos")]
+        candidates.push(home.join("Applications").join(bundled_codex));
+        #[cfg(target_os = "windows")]
+        candidates.push(home.join("AppData/Roaming/npm/codex.cmd"));
     }
     candidates
 }

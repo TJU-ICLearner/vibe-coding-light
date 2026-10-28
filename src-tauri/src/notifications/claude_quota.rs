@@ -171,14 +171,22 @@ pub fn run_statusline_proxy(
         let _ = atomic_json(&config.snapshot_path, &windows);
     }
     if let Some(command) = &config.previous_command {
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| error.to_string())?;
+        let mut child = Command::new(if cfg!(target_os = "windows") {
+            "cmd"
+        } else {
+            "sh"
+        })
+        .arg(if cfg!(target_os = "windows") {
+            "/C"
+        } else {
+            "-c"
+        })
+        .arg(command)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
         child
             .stdin
             .take()
@@ -262,7 +270,11 @@ fn original_path(data_dir: &Path) -> PathBuf {
     data_dir.join("claude-statusline-original.json")
 }
 fn shell_quote(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+    if cfg!(target_os = "windows") {
+        format!("\"{}\"", path.to_string_lossy())
+    } else {
+        format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+    }
 }
 fn proxy_command(executable: &Path, data_dir: &Path) -> String {
     format!(
