@@ -2,7 +2,7 @@ use super::model::{AgentSource, QuotaWindow};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -187,12 +187,17 @@ pub fn run_statusline_proxy(
         .stderr(Stdio::null())
         .spawn()
         .map_err(|error| error.to_string())?;
-        child
+        let write_result = child
             .stdin
             .take()
             .ok_or("Status line stdin unavailable")?
-            .write_all(&input)
-            .map_err(|error| error.to_string())?;
+            .write_all(&input);
+        if let Err(error) = write_result {
+            // A previous status line may produce output without reading stdin.
+            if error.kind() != ErrorKind::BrokenPipe {
+                return Err(error.to_string());
+            }
+        }
         let output = child
             .wait_with_output()
             .map_err(|error| error.to_string())?;
@@ -371,6 +376,19 @@ mod tests {
         let mut output = Vec::new();
         run_statusline_proxy(&b"{}"[..], &mut output, &config).unwrap();
         assert_eq!(output, b"line 1\nline 2\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn previous_statusline_can_finish_without_reading_stdin() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = ProxyConfig {
+            snapshot_path: dir.path().join("snapshot.json"),
+            previous_command: Some("printf ready".into()),
+        };
+        let mut output = Vec::new();
+        run_statusline_proxy(&vec![b'x'; 1_000_000][..], &mut output, &config).unwrap();
+        assert_eq!(output, b"ready");
     }
 
     #[test]
