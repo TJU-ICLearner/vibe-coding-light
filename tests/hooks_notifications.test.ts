@@ -73,8 +73,8 @@ it("records prompt transitions for repeated Claude replies and Codex turns", () 
       expect(spawnSync("bash", [resolve(`hooks/${agent}/${stop}`)], { input: JSON.stringify(payload), encoding: "utf8", env }).status).toBe(0);
     }
     const events = readdirSync(join(home, ".code-light/events")).map((name) => JSON.parse(readFileSync(join(home, ".code-light/events", name), "utf8")));
-    expect(events.filter((item) => item.kind === "working")).toHaveLength(2);
-    expect(events.filter((item) => item.kind === "completed")).toHaveLength(2);
+    expect(events.filter((item) => item.kind === "working"), `${agent} events: ${JSON.stringify(events)}`).toHaveLength(2);
+    expect(events.filter((item) => item.kind === "completed"), `${agent} events: ${JSON.stringify(events)}`).toHaveLength(2);
     expect(JSON.stringify(events)).not.toContain("secret");
   }
 });
@@ -89,7 +89,7 @@ it("keeps Claude session state separate without an environment session id", () =
     expect(result.status).toBe(0);
   }
   const events = readdirSync(join(home, ".code-light/events")).map((name) => JSON.parse(readFileSync(join(home, ".code-light/events", name), "utf8")));
-  expect(events.filter((item) => item.kind === "working")).toHaveLength(2);
+  expect(events.filter((item) => item.kind === "working"), `Claude events: ${JSON.stringify(events)}`).toHaveLength(2);
 });
 
 it("records nested Codex tool errors wherever the failure flag appears", () => {

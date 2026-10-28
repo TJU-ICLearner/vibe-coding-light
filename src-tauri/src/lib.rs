@@ -24,7 +24,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{
     image::Image,
@@ -939,7 +939,12 @@ fn cleanup_completed_sessions() {
     }
 }
 
+static BUNDLED_HOOKS_DIR: OnceLock<PathBuf> = OnceLock::new();
+
 fn get_hooks_dir() -> PathBuf {
+    if let Some(path) = BUNDLED_HOOKS_DIR.get() {
+        return path.clone();
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             let bundled = parent.join("hooks");
@@ -951,12 +956,19 @@ fn get_hooks_dir() -> PathBuf {
                 &["../Resources/hooks", "../Resources/_up_/hooks"]
             } else if cfg!(target_os = "linux") {
                 &[
+                    "resources/hooks",
+                    "resources/_up_/hooks",
                     "../lib/vibe-coding-light/hooks",
                     "../lib/code-light/hooks",
                     "../resources/hooks",
+                    "../resources/_up_/hooks",
                 ]
             } else {
-                &["../resources/hooks"]
+                &[
+                    "resources/hooks",
+                    "../resources/hooks",
+                    "../resources/_up_/hooks",
+                ]
             };
 
             for rel in search_paths {
@@ -1465,6 +1477,12 @@ pub fn run() {
             open_pet_settings
         ])
         .setup(move |app| {
+            if let Ok(resources) = app.path().resource_dir() {
+                let hooks = resources.join("hooks");
+                if hooks.is_dir() {
+                    let _ = BUNDLED_HOOKS_DIR.set(hooks);
+                }
+            }
             refresh_existing_hooks();
             let pet_data_dir = app.path().app_data_dir()?;
             let preferences = pet_data_dir.join("preferences.json");

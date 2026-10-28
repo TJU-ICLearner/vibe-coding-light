@@ -41,10 +41,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "../hooks/claude/*",
-      "../hooks/codex/*"
-    ],
+    "resources": {
+      "../hooks/claude/*": "hooks/claude/",
+      "../hooks/codex/*": "hooks/codex/"
+    },
     "macOS": {
       "infoPlist": "Info.plist",
       "signingIdentity": "-"

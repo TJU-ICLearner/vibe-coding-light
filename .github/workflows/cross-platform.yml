@@ -36,6 +36,8 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: Frontend tests
+        id: frontend
+        continue-on-error: ${{ runner.os == 'Windows' }}
         run: pnpm test -- --run
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
@@ -46,3 +48,6 @@ jobs:
           name: ${{ matrix.artifact }}-${{ github.sha }}
           path: ${{ matrix.path }}
           if-no-files-found: error
+      - name: Keep Windows frontend test failure visible after the build
+        if: runner.os == 'Windows' && steps.frontend.outcome == 'failure'
+        run: exit 1
