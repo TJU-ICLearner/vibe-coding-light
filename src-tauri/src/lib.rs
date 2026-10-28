@@ -1629,6 +1629,34 @@ fn open_pet_settings(app: tauri::AppHandle) -> Result<(), String> {
     show_pet_settings(&app)
 }
 
+#[cfg(any(test, target_os = "windows"))]
+fn relaunch_target(settings_visible: bool, notifications_visible: bool) -> &'static str {
+    if settings_visible {
+        "settings"
+    } else if notifications_visible {
+        "notifications"
+    } else {
+        "pet"
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn focus_running_instance(app: &tauri::AppHandle) {
+    let visible = |label| {
+        app.get_webview_window(label)
+            .and_then(|window| window.is_visible().ok())
+            .unwrap_or(false)
+    };
+    if let Some(window) = app.get_webview_window(relaunch_target(
+        visible("settings"),
+        visible("notifications"),
+    )) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let icons = Arc::new(Mutex::new(build_icons()));
@@ -1645,6 +1673,11 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    #[cfg(target_os = "windows")]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || focus_running_instance(&handle));
+    }));
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
     #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -2075,6 +2108,13 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relaunch_prefers_an_open_settings_window_over_the_pet() {
+        assert_eq!(relaunch_target(true, false), "settings");
+        assert_eq!(relaunch_target(false, true), "notifications");
+        assert_eq!(relaunch_target(false, false), "pet");
+    }
     use std::ffi::OsString;
     use std::fs::{File, FileTimes};
 
