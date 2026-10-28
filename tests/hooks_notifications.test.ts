@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { afterEach, expect, it } from "vitest";
 
 const roots: string[] = [];
@@ -20,6 +20,24 @@ function run(agent: "claude" | "codex", script: string, payload: object) {
 }
 
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+it("generates event IDs when uuidgen is unavailable", () => {
+  if (process.platform === "win32") return;
+  const home = mkdtempSync(join(tmpdir(), "vcl-hook-")); roots.push(home);
+  const bin = join(home, "bin"); mkdirSync(bin);
+  const blockedUuidgen = join(bin, "uuidgen");
+  writeFileSync(blockedUuidgen, "#!/bin/sh\nexit 127\n"); chmodSync(blockedUuidgen, 0o755);
+  for (const agent of ["claude", "codex"] as const) {
+    const result = spawnSync("bash", [resolve(`hooks/${agent}/stop.sh`)], {
+      input: JSON.stringify({ session_id: `${agent}-session` }), encoding: "utf8",
+      env: { ...process.env, HOME: home, PATH: `${bin}${delimiter}${process.env.PATH}` },
+    });
+    expect(result.status).toBe(0);
+  }
+  const events = readdirSync(join(home, ".code-light/events"));
+  expect(events).toHaveLength(2);
+  expect(events.every((name) => /^e-[a-f0-9-]+\.json$/.test(name))).toBe(true);
+});
 
 it("records Claude approval and question without prompt text", () => {
   const approval = run("claude", "notification.sh", { session_id: "claude-session", notification_type: "permission_prompt", message: "secret prompt" })[0];

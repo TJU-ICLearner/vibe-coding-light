@@ -122,7 +122,7 @@ write_notification_event() {
     mkdir -p "$EVENTS_DIR" 2>/dev/null || return 0
     local id ts target tmp capture=0
     detail_capture_enabled && capture=1
-    id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+    id=$(perl -MTime::HiRes -e 'printf "e-%x-%x-%x", int(Time::HiRes::time() * 1000000), $$, int(rand(0x7fffffff))' 2>/dev/null) || return 0
     ts=$(perl -MTime::HiRes -e 'printf "%.0f", Time::HiRes::time() * 1000' 2>/dev/null) || ts=$(( $(date +%s) * 1000 ))
     target="$EVENTS_DIR/$id.json"
     tmp="$target.tmp.$$"

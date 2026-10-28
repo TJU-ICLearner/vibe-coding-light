@@ -100,7 +100,7 @@ Agent 事件 → 钩子脚本 → ~/.code-light/sessions/*.json → 托盘图标
 - macOS 12+ / Linux / Windows 10+
 - 已安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 和/或 [Codex CLI](https://github.com/openai/codex)
 - 从源码构建时需要 Node.js 18+、[pnpm](https://pnpm.io/) 和 [Rust](https://rustup.rs/) 工具链
-- Windows 用户需安装 [Git for Windows](https://git-scm.com/)；Hook 依赖 Git Bash、Perl JSON::PP 与 uuidgen。Linux 的 Bark 密钥需要运行中的 Secret Service（如 GNOME Keyring 或 KWallet）。
+- Windows 用户需安装 [Git for Windows](https://git-scm.com/)；Hook 依赖 Git Bash 与 Perl（JSON::PP、Time::HiRes）。Linux Hook 依赖 Bash 与 Perl（JSON::PP、Time::HiRes）；Bark 密钥需要运行中的 Secret Service（如 GNOME Keyring 或 KWallet）。
 
 ### 从源码构建
 

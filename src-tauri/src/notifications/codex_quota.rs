@@ -111,7 +111,13 @@ fn codex_binary_candidates(path: Option<OsString>, home: Option<PathBuf>) -> Vec
     let mut candidates: Vec<PathBuf> = path
         .map(|path| {
             std::env::split_paths(&path)
-                .map(|dir| dir.join(executable))
+                .flat_map(|dir| {
+                    let mut paths = vec![dir.join(executable)];
+                    if cfg!(target_os = "windows") {
+                        paths.push(dir.join("codex.cmd"));
+                    }
+                    paths
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -245,6 +251,14 @@ mod tests {
             Duration::from_millis(100)
         )
         .is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn candidate_paths_include_npm_cmd_on_path() {
+        let candidates =
+            codex_binary_candidates(Some(OsString::from(r"C:\custom-npm;C:\Windows")), None);
+        assert!(candidates.contains(&PathBuf::from(r"C:\custom-npm\codex.cmd")));
     }
 
     #[cfg(target_os = "macos")]

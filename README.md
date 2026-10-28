@@ -100,7 +100,7 @@ The app keeps the existing `com.cuihuapeng.code-light` bundle identifier and `~/
 - macOS 12+ / Linux / Windows 10+
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) and/or [Codex CLI](https://github.com/openai/codex) installed
 - Node.js 18+, [pnpm](https://pnpm.io/), and the [Rust](https://rustup.rs/) toolchain for source builds
-- Windows users need [Git for Windows](https://git-scm.com/) with Git Bash, Perl JSON::PP, and uuidgen for Claude/Codex hooks. Linux Bark keys require a running Secret Service provider (such as GNOME Keyring or KWallet).
+- Windows users need [Git for Windows](https://git-scm.com/) with Git Bash and Perl (JSON::PP and Time::HiRes) for Claude/Codex hooks. Linux hooks need Bash and Perl (JSON::PP and Time::HiRes); Linux Bark keys require a running Secret Service provider (such as GNOME Keyring or KWallet).
 
 ### Build from source
 

@@ -1053,14 +1053,30 @@ fn ensure_windows_hook_runtime() -> Result<(), String> {
     let status = std::process::Command::new(bash)
         .args([
             "-lc",
-            "command -v perl >/dev/null && perl -MJSON::PP -e 1 && command -v uuidgen >/dev/null",
+            "command -v perl >/dev/null && perl -MJSON::PP -MTime::HiRes -e 1",
         ])
         .status()
         .map_err(|_| "Could not start Git Bash".to_string())?;
     if status.success() {
         Ok(())
     } else {
-        Err("Git Bash needs Perl JSON::PP and uuidgen for hooks".into())
+        Err("Git Bash needs Perl JSON::PP and Time::HiRes for hooks".into())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_linux_hook_runtime() -> Result<(), String> {
+    let status = std::process::Command::new("bash")
+        .args([
+            "-lc",
+            "command -v perl >/dev/null && perl -MJSON::PP -MTime::HiRes -e 1",
+        ])
+        .status()
+        .map_err(|_| "Install Bash before setting up hooks".to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Install Perl with JSON::PP and Time::HiRes before setting up hooks".into())
     }
 }
 
@@ -1230,6 +1246,8 @@ fn write_hook_config(path: &Path, config: &serde_json::Value) -> Result<(), Stri
 fn setup_hooks() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     ensure_windows_hook_runtime()?;
+    #[cfg(target_os = "linux")]
+    ensure_linux_hook_runtime()?;
     let settings_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".claude")
@@ -1259,6 +1277,8 @@ fn setup_hooks() -> Result<(), String> {
 fn setup_codex_hooks() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     ensure_windows_hook_runtime()?;
+    #[cfg(target_os = "linux")]
+    ensure_linux_hook_runtime()?;
     let codex_dir = dirs::home_dir().unwrap_or_default().join(".codex");
 
     let hooks_json_path = codex_dir.join("hooks.json");
