@@ -21,6 +21,10 @@ pub fn session_menu_item(locale: AppLocale, item: &SessionSummary, now: u64) -> 
     let source = match item.source {
         SessionSource::Claude => "Claude",
         SessionSource::Codex => "Codex",
+        SessionSource::Cursor => "Cursor",
+        SessionSource::Trae => "TRAE",
+        SessionSource::Grok => "Grok Build",
+        SessionSource::Deepseek => "DeepSeek Harness",
     };
     let state = match (locale, item.state) {
         (AppLocale::ZhCn, State::Working) => "工作中",
@@ -218,10 +222,7 @@ pub fn test_notification(locale: AppLocale) -> PushPayload {
 }
 
 pub fn notification_payload(candidate: &PushCandidate, locale: AppLocale) -> PushPayload {
-    let source = match candidate.source {
-        AgentSource::Claude => "Claude",
-        AgentSource::Codex => "Codex",
-    };
+    let source = candidate.source.label();
     let body = match (&candidate.kind, locale) {
         (PushKind::Permission, AppLocale::ZhCn) => format!("{source} · 等待权限批准"),
         (PushKind::Permission, AppLocale::En) => format!("{source} · Permission approval needed"),
@@ -328,10 +329,7 @@ pub fn notification_payload_with_settings(
         .filter(|value| !value.body.trim().is_empty())
         .map(|value| value.body.as_str())
         .unwrap_or(&payload.body);
-    let source = match candidate.source {
-        AgentSource::Claude => "Claude",
-        AgentSource::Codex => "Codex",
-    };
+    let source = candidate.source.label();
     let remaining = candidate
         .remaining_percent
         .map(|value| {

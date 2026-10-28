@@ -29,6 +29,10 @@ pub struct NotificationStatus {
     pub key_saved: bool,
     pub claude_hooks_installed: bool,
     pub codex_hooks_installed: bool,
+    pub cursor_hooks_installed: bool,
+    pub trae_hooks_installed: bool,
+    pub grok_hooks_installed: bool,
+    pub deepseek_hooks_prepared: bool,
     pub claude_quota_available: bool,
     pub codex_quota_available: bool,
     pub test_console_available: bool,
@@ -405,10 +409,18 @@ impl NotificationService {
     fn refresh_status(&self) {
         let claude_hooks = crate::hook_install_current("claude");
         let codex_hooks = crate::hook_install_current("codex");
+        let cursor_hooks = crate::integration_hook_current("cursor");
+        let trae_hooks = crate::integration_hook_current("trae");
+        let grok_hooks = crate::integration_hook_current("grok");
+        let deepseek_hooks = crate::integration_hook_current("deepseek");
         let key_saved = self.key_store.has_key().unwrap_or(false);
         self.update_status(|status| {
             status.claude_hooks_installed = claude_hooks;
             status.codex_hooks_installed = codex_hooks;
+            status.cursor_hooks_installed = cursor_hooks;
+            status.trae_hooks_installed = trae_hooks;
+            status.grok_hooks_installed = grok_hooks;
+            status.deepseek_hooks_prepared = deepseek_hooks;
             status.key_saved = key_saved;
         });
     }
@@ -568,6 +580,15 @@ pub fn get_notification_status(
 ) -> Result<NotificationStatus, String> {
     ensure_notification_window(&window)?;
     Ok(status_or_unavailable(service.as_deref()))
+}
+
+#[tauri::command]
+pub fn install_integration_hook(
+    window: tauri::WebviewWindow,
+    source: String,
+) -> Result<(), String> {
+    ensure_notification_window(&window)?;
+    crate::setup_integration_hooks(&source)
 }
 
 #[tauri::command]

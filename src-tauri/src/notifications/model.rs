@@ -6,6 +6,32 @@ use std::collections::HashMap;
 pub struct SourceSwitches {
     pub claude: bool,
     pub codex: bool,
+    pub cursor: bool,
+    pub trae: bool,
+    pub grok: bool,
+    pub deepseek: bool,
+}
+
+#[cfg(test)]
+mod additional_source_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_settings_keep_new_clients_opted_out() {
+        let sources: SourceSwitches =
+            serde_json::from_str(r#"{"claude":true,"codex":false}"#).unwrap();
+        assert!(!sources.cursor && !sources.trae && !sources.grok && !sources.deepseek);
+        assert!(!sources.codex);
+    }
+
+    #[test]
+    fn new_sources_round_trip_independently() {
+        let source: AgentSource = serde_json::from_str("\"deepseek\"").unwrap();
+        assert_eq!(serde_json::to_string(&source).unwrap(), "\"deepseek\"");
+        let mut settings = NotificationSettings::default();
+        settings.sources.deepseek = true;
+        assert!(!settings.sources.cursor);
+    }
 }
 
 impl Default for SourceSwitches {
@@ -13,6 +39,23 @@ impl Default for SourceSwitches {
         Self {
             claude: true,
             codex: true,
+            cursor: false,
+            trae: false,
+            grok: false,
+            deepseek: false,
+        }
+    }
+}
+
+impl SourceSwitches {
+    pub fn enabled(&self, source: AgentSource) -> bool {
+        match source {
+            AgentSource::Claude => self.claude,
+            AgentSource::Codex => self.codex,
+            AgentSource::Cursor => self.cursor,
+            AgentSource::Trae => self.trae,
+            AgentSource::Grok => self.grok,
+            AgentSource::Deepseek => self.deepseek,
         }
     }
 }
@@ -158,6 +201,23 @@ pub struct EventDetails {
 pub enum AgentSource {
     Claude,
     Codex,
+    Cursor,
+    Trae,
+    Grok,
+    Deepseek,
+}
+
+impl AgentSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+            Self::Codex => "Codex",
+            Self::Cursor => "Cursor",
+            Self::Trae => "TRAE",
+            Self::Grok => "Grok Build",
+            Self::Deepseek => "DeepSeek Harness",
+        }
+    }
 }
 
 #[allow(dead_code)]

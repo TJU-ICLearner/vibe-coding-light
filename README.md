@@ -162,6 +162,21 @@ Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop
 3. Select the **Work events** and **Quota alerts** you want. Switch changes save automatically. Turning off a source stops all its alerts; turning off the master switch or quitting the app stops pushes. Previously installed app hooks are updated on upgrade.
 4. Configure wording, details, and quiet hours as needed. The stable release has no connection-test or simulated-event buttons. Use **Notification diagnostics** to see whether a real event was observed, sent, skipped, or failed.
 
+### Connect other coding assistants
+
+In **Notification Settings → Sources**, Cursor, TRAE, Grok Build, and DeepSeek Harness have separate switches; new sources start off. Click **Install Hook** beside a source, enable that source and the work events you want, then restart its client. Installation preserves existing hooks. These sources use the existing pet state, Bark, and quiet-hour rules. Quota alerts are currently available only for Claude Code and Codex.
+
+| Source | Configuration | Observable events |
+| --- | --- | --- |
+| Cursor | `~/.cursor/hooks.json` | Working, tool failure, reply completed; some approvals and questions have no separate hook |
+| TRAE China | `~/.trae-cn/hooks.json` | Working, completed, approval, question notifications, tool failure |
+| Grok Build CLI | `~/.grok/hooks/vibe-coding-light.json` | Working, completed, permission denied, errors and notifications |
+| DeepSeek Harness | `~/.code-light/hooks/deepseek/` | Working, completed and tool failure through the official Codex Hook bridge |
+
+**DeepSeek Harness also requires its bridge to be mounted.** Install Hook generates `hooks.json` and `cordis.patch.yml` but does not alter Harness global configuration or install packages. Install the official `@deepseek-ai/dsh-hooks-codex` package into the Harness profile you use, then add the rows from `~/.code-light/hooks/deepseek/cordis.patch.yml` to that profile's patch, or start with `dsh --patch ~/.code-light/hooks/deepseek/cordis.patch.yml`. Confirm `vibe-coding-light-hooks` appears in `dsh --dump-config`, then restart the Harness session. Profile and plugin management in the preview desktop app can change; consult its current documentation.
+
+The ordinary Doubao app and **Grok Bot** currently expose no local lifecycle hooks for these work events. TRAE and Grok Build are separate products. Cursor, TRAE, and Grok Build may also read other clients' compatibility hooks; the app skips known duplicate invocations. If a client blocks custom hooks, no corresponding event appears in notification diagnostics.
+
 ### Events and quota thresholds
 
 | Switch | Meaning |

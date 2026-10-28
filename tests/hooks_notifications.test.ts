@@ -21,6 +21,44 @@ function run(agent: "claude" | "codex", script: string, payload: object) {
 
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
+it("normalizes Cursor, TRAE, Grok Build and DeepSeek Harness hook events", () => {
+  const cases = [
+    ["cursor", "prompt", { conversation_id: "cursor-1", generation_id: "turn-1", prompt: "private task" }, "working"],
+    ["cursor", "error", { conversation_id: "cursor-1", error_message: "private error" }, "error"],
+    ["trae", "notification", { session_id: "trae-1", notification_type: "permission_prompt", message: "private question" }, "permission"],
+    ["trae", "notification", { session_id: "trae-1", notification_type: "ask_user_question", message: "private question" }, "question"],
+    ["grok", "permission", { sessionId: "grok-1" }, "permission"],
+    ["grok", "stop", { sessionId: "grok-1" }, "completed"],
+    ["deepseek", "prompt", { session_id: "dsh-1", prompt: "private task" }, "working"],
+    ["deepseek", "stop", { session_id: "dsh-1", last_assistant_message: "private reply" }, "completed"],
+  ] as const;
+  for (const [source, hook, payload, expected] of cases) {
+    const home = mkdtempSync(join(tmpdir(), "vcl-hook-")); roots.push(home);
+    const result = spawnSync("bash", [resolve("hooks/integrations/dispatch.sh"), source, hook], {
+      input: JSON.stringify(payload), encoding: "utf8", env: { ...process.env, HOME: home },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const dir = join(home, ".code-light/events");
+    const event = JSON.parse(readFileSync(join(dir, readdirSync(dir)[0]), "utf8"));
+    expect(event).toMatchObject({ source, kind: expected });
+    expect(JSON.stringify(event)).not.toContain("private");
+  }
+});
+
+it("does not double count compatibility hooks loaded by Grok or Cursor", () => {
+  const home = mkdtempSync(join(tmpdir(), "vcl-hook-")); roots.push(home);
+  const input = JSON.stringify({ session_id: "shared-session" });
+  const claude = spawnSync("bash", [resolve("hooks/claude/stop.sh")], {
+    input, encoding: "utf8", env: { ...process.env, HOME: home, CURSOR_PROJECT_DIR: "/project" },
+  });
+  expect(claude.status).toBe(0);
+  const cursor = spawnSync("bash", [resolve("hooks/integrations/dispatch.sh"), "cursor", "stop"], {
+    input, encoding: "utf8", env: { ...process.env, HOME: home, GROK_SESSION_ID: "grok-session" },
+  });
+  expect(cursor.status).toBe(0);
+  expect(existsSync(join(home, ".code-light/events"))).toBe(false);
+});
+
 it("generates event IDs when uuidgen is unavailable", () => {
   if (process.platform === "win32") return;
   const home = mkdtempSync(join(tmpdir(), "vcl-hook-")); roots.push(home);

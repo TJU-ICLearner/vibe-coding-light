@@ -67,6 +67,11 @@ button:focus-visible, .key-entry input:focus-visible { outline: 2px solid #2a8e5
 .key-entry button:hover { background: #247348; }
 .actions { display: flex; gap: 8px; justify-content: space-between; margin-top: 10px; }
 .availability { color: #758378; margin: -3px 0 7px; font-size: .69rem; }
+.integration-source { border-top: 1px solid #e4ebe6; margin-top: 5px; }
+.integration-source .switch-row { border-top: 0; }
+.integration-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 9px; }
+.integration-actions .availability { margin: 0; line-height: 1.4; }
+.integration-actions button { flex: none; font-size: .71rem; }
 .coverage { margin-top: 12px; padding: 9px 11px; border-radius: 9px; background: #f5f8f5; }
 .quota-status { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin: 6px 0; font-size: .72rem; }
 .quota-status strong { color: #768a78; font-size: .7rem; }

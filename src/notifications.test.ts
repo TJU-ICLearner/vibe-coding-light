@@ -3,14 +3,14 @@ import { NotificationSettingsController, type NotificationApi, type Notification
 
 const defaults: NotificationSettings = {
   enabled: false,
-  sources: { claude: true, codex: true },
+  sources: { claude: true, codex: true, cursor: false, trae: false, grok: false, deepseek: false },
   events: { permission: true, question: true, completed: true, error: true },
   quota: { at80: false, at50: false, at20: false, at0: false, at_week0: false, recovered: false },
   include_details: false,
   templates: {},
   quiet_hours: { enabled: false, start_minute: 1320, end_minute: 480, bypass: { permission: true, question: true, completed: false, error: true, quota: false } },
 };
-const status: NotificationStatus = { serviceAvailable: true, keySaved: false, claudeHooksInstalled: false, codexHooksInstalled: false, claudeQuotaAvailable: false, codexQuotaAvailable: false, testConsoleAvailable: false, lastSendError: null };
+const status: NotificationStatus = { serviceAvailable: true, keySaved: false, claudeHooksInstalled: false, codexHooksInstalled: false, cursorHooksInstalled: false, traeHooksInstalled: false, grokHooksInstalled: false, deepseekHooksPrepared: false, claudeQuotaAvailable: false, codexQuotaAvailable: false, testConsoleAvailable: false, lastSendError: null };
 
 function setup() {
   const root = document.createElement("main"); document.body.replaceChildren(root);
@@ -20,6 +20,7 @@ function setup() {
     getStatus: vi.fn(async () => structuredClone(status)),
     getDiagnostics: vi.fn(async () => []), clearDiagnostics: vi.fn(async () => {}),
     saveKey: vi.fn(async () => {}), deleteKey: vi.fn(async () => {}),
+    installHooks: vi.fn(async () => {}),
   };
   const controller = new NotificationSettingsController(root, api);
   return { root, api, controller };
@@ -28,6 +29,14 @@ function setup() {
 beforeEach(() => document.body.replaceChildren());
 
 describe("notification settings window", () => {
+  it("installs a new source hook from its row without enabling Bark", async () => {
+    const { root, api, controller } = setup();
+    await controller.init("en");
+    root.querySelector<HTMLButtonElement>('[data-action="install-cursor"]')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(api.installHooks).toHaveBeenCalledWith("cursor");
+    expect(root.querySelector<HTMLInputElement>('[data-path="sources.cursor"]')!.checked).toBe(false);
+  });
   it("does not show RC or Bark test controls in the stable settings", async () => {
     const { root, controller } = setup();
     await controller.init("zh-CN");
@@ -53,7 +62,7 @@ describe("notification settings window", () => {
       input.checked = !input.checked; input.dispatchEvent(new Event("change", { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    expect(api.setSettings).toHaveBeenLastCalledWith({ ...defaults, enabled: true, sources: { claude: true, codex: false }, events: { ...defaults.events, question: false }, quota: { ...defaults.quota, at20: true } });
+    expect(api.setSettings).toHaveBeenLastCalledWith({ ...defaults, enabled: true, sources: { ...defaults.sources, codex: false }, events: { ...defaults.events, question: false }, quota: { ...defaults.quota, at20: true } });
   });
 
   it("keeps master off when a second switch changes before the first save completes", async () => {

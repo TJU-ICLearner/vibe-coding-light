@@ -449,11 +449,11 @@ impl NotificationEngine {
             return Vec::new();
         }
         let remaining = 100.0 - window.used_percent;
-        let generation = self.quota_generation[if window.source == AgentSource::Claude {
-            0
-        } else {
-            1
-        }];
+        let generation = match window.source {
+            AgentSource::Claude => self.quota_generation[0],
+            AgentSource::Codex => self.quota_generation[1],
+            _ => return Vec::new(),
+        };
         let key = format!(
             "{:?}:{}:{}",
             window.source, window.bucket_id, window.duration_mins
@@ -567,11 +567,7 @@ impl NotificationEngine {
 }
 
 fn source_enabled(settings: &NotificationSettings, source: AgentSource) -> bool {
-    settings.enabled
-        && match source {
-            AgentSource::Claude => settings.sources.claude,
-            AgentSource::Codex => settings.sources.codex,
-        }
+    settings.enabled && settings.sources.enabled(source)
 }
 
 fn quota_switch(settings: &NotificationSettings, level: u8, duration_mins: u64) -> bool {

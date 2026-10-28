@@ -164,6 +164,21 @@ Vibe Coding Light 默认使用布布作为内置桌宠。新安装会直接显�
 3. 在**工作事件**和**额度提醒**中选择真正需要的类型。各开关修改后自动保存。关闭某来源会停止该来源的所有通知；关闭总开关或退出应用后不会继续推送。升级时应用会更新之前由本应用安装的 Hook。
 4. 按需要配置通知文案、详细内容和免打扰。正式版没有发送测试通知或模拟事件按钮；可以在**通知诊断记录**查看真实事件是否被观察到及发送结果。
 
+### 接入其他编程助手
+
+在**通知设置 → 通知来源**中，Cursor、TRAE、Grok Build 和 DeepSeek Harness 各有独立开关；新来源默认关闭。先点击来源旁的**安装 Hook**，再开启来源与所需工作事件，并重启对应客户端。安装只追加本应用的 Hook，不删除已有 Hook。状态、等待、完成、错误与 Bark 通知共用现有设置和免打扰规则；这些来源目前没有额度读取功能。
+
+| 来源 | 安装位置 | 可观察事件 |
+| --- | --- | --- |
+| Cursor | `~/.cursor/hooks.json` | 工作、工具失败、回复完成；部分权限与问题不一定有独立 Hook |
+| TRAE 中国版 | `~/.trae-cn/hooks.json` | 工作、完成、权限确认、问题通知、工具失败 |
+| Grok Build CLI | `~/.grok/hooks/vibe-coding-light.json` | 工作、完成、权限拒绝、错误及通知 |
+| DeepSeek Harness | `~/.code-light/hooks/deepseek/` | 官方 Codex Hook 桥接支持的工作、完成及工具失败 |
+
+**DeepSeek Harness 需额外挂载桥接插件。** 点击“安装 Hook”会生成 `hooks.json` 与 `cordis.patch.yml`，但不会修改 Harness 的全局配置或安装插件。先为所用 Harness profile 安装官方 `@deepseek-ai/dsh-hooks-codex` 包，再将 `~/.code-light/hooks/deepseek/cordis.patch.yml` 的配置行加入该 profile 的补丁，或在启动时使用 `dsh --patch ~/.code-light/hooks/deepseek/cordis.patch.yml`。用 `dsh --dump-config` 确认 `vibe-coding-light-hooks` 已加载，并重启 Harness 会话。Harness 桌面版的 profile 与插件管理可能随预览版变化；请以其当前文档为准。
+
+普通豆包客户端与 **Grok Bot** 目前没有供本应用读取工作状态的本地生命周期 Hook；这里的 TRAE 和 Grok Build 是不同产品。Cursor、TRAE、Grok Build 可读取其他客户端的兼容 Hook，本应用会尽量跳过因此产生的重复事件。若某客户端禁止自定义 Hook，通知诊断记录会没有对应事件。
+
 ### 工作事件和额度档位
 
 | 开关 | 提醒条件与说明 |

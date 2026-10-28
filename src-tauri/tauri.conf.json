@@ -43,7 +43,8 @@
     ],
     "resources": {
       "../hooks/claude/*": "hooks/claude/",
-      "../hooks/codex/*": "hooks/codex/"
+      "../hooks/codex/*": "hooks/codex/",
+      "../hooks/integrations/*": "hooks/integrations/"
     },
     "macOS": {
       "infoPlist": "Info.plist",

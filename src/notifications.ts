@@ -5,7 +5,7 @@ import "./notifications.css";
 
 export interface NotificationSettings {
   enabled: boolean;
-  sources: { claude: boolean; codex: boolean };
+  sources: { claude: boolean; codex: boolean; cursor: boolean; trae: boolean; grok: boolean; deepseek: boolean };
   events: { permission: boolean; question: boolean; completed: boolean; error: boolean };
   quota: { at80: boolean; at50: boolean; at20: boolean; at0: boolean; at_week0: boolean; recovered: boolean };
   include_details: boolean;
@@ -14,11 +14,12 @@ export interface NotificationSettings {
 }
 export interface NotificationStatus {
   serviceAvailable: boolean; keySaved: boolean; claudeHooksInstalled: boolean; codexHooksInstalled: boolean;
+  cursorHooksInstalled: boolean; traeHooksInstalled: boolean; grokHooksInstalled: boolean; deepseekHooksPrepared: boolean;
   claudeQuotaAvailable: boolean; codexQuotaAvailable: boolean; testConsoleAvailable: boolean; lastSendError: string | null;
 }
 export interface DiagnosticEntry {
   atMs: number;
-  source: "claude" | "codex" | null;
+  source: "claude" | "codex" | "cursor" | "trae" | "grok" | "deepseek" | null;
   kind: string;
   outcome: "observed" | "deferred" | "sent" | "skipped" | "failed";
   reason: string | null;
@@ -31,6 +32,7 @@ export interface NotificationApi {
   clearDiagnostics(): Promise<void>;
   saveKey(key: string): Promise<void>;
   deleteKey(): Promise<void>;
+  installHooks(source: string): Promise<void>;
 }
 
 const api: NotificationApi = {
@@ -41,6 +43,7 @@ const api: NotificationApi = {
   clearDiagnostics: () => invoke("clear_notification_diagnostics"),
   saveKey: (key) => invoke("save_bark_key", { key }),
   deleteKey: () => invoke("delete_bark_key"),
+  installHooks: (source) => invoke("install_integration_hook", { source }),
 };
 
 type NotificationFeedback = "testSending" | "testSuccess" | "testQuietSkipped" | "testFailure" | "testRejected" | "testUnsent" | "testAmbiguous" | "invalidKey" | "saveFailure" | "settingsFailure";
@@ -85,6 +88,7 @@ export class NotificationSettingsController {
   private saveQueue: Promise<void> = Promise.resolve();
   private selectedEvent: TemplateEvent = "permission";
   private templateDrafts: Record<string, { title: string; body: string }> = {};
+  private installFeedback = "";
 
   constructor(private readonly root: HTMLElement, private readonly api: NotificationApi) {
     root.addEventListener("change", (event) => { void this.onChange(event); });
@@ -171,6 +175,18 @@ export class NotificationSettingsController {
     const button = target.closest<HTMLButtonElement>("button[data-action]");
     if (!button) return;
     const action = button.dataset.action;
+    if (action?.startsWith("install-")) {
+      const source = action.slice(8);
+      try {
+        await this.api.installHooks(source);
+        this.status = await this.api.getStatus();
+        this.installFeedback = source === "deepseek" ? notificationCopy(this.locale).deepseekPrepared : notificationCopy(this.locale).installSuccess;
+      } catch (error) {
+        this.installFeedback = `${notificationCopy(this.locale).installFailed}: ${String(error)}`;
+      }
+      this.render();
+      return;
+    }
     if (action === "clear-diagnostics") {
       try { await this.api.clearDiagnostics(); this.diagnostics = []; this.feedback = null; }
       catch { this.feedback = "settingsFailure"; }
@@ -233,7 +249,7 @@ export class NotificationSettingsController {
     };
     const diagnosticLabels: Record<string, string> = { permission: t.permission, question: t.question, completed: t.completed, error: t.error, quota80: t.at80, quota50: t.at50, quota20: t.at20, quota0: t.at0, quota_week0: t.atWeek0, recovered: t.recovered, working: t.diagnosticWorking, test: t.test };
     const diagnosticRows = [...this.diagnostics].reverse().map((entry) => {
-      const source = entry.source === "claude" ? t.claude : entry.source === "codex" ? t.codex : t.diagnosticApp;
+      const source = entry.source ? ({ claude: t.claude, codex: t.codex, cursor: t.cursor, trae: t.trae, grok: t.grok, deepseek: t.deepseek } as Record<string, string>)[entry.source] ?? t.diagnosticApp : t.diagnosticApp;
       const simulatedKind = entry.kind.startsWith("test_") ? entry.kind.slice(5) : null;
       const kind = simulatedKind && diagnosticLabels[simulatedKind] ? `${t.testTag} · ${diagnosticLabels[simulatedKind]}` : diagnosticLabels[entry.kind] ?? entry.kind;
       const reason = entry.reason ? reasonLabels[entry.reason] ?? entry.reason : "";
@@ -246,7 +262,7 @@ export class NotificationSettingsController {
       <section class="hero-card"><div><h2>${t.master}</h2><p>${t.masterHint}</p></div>${toggle("enabled", t.master, s.enabled)}</section>
       <div class="settings-grid">
         <section class="card connection"><div class="card-title"><span class="card-index">01</span><h2>${t.connection}</h2></div><p class="key-status ${status.keySaved ? "good" : ""}">${status.keySaved ? t.keySaved : t.keyMissing}</p><label class="field-label" for="bark-key">${t.key}</label><div class="key-entry"><input id="bark-key" type="password" autocomplete="off" spellcheck="false" placeholder="${t.keyPlaceholder}"><button type="button" id="save-key" data-action="save-key">${t.saveKey}</button></div><div class="actions"><button type="button" data-action="delete-key" ${status.keySaved ? "" : "disabled"}>${t.deleteKey}</button></div><p id="feedback" role="status" class="${feedbackError ? "error" : ""}">${feedback ? t[feedback] : ""}</p></section>
-        <section class="card sources"><div class="card-title"><span class="card-index">02</span><h2>${t.sources}</h2></div><p class="hint">${t.sourceHint}</p>${toggle("sources.claude", t.claude, s.sources.claude)}<p class="availability">${status.claudeHooksInstalled ? t.hooksInstalled : t.hooksMissing}</p>${toggle("sources.codex", t.codex, s.sources.codex)}<p class="availability">${status.codexHooksInstalled ? t.hooksInstalled : t.hooksMissing}</p></section>
+        <section class="card sources"><div class="card-title"><span class="card-index">02</span><h2>${t.sources}</h2></div><p class="hint">${t.sourceHint}</p>${toggle("sources.claude", t.claude, s.sources.claude)}<p class="availability">${status.claudeHooksInstalled ? t.hooksInstalled : t.hooksMissing}</p>${toggle("sources.codex", t.codex, s.sources.codex)}<p class="availability">${status.codexHooksInstalled ? t.hooksInstalled : t.hooksMissing}</p>${(["cursor", "trae", "grok", "deepseek"] as const).map((source) => `<div class="integration-source">${toggle(`sources.${source}`, t[source], s.sources[source])}<div class="integration-actions"><span class="availability">${source === "deepseek" ? (status.deepseekHooksPrepared ? t.deepseekPrepared : t.deepseekNeedsBridge) : (status[`${source}HooksInstalled`] ? t.hooksInstalled : t.hooksMissing)}</span><button type="button" data-action="install-${source}">${t.installHook}</button></div></div>`).join("")}<p class="hint">${t.extraSourceHint}</p><p class="availability" role="status">${escapeHtml(this.installFeedback)}</p></section>
         <section class="card events"><div class="card-title"><span class="card-index">03</span><h2>${t.events}</h2></div><p class="hint">${t.eventHint}</p>${toggle("events.permission", t.permission, s.events.permission)}${toggle("events.question", t.question, s.events.question)}${toggle("events.completed", t.completed, s.events.completed)}${toggle("events.error", t.error, s.events.error)}<p class="hint coverage">${t.codexQuestionHint}</p></section>
         <section class="card quotas"><div class="card-title"><span class="card-index">04</span><h2>${t.quotas}</h2></div><p class="hint">${t.quotaHint}</p><div class="quota-status"><span>${t.claudeQuota}</span><strong id="claude-quota-status">${status.claudeQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div><div class="quota-status"><span>${t.codexQuota}</span><strong id="codex-quota-status">${status.codexQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div>${toggle("quota.at80", t.at80, s.quota.at80)}${toggle("quota.at50", t.at50, s.quota.at50)}${toggle("quota.at20", t.at20, s.quota.at20)}${toggle("quota.at0", t.at0, s.quota.at0)}${toggle("quota.at_week0", t.atWeek0, s.quota.at_week0)}${toggle("quota.recovered", t.recovered, s.quota.recovered)}</section>
       </div>

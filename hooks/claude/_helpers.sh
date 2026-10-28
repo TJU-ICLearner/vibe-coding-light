@@ -6,6 +6,12 @@ CODE_LIGHT_DIR="$HOME/.code-light"
 SESSIONS_DIR="$CODE_LIGHT_DIR/sessions"
 EVENTS_DIR="$CODE_LIGHT_DIR/events"
 
+# Cursor, TRAE and Grok Build can import Claude hooks. Their native adapters
+# write the correct source label, so skip this compatibility invocation.
+code_light_compat_host() {
+    [ -n "${CURSOR_PROJECT_DIR:-}" ] || [ -n "${TRAE_PROJECT_DIR:-}" ] || [ -n "${GROK_SESSION_ID:-}" ]
+}
+
 detail_capture_enabled() {
     local pid updated now
     [ -r "$CODE_LIGHT_DIR/detail-capture" ] || return 1
@@ -105,6 +111,7 @@ make_message() {
 # Write the latest event, including events from a new turn in the same session.
 # Args: state [message] [tool_name] [file_path] [command] [query]
 write_state() {
+    code_light_compat_host && return 0
     local state="$1"
     local message="${2:-}"
     local tool_name="${3:-}"
@@ -140,6 +147,7 @@ write_state() {
 
 # Record a small immutable event for the running app. Never send from a hook.
 write_notification_event() {
+    code_light_compat_host && return 0
     local input="$1" kind="$2" turn_id="${3:-}" fallback_command="${4:-}" new_turn="${5:-0}"
     local session_id
     session_id=$(get_session_id)

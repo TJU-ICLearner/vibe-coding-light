@@ -77,10 +77,7 @@ impl DiagnosticEntry {
             AgentEventKind::Completed => ("completed", settings.events.completed),
             AgentEventKind::Error => ("error", settings.events.error),
         };
-        let source_on = match event.source {
-            AgentSource::Claude => settings.sources.claude,
-            AgentSource::Codex => settings.sources.codex,
-        };
+        let source_on = settings.sources.enabled(event.source);
         let (outcome, reason) = if !settings.enabled {
             (
                 DiagnosticOutcome::Skipped,

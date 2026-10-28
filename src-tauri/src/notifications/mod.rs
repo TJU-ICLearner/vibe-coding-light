@@ -172,10 +172,8 @@ impl NotificationCore {
 
 pub fn should_poll_quota(settings: &NotificationSettings, source: AgentSource) -> bool {
     settings.enabled
-        && match source {
-            AgentSource::Claude => settings.sources.claude,
-            AgentSource::Codex => settings.sources.codex,
-        }
+        && matches!(source, AgentSource::Claude | AgentSource::Codex)
+        && settings.sources.enabled(source)
         && (settings.quota.at80
             || settings.quota.at50
             || settings.quota.at20
@@ -247,10 +245,7 @@ pub fn candidate_skip_reason(
         DiagnosticReason::Expired
     } else if !settings.enabled {
         DiagnosticReason::NotificationsDisabled
-    } else if !match candidate.source {
-        AgentSource::Claude => settings.sources.claude,
-        AgentSource::Codex => settings.sources.codex,
-    } {
+    } else if !settings.sources.enabled(candidate.source) {
         DiagnosticReason::SourceDisabled
     } else {
         DiagnosticReason::TypeDisabled
@@ -265,12 +260,7 @@ pub fn candidate_allowed(
     if now_ms < candidate.due_at_ms || now_ms >= candidate.expires_at_ms {
         return false;
     }
-    if !settings.enabled
-        || !match candidate.source {
-            AgentSource::Claude => settings.sources.claude,
-            AgentSource::Codex => settings.sources.codex,
-        }
-    {
+    if !settings.enabled || !settings.sources.enabled(candidate.source) {
         return false;
     }
     match candidate.kind {
@@ -332,6 +322,27 @@ mod tests {
         let mut settings = enabled();
         settings.quota.at_week0 = true;
         assert!(should_poll_quota(&settings, AgentSource::Codex));
+    }
+
+    #[test]
+    fn new_source_switch_gates_bark_and_never_starts_quota_polling() {
+        let mut settings = enabled();
+        let candidate = PushCandidate {
+            id: "cursor-done".into(),
+            source: AgentSource::Cursor,
+            kind: PushKind::Completed,
+            label: None,
+            quota_duration_mins: None,
+            remaining_percent: None,
+            details: Default::default(),
+            due_at_ms: 1_000,
+            expires_at_ms: 10_000,
+        };
+        assert!(!candidate_allowed(&candidate, &settings, 2_000));
+        settings.sources.cursor = true;
+        assert!(candidate_allowed(&candidate, &settings, 2_000));
+        settings.quota.at80 = true;
+        assert!(!should_poll_quota(&settings, AgentSource::Cursor));
     }
 
     fn event(id: &str, kind: AgentEventKind, at: u64) -> AgentEvent {

@@ -647,6 +647,10 @@ struct SessionData {
 enum SessionSource {
     Claude,
     Codex,
+    Cursor,
+    Trae,
+    Grok,
+    Deepseek,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -706,6 +710,10 @@ fn read_session_summaries_in(dir: &Path, now: u64) -> Vec<SessionSummary> {
         let source = match data.agent.as_deref() {
             Some("claude") => SessionSource::Claude,
             Some("codex") => SessionSource::Codex,
+            Some("cursor") => SessionSource::Cursor,
+            Some("trae") => SessionSource::Trae,
+            Some("grok") => SessionSource::Grok,
+            Some("deepseek") => SessionSource::Deepseek,
             _ => continue,
         };
         let state = State::from_str(&data.state);
@@ -1117,6 +1125,167 @@ fn refresh_existing_hooks() {
     if codex_local_hooks_dir().join("stop.sh").is_file() {
         let _ = setup_codex_hooks();
     }
+    if base_hooks_dir().join("integrations/dispatch.sh").is_file() {
+        for source in ["cursor", "trae", "grok", "deepseek"] {
+            if integration_config_exists(source) {
+                let _ = setup_integration_hooks(source);
+            }
+        }
+    }
+}
+
+fn integration_config_exists(source: &str) -> bool {
+    let home = dirs::home_dir().unwrap_or_default();
+    let path = match source {
+        "cursor" => home.join(".cursor/hooks.json"),
+        "trae" => home.join(".trae-cn/hooks.json"),
+        "grok" => home.join(".grok/hooks/vibe-coding-light.json"),
+        "deepseek" => base_hooks_dir().join("deepseek/hooks.json"),
+        _ => return false,
+    };
+    fs::read_to_string(path)
+        .ok()
+        .is_some_and(|content| content.contains("dispatch.sh") && content.contains(source))
+}
+
+fn integration_command(source: &str, event: &str) -> String {
+    format!(
+        "{} {source} {event}",
+        shell_command(&base_hooks_dir().join("integrations"), "dispatch.sh")
+    )
+}
+
+fn integration_hook_current(source: &str) -> bool {
+    let installed = base_hooks_dir().join("integrations/dispatch.sh");
+    let bundled = get_hooks_dir().join("integrations/dispatch.sh");
+    if fs::read(installed).ok() != fs::read(bundled).ok() {
+        return false;
+    }
+    let home = dirs::home_dir().unwrap_or_default();
+    let path = match source {
+        "cursor" => home.join(".cursor/hooks.json"),
+        "trae" => home.join(".trae-cn/hooks.json"),
+        "grok" => home.join(".grok/hooks/vibe-coding-light.json"),
+        "deepseek" => base_hooks_dir().join("deepseek/hooks.json"),
+        _ => return false,
+    };
+    let configured = fs::read_to_string(path)
+        .ok()
+        .is_some_and(|content| content.contains("dispatch.sh") && content.contains(source));
+    if source == "deepseek" {
+        configured
+            && fs::read_to_string(deepseek_patch_path())
+                .ok()
+                .is_some_and(|content| content.contains("id: vibe-coding-light-hooks"))
+    } else {
+        configured
+    }
+}
+
+fn deepseek_patch_path() -> PathBuf {
+    base_hooks_dir().join("deepseek/cordis.patch.yml")
+}
+
+fn install_deepseek_bridge_patch(config: &Path) -> Result<(), String> {
+    let path = deepseek_patch_path();
+    let quoted = config.to_string_lossy().replace('\'', "''");
+    let content = format!("- insert:\n    - id: vibe-coding-light-hooks\n      name: '@deepseek-ai/dsh-hooks-codex'\n      config:\n        configPath: '{quoted}'\n");
+    let parent = path.parent().ok_or("DeepSeek home unavailable")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    fs::write(path, content).map_err(|e| e.to_string())
+}
+
+fn setup_integration_hooks(source: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    ensure_windows_hook_runtime()?;
+    #[cfg(target_os = "linux")]
+    ensure_linux_hook_runtime()?;
+    if !matches!(source, "cursor" | "trae" | "grok" | "deepseek") {
+        return Err("Unknown integration".into());
+    }
+    let bundled = get_hooks_dir().join("integrations");
+    let dest = base_hooks_dir().join("integrations");
+    copy_hooks_to_local(&bundled, &dest)?;
+    let home = dirs::home_dir().ok_or("Home directory unavailable")?;
+    let path = match source {
+        "cursor" => home.join(".cursor/hooks.json"),
+        "trae" => home.join(".trae-cn/hooks.json"),
+        "grok" => home.join(".grok/hooks/vibe-coding-light.json"),
+        _ => base_hooks_dir().join("deepseek/hooks.json"),
+    };
+    let mut config = load_hook_config(&path)?;
+    if source == "cursor" {
+        let object = config
+            .as_object_mut()
+            .ok_or("Expected Cursor config object")?;
+        object.entry("version").or_insert(serde_json::json!(1));
+        let hooks = object.entry("hooks").or_insert(serde_json::json!({}));
+        let hooks = hooks
+            .as_object_mut()
+            .ok_or("Expected Cursor hooks object")?;
+        for (event, adapter) in [
+            ("sessionStart", "working"),
+            ("beforeSubmitPrompt", "prompt"),
+            ("preToolUse", "working"),
+            ("postToolUseFailure", "error"),
+            ("stop", "stop"),
+        ] {
+            let list = hooks.entry(event).or_insert(serde_json::json!([]));
+            let list = list
+                .as_array_mut()
+                .ok_or(format!("Expected Cursor {event} array"))?;
+            list.retain(|item| {
+                !item["command"].as_str().is_some_and(|command| {
+                    command.contains("/.code-light/hooks/integrations/dispatch.sh")
+                        && command.contains(" cursor ")
+                })
+            });
+            list.push(serde_json::json!({"command":integration_command(source, adapter)}));
+        }
+    } else {
+        let mappings: &[(&str, &str)] = match source {
+            "trae" => &[
+                ("SessionStart", "working"),
+                ("UserPromptSubmit", "prompt"),
+                ("PreToolUse", "working"),
+                ("PostToolUse", "post"),
+                ("Stop", "stop"),
+                ("Notification", "notification"),
+            ],
+            "grok" => &[
+                ("SessionStart", "working"),
+                ("UserPromptSubmit", "prompt"),
+                ("PreToolUse", "working"),
+                ("PostToolUseFailure", "error"),
+                ("PermissionDenied", "error"),
+                ("Stop", "stop"),
+                ("StopFailure", "stop_failure"),
+                ("Notification", "notification"),
+            ],
+            _ => &[
+                ("SessionStart", "working"),
+                ("UserPromptSubmit", "prompt"),
+                ("PreToolUse", "working"),
+                ("PostToolUse", "post"),
+                ("Stop", "stop"),
+            ],
+        };
+        let defs = serde_json::Value::Object(mappings.iter().map(|(event, adapter)| {
+            (event.to_string(), serde_json::json!([{"hooks":[{"type":"command","command":integration_command(source, adapter)}]}]))
+        }).collect());
+        merge_hook_defs(&mut config, &defs, "integrations")?;
+        config
+            .as_object_mut()
+            .ok_or("Expected hooks object")?
+            .entry("version")
+            .or_insert(serde_json::json!(1));
+    }
+    write_hook_config(&path, &config)?;
+    if source == "deepseek" {
+        install_deepseek_bridge_patch(&path)?;
+    }
+    fs::create_dir_all(sessions_dir()).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn hook_install_current(agent: &str) -> bool {
@@ -1502,6 +1671,7 @@ pub fn run() {
             notifications::service::save_bark_key,
             notifications::service::delete_bark_key,
             notifications::service::get_notification_status,
+            notifications::service::install_integration_hook,
             notifications::service::get_notification_diagnostics,
             notifications::service::clear_notification_diagnostics,
             #[cfg(target_os = "macos")]
@@ -2173,6 +2343,45 @@ mod tests {
                 "echo existing"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn additional_hooks_install_without_replacing_user_hooks() {
+        let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = TestHome::new();
+        let cursor = home.path.join(".cursor/hooks.json");
+        fs::create_dir_all(cursor.parent().unwrap()).unwrap();
+        fs::write(
+            &cursor,
+            r#"{"version":1,"hooks":{"stop":[{"command":"echo own"}]}}"#,
+        )
+        .unwrap();
+        for source in ["cursor", "trae", "grok", "deepseek"] {
+            setup_integration_hooks(source).unwrap();
+            setup_integration_hooks(source).unwrap();
+            assert!(integration_hook_current(source));
+        }
+        let cursor_config: serde_json::Value =
+            serde_json::from_slice(&fs::read(cursor).unwrap()).unwrap();
+        let stop = cursor_config["hooks"]["stop"].as_array().unwrap();
+        assert_eq!(stop.len(), 2);
+        assert_eq!(stop[0]["command"], "echo own");
+        assert!(home.path.join(".trae-cn/hooks.json").is_file());
+        assert!(home
+            .path
+            .join(".grok/hooks/vibe-coding-light.json")
+            .is_file());
+        assert!(home
+            .path
+            .join(".code-light/hooks/deepseek/hooks.json")
+            .is_file());
+        let patch = fs::read_to_string(
+            home.path
+                .join(".code-light/hooks/deepseek/cordis.patch.yml"),
+        )
+        .unwrap();
+        assert_eq!(patch.matches("id: vibe-coding-light-hooks").count(), 1);
     }
 
     #[cfg(unix)]
