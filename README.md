@@ -84,7 +84,7 @@ Built artifacts:
 1. **Launch the app.** A gray dot appears in the menu bar/system tray and Bubu appears on your desktop. On macOS the app runs as a menu bar accessory without a Dock icon.
 2. **Open its controls.** On macOS, left-click the dot for a panel that stays open while you change switches; click outside or press `Esc` to close it. Right-click the macOS icon, or click the Windows/Linux tray icon, for the native menu.
 3. **Choose your language.** The menu, status text, and settings pages switch together. Chinese is selected on a Chinese-language system at first launch; other system languages default to English.
-4. **Install hooks.** Choose **Setup Claude hooks** if you use Claude Code and **Setup Codex hooks** if you use Codex CLI. Install both if you use both agents. The menu shows whether installation succeeded. On Windows, prepare Git Bash and Perl from Git for Windows; Linux needs Bash and Perl.
+4. **Install hooks.** Choose **Setup Claude Hooks** if you use Claude Code and **Setup Codex Hooks** if you use Codex CLI. Install both if you use both agents. The menu shows whether installation succeeded. On Windows, prepare Git Bash and Perl from Git for Windows; Linux needs Bash and Perl.
 5. **Start a fresh agent session.** Run the agent in a terminal and let it make a tool call. The indicator should turn green and Bubu should switch to the working animation. Existing agent sessions may need to restart before they load new hooks.
 6. **One extra Codex step:** In Codex CLI, enter `/hooks` and press `t` to trust all hooks. Installed hooks may not run until you do this.
 
