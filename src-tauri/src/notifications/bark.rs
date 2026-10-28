@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::error::Error as StdError;
 use std::time::Duration;
 
 const BARK_URL: &str = "https://api.day.app/push";
@@ -72,7 +73,7 @@ impl BarkClient {
                     }
                     return Err(BarkError::Rejected);
                 }
-                Err(error) if error.is_connect() => {
+                Err(error) if definitely_unsent(&error) => {
                     if attempt == 0 {
                         std::thread::sleep(Duration::from_millis(50));
                         continue;
@@ -84,6 +85,27 @@ impl BarkClient {
         }
         Err(BarkError::Unsent)
     }
+}
+
+fn definitely_unsent(error: &reqwest::Error) -> bool {
+    if error.is_connect() {
+        return true;
+    }
+    let mut cause: Option<&(dyn StdError + 'static)> = error.source();
+    while let Some(current) = cause {
+        if let Some(io) = current.downcast_ref::<std::io::Error>() {
+            if matches!(
+                io.kind(),
+                std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::NotConnected
+                    | std::io::ErrorKind::AddrNotAvailable
+            ) {
+                return true;
+            }
+        }
+        cause = current.source();
+    }
+    false
 }
 
 #[cfg(test)]
@@ -154,7 +176,7 @@ mod tests {
         drop(listener);
         let client = BarkClient::for_test(url, Duration::from_millis(100));
         let result = client.send("key", &PushPayload::test());
-        assert!(matches!(result, Err(BarkError::Unsent)));
+        assert!(matches!(result, Err(BarkError::Unsent)), "{result:?}");
     }
 
     #[test]
