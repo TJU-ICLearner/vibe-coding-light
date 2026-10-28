@@ -1674,9 +1674,13 @@ pub fn run() {
                 },
                 login_failed: {
                     #[cfg(target_os = "macos")]
-                    { false }
+                    {
+                        false
+                    }
                     #[cfg(not(target_os = "macos"))]
-                    { initial_login_other.is_none() }
+                    {
+                        initial_login_other.is_none()
+                    }
                 },
                 login_needs_install: false,
                 auto_updates: auto_updates_item,

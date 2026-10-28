@@ -66,8 +66,11 @@ impl BarkClient {
                     if !response.status().is_success() {
                         return Err(BarkError::Rejected);
                     }
-                    let value: serde_json::Value =
-                        response.json().map_err(|_| BarkError::Ambiguous)?;
+                    let value: serde_json::Value = response.json().map_err(|error| {
+                        #[cfg(test)]
+                        eprintln!("Bark test response parse error: {error:?}");
+                        BarkError::Ambiguous
+                    })?;
                     if value["code"].as_i64() == Some(200) {
                         return Ok(());
                     }
@@ -80,7 +83,15 @@ impl BarkClient {
                     }
                     return Err(BarkError::Unsent);
                 }
-                Err(_) => return Err(BarkError::Ambiguous),
+                Err(error) => {
+                    #[cfg(test)]
+                    eprintln!(
+                        "Bark test transport error: {error:?}; connect={}, timeout={}",
+                        error.is_connect(),
+                        error.is_timeout()
+                    );
+                    return Err(BarkError::Ambiguous);
+                }
             }
         }
         Err(BarkError::Unsent)
