@@ -2,7 +2,7 @@ name: Cross-platform test builds
 
 on:
   push:
-    branches: [codex/windows-linux-port]
+    branches: [main, codex/windows-linux-port]
   workflow_dispatch:
 
 jobs:

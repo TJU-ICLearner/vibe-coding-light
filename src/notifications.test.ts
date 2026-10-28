@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { NotificationSettingsController, type NotificationApi, type NotificationSettings, type NotificationStatus, type SimulatedTestResult } from "./notifications";
+import { NotificationSettingsController, type NotificationApi, type NotificationSettings, type NotificationStatus } from "./notifications";
 
 const defaults: NotificationSettings = {
   enabled: false,
@@ -14,121 +14,26 @@ const status: NotificationStatus = { serviceAvailable: true, keySaved: false, cl
 
 function setup() {
   const root = document.createElement("main"); document.body.replaceChildren(root);
-  const sendSimulated = vi.fn<NotificationApi["sendSimulated"]>(async () => ({ outcome: "sent", reason: null }));
   const api: NotificationApi = {
     getSettings: vi.fn(async () => structuredClone(defaults)),
     setSettings: vi.fn(async (settings) => settings),
     getStatus: vi.fn(async () => structuredClone(status)),
     getDiagnostics: vi.fn(async () => []), clearDiagnostics: vi.fn(async () => {}),
-    saveKey: vi.fn(async () => {}), deleteKey: vi.fn(async () => {}), sendTest: vi.fn<NotificationApi["sendTest"]>(async () => ({ outcome: "sent", reason: null })), sendSimulated,
+    saveKey: vi.fn(async () => {}), deleteKey: vi.fn(async () => {}),
   };
   const controller = new NotificationSettingsController(root, api);
-  return { root, api, controller, sendSimulated };
+  return { root, api, controller };
 }
 
 beforeEach(() => document.body.replaceChildren());
 
 describe("notification settings window", () => {
-  it("renders a separate weekly zero test button", async () => {
-    const { root, api, controller } = setup();
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true });
-    await controller.init("zh-CN");
-    expect(root.querySelectorAll('button[data-action="simulate-event"]')).toHaveLength(10);
-    expect(root.querySelector('button[data-event="quota_week0"]')).not.toBeNull();
-    expect(root.textContent).toContain("仅 RC 测试");
-  });
-
-  it("sends weekly zero with the seven-day period regardless of the test period selector", async () => {
-    const { root, api, controller, sendSimulated } = setup();
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true, keySaved: true });
-    await controller.init("zh-CN");
-    root.querySelector<HTMLButtonElement>('button[data-event="quota_week0"]')!.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(sendSimulated).toHaveBeenCalledWith({ source: "codex", event: "quota_week0", duration_mins: 10080 });
-  });
-
-  it("sends selected source and period", async () => {
-    const { root, api, controller, sendSimulated } = setup();
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true, keySaved: true });
-    await controller.init("zh-CN");
-    const source = root.querySelector<HTMLSelectElement>("#test-source")!;
-    source.value = "claude"; source.dispatchEvent(new Event("change", { bubbles: true }));
-    const period = root.querySelector<HTMLSelectElement>("#test-period")!;
-    period.value = "10080"; period.dispatchEvent(new Event("change", { bubbles: true }));
-    root.querySelector<HTMLButtonElement>('button[data-event="quota20"]')!.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(sendSimulated).toHaveBeenCalledWith({ source: "claude", event: "quota20", duration_mins: 10080 });
-    expect(root.querySelector('[data-test-feedback="quota20"]')?.textContent).toContain("已提交给 Bark");
-  });
-
-  it("shows skipped and Bark failure reasons", async () => {
-    const { root, api, controller, sendSimulated } = setup();
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true, keySaved: true });
-    sendSimulated.mockResolvedValueOnce({ outcome: "skipped", reason: "quiet_hours" });
-    await controller.init("zh-CN");
-    root.querySelector<HTMLButtonElement>('button[data-event="completed"]')!.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(root.querySelector('[data-test-feedback="completed"]')?.textContent).toContain("免打扰");
-    controller.setLocale("en");
-    expect(root.querySelector('[data-test-feedback="completed"]')?.textContent).toContain("Quiet hours");
-    sendSimulated.mockRejectedValueOnce("Bark send failed: Rejected");
-    root.querySelector<HTMLButtonElement>('button[data-event="error"]')!.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(root.querySelector('[data-test-feedback="error"]')?.textContent).toContain("Bark rejected");
-    expect(root.querySelector('[data-test-feedback="completed"]')?.textContent).toContain("Quiet hours");
-    const source = root.querySelector<HTMLSelectElement>("#test-source")!;
-    source.value = "claude"; source.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(root.querySelector('[data-test-feedback="error"]')).toBeNull();
-  });
-
-  it("prevents duplicate clicks during simulated send", async () => {
-    const { root, api, controller, sendSimulated } = setup();
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true, keySaved: true });
-    let finish!: (value: SimulatedTestResult) => void;
-    sendSimulated.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-    await controller.init("zh-CN");
-    const button = root.querySelector<HTMLButtonElement>('button[data-event="permission"]')!;
-    button.click(); button.click();
-    await Promise.resolve();
-    expect(sendSimulated).toHaveBeenCalledTimes(1);
-    expect(root.querySelector<HTMLButtonElement>('button[data-event="permission"]')!.disabled).toBe(true);
-    finish({ outcome: "sent", reason: null });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-
-  it("waits for pending settings save before simulated send", async () => {
-    const { root, api, controller, sendSimulated } = setup();
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true, keySaved: true });
-    let finishSave!: () => void;
-    (api.setSettings as ReturnType<typeof vi.fn>).mockImplementationOnce(() => new Promise((resolve) => { finishSave = () => resolve(structuredClone(defaults)); }));
-    await controller.init("zh-CN");
-    const enabled = root.querySelector<HTMLInputElement>('input[data-path="enabled"]')!;
-    enabled.checked = true; enabled.dispatchEvent(new Event("change", { bubbles: true }));
-    root.querySelector<HTMLButtonElement>('button[data-event="permission"]')!.click();
-    await Promise.resolve();
-    expect(sendSimulated).not.toHaveBeenCalled();
-    finishSave();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(sendSimulated).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not simulate after a settings save fails", async () => {
-    const { root, api, controller, sendSimulated } = setup();
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, testConsoleAvailable: true, keySaved: true });
-    (api.setSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("disk error"));
-    await controller.init("en");
-    const enabled = root.querySelector<HTMLInputElement>('input[data-path="enabled"]')!;
-    enabled.checked = true; enabled.dispatchEvent(new Event("change", { bubbles: true }));
-    root.querySelector<HTMLButtonElement>('button[data-event="permission"]')!.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(sendSimulated).not.toHaveBeenCalled();
-    expect(root.querySelector('[data-test-feedback="permission"]')?.textContent).toContain("save");
-  });
-
-  it("hides console in stable builds", async () => {
+  it("does not show RC or Bark test controls in the stable settings", async () => {
     const { root, controller } = setup();
     await controller.init("zh-CN");
     expect(root.querySelector('button[data-action="simulate-event"]')).toBeNull();
+    expect(root.querySelector('button[data-action="send-test"]')).toBeNull();
+    expect(root.textContent).not.toContain("仅 RC 测试");
   });
 
   it("renders every control and opt-in defaults", async () => {
@@ -139,7 +44,6 @@ describe("notification settings window", () => {
     expect(root.querySelector<HTMLInputElement>('[data-path="enabled"]')!.checked).toBe(false);
     expect(root.querySelector<HTMLInputElement>('[data-path="sources.claude"]')!.checked).toBe(true);
     expect(root.querySelector<HTMLInputElement>('[data-path="quota.at20"]')!.checked).toBe(false);
-    expect(root.querySelector<HTMLButtonElement>("#send-test")!.disabled).toBe(true);
   });
 
   it("sends exact independent settings shape for source event and threshold switches", async () => {
@@ -191,67 +95,6 @@ describe("notification settings window", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(root.querySelector(".connection #feedback")?.textContent).toContain("只填写设备密钥");
     expect(root.textContent).not.toContain("abc123");
-  });
-
-  it("identifies a previously saved malformed device key before testing", async () => {
-    const { root, api, controller } = setup();
-    (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), enabled: true });
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, keySaved: true });
-    (api.sendTest as ReturnType<typeof vi.fn>).mockRejectedValue("Invalid Bark device key");
-    await controller.init("en");
-    root.querySelector<HTMLButtonElement>("#send-test")!.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(root.querySelector(".connection #feedback")?.textContent).toContain("device key only");
-  });
-
-  it("shows sending and result beside the test button without scrolling", async () => {
-    const { root, api, controller } = setup();
-    (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), enabled: true });
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, keySaved: true });
-    let finish!: () => void;
-    (api.sendTest as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise((resolve) => { finish = () => resolve({ outcome: "sent", reason: null }); }));
-    await controller.init("zh-CN");
-
-    root.querySelector<HTMLButtonElement>("#send-test")!.click();
-    expect(api.sendTest).toHaveBeenCalledTimes(1);
-    expect(root.querySelector(".connection #feedback")?.textContent).toContain("正在发送");
-    expect(root.querySelector<HTMLButtonElement>("#send-test")!.disabled).toBe(true);
-
-    finish();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(root.querySelector(".connection #feedback")?.textContent).toContain("已提交给 Bark");
-    expect(root.querySelector<HTMLButtonElement>("#send-test")!.disabled).toBe(false);
-  });
-
-  it("shows a quiet-hours skip for the Bark connection test", async () => {
-    const { root, api, controller } = setup();
-    (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), enabled: true });
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, keySaved: true });
-    (api.sendTest as ReturnType<typeof vi.fn>).mockResolvedValue({ outcome: "skipped", reason: "quiet_hours" });
-    await controller.init("zh-CN");
-    root.querySelector<HTMLButtonElement>("#send-test")!.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(root.querySelector(".connection #feedback")?.textContent).toContain("未发送：免打扰时段");
-    controller.setLocale("en");
-    expect(root.querySelector(".connection #feedback")?.textContent).toContain("Not sent: quiet hours");
-  });
-
-  it("explains why the test button is disabled", async () => {
-    const { root, controller } = setup(); await controller.init("zh-CN");
-    expect(root.querySelector(".connection")?.textContent).toContain("开启手表通知");
-    expect(root.querySelector(".connection")?.textContent).toContain("保存 Bark 密钥");
-  });
-
-  it("shows a rejected Bark key without exposing the saved secret", async () => {
-    const { root, api, controller } = setup();
-    (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), enabled: true });
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...status, keySaved: true });
-    (api.sendTest as ReturnType<typeof vi.fn>).mockRejectedValue("Bark send failed: Rejected");
-    await controller.init("zh-CN");
-    root.querySelector<HTMLButtonElement>("#send-test")!.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(root.querySelector(".connection #feedback")?.textContent).toContain("Bark 拒绝");
-    expect(root.textContent).not.toContain("Rejected");
   });
 
   it("fully localizes visible copy and Codex question coverage, including status errors", async () => {

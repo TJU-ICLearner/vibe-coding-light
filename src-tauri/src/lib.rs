@@ -1501,8 +1501,6 @@ pub fn run() {
             notifications::service::set_notification_settings,
             notifications::service::save_bark_key,
             notifications::service::delete_bark_key,
-            notifications::service::send_test_notification,
-            notifications::service::send_simulated_notification,
             notifications::service::get_notification_status,
             notifications::service::get_notification_diagnostics,
             notifications::service::clear_notification_diagnostics,

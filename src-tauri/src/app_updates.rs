@@ -12,6 +12,36 @@ const RELEASE_BASE: &str = "https://github.com/TJU-ICLearner/vibe-coding-light/r
 const RELEASES_ATOM: &str = "https://github.com/TJU-ICLearner/vibe-coding-light/releases.atom";
 const CHECK_INTERVAL_SECS: u64 = 86_400;
 
+// These releases predate the first stable 1.0.0. Some have stable-looking tags,
+// so the Atom fallback and an old cached result must not offer them as updates.
+const PRE_1_0_TEST_TAGS: &[&str] = &[
+    "v1.0.0-test.1",
+    "v1.0.1",
+    "v1.1.0",
+    "v1.1.1",
+    "v1.2.0",
+    "v1.3.0",
+    "v1.4.0",
+    "v1.5.0",
+    "v1.5.0-rc.1",
+    "v1.5.0-rc.2",
+    "v1.5.0-rc.3",
+    "v1.6.0-rc.1",
+    "v1.6.0-rc.2",
+    "v1.6.0-rc.3",
+    "v1.7.0-rc.1",
+    "v1.7.0-rc.2",
+    "v1.7.0-rc.3",
+    "v1.7.0-rc.4",
+    "v1.7.0-rc.5",
+    "v1.7.0-rc.6",
+    "v1.8.0-rc.1",
+];
+
+fn is_pre_1_0_test_tag(tag: &str) -> bool {
+    PRE_1_0_TEST_TAGS.contains(&tag)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReleaseInfo {
     pub version: String,
@@ -36,6 +66,9 @@ pub fn select_release(body: &str, current_version: &str) -> Result<Option<Releas
             continue;
         }
         let tag = release.tag_name;
+        if current.pre.is_empty() && is_pre_1_0_test_tag(&tag) {
+            continue;
+        }
         if !tag
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
@@ -220,6 +253,9 @@ impl UpdatePreferencesStore {
             return None;
         }
         let version = release.to_string();
+        if current.pre.is_empty() && is_pre_1_0_test_tag(&format!("v{version}")) {
+            return None;
+        }
         Some(ReleaseInfo {
             url: format!("{RELEASE_BASE}v{version}"),
             version,
@@ -322,6 +358,18 @@ mod tests {
     }
 
     #[test]
+    fn stable_one_does_not_offer_earlier_test_releases_from_api_or_atom() {
+        let body = r#"[
+          {"tag_name":"v1.8.0-rc.1","draft":false,"prerelease":true},
+          {"tag_name":"v1.5.0","draft":false,"prerelease":false},
+          {"tag_name":"v1.1.1","draft":false,"prerelease":false}
+        ]"#;
+        assert!(select_release(body, "1.0.0").unwrap().is_none());
+        let feed = r#"<feed><entry><link rel="alternate" href="https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.5.0"/></entry></feed>"#;
+        assert!(select_atom_release(feed, "1.0.0").unwrap().is_none());
+    }
+
+    #[test]
     fn malformed_response_fails_without_a_false_update() {
         assert!(select_release("not json", "1.6.0").is_err());
         assert!(select_release("[]", "not-a-version").is_err());
@@ -361,5 +409,6 @@ mod tests {
         assert!(!loaded.should_check(100_001));
         assert_eq!(loaded.cached_release("1.7.0-rc.1").unwrap(), release);
         assert!(loaded.cached_release("1.8.0-rc.1").is_none());
+        assert!(loaded.cached_release("1.0.0").is_none());
     }
 }

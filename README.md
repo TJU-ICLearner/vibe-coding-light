@@ -14,6 +14,8 @@ It shows a colored indicator in your system tray so you can tell at a glance wha
 
 Currently supports **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** and **[OpenAI Codex CLI](https://github.com/openai/codex)**.
 
+**Current stable release: 1.0.0.** Earlier GitHub releases were development test builds. Because the stable release restarts version numbering, install 1.0.0 manually from the [latest release](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest); older builds may not detect the smaller version number as an update.
+
 ## Status Indicators
 
 | Color | State | Description |
@@ -29,6 +31,8 @@ Active states blink every 500ms to catch your attention. The tray tooltip shows 
 
 **When does Waiting appear?** Claude Code permission or interactive notifications and Codex `PermissionRequest` hooks trigger it. Ordinary work without an approval prompt can go directly from Working to Completed, then return to Idle. It does not mean that the app detects every moment an agent is waiting for a free-form user reply.
 
+> **Screenshot placeholder | Tray states:** Show the five indicator colors and the expanded recent-sessions menu, ideally in one collage. Add the image to `docs/images/` and replace this paragraph.
+
 ## Desktop Pet 🐻
 
 Vibe Coding Light includes Bubu as its built-in desktop pet. New installations show Bubu by default; an existing custom-pet selection stays selected after updating. The five original transparent GIFs play without extra motion effects.
@@ -40,6 +44,8 @@ Vibe Coding Light includes Bubu as its built-in desktop pet. New installations s
 | Waiting | Drinking bubble tea |
 | Error | Apologizing |
 | Completed | Dancing |
+
+> **Demo placeholder | Bubu's five states:** Show the original GIF for each state in a collage or short video. Add the media to `docs/images/` and replace this paragraph.
 
 **Toggle the pet:** Right-click the tray icon and select **"Show Pet"** or **"Hide Pet"** to control visibility.
 
@@ -59,6 +65,8 @@ Choose **Pet the Pet** in the tray menu, or press **⌘B**, to see a hand gently
 
 Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop settings are kept. Everything stays in Vibe Coding Light's local app data; source photos are not uploaded. Existing single-image pets remain usable, including their saved placement. New pets are centered; horizontal and vertical offset controls have been removed. Windows and Linux also support transparent PNG/GIF custom pets.
 
+> **Screenshot placeholder | Custom pet editor:** Show the one-image/state tabs, asset preview, per-image motion, and size slider. Include a transparent GIF preview if possible. Add the image to `docs/images/` and replace this paragraph.
+
 ## Optional watch notifications
 
 Open **Notification Settings** from the menu bar and save only the Bark device key—the part of its test URL after the domain and before the next `/`, without `/title/body` or query parameters. Turn on the master switch, then choose Claude Code, Codex, and the events you want: approval, questions, completed turns, errors, and quota alerts. The app currently connects to Bark's official `api.day.app` server. Quota choices are 80%, 50%, and 20% remaining, 0% for other periods, a separate 0% alert for the seven-day period, plus recovery. Each agent and quota period alerts separately; the first reading sets a baseline. Previously installed app hooks are updated on upgrade.
@@ -69,7 +77,9 @@ Install Bark on your iPhone and allow its notifications, then configure Apple Wa
 
 The **Sessions** tray submenu lists up to eight recent Claude/Codex sessions with source, project, state, and last activity. It omits task, command, and error text and excludes sessions inactive for more than five minutes.
 
-Notification Settings also includes a local **delivery history** and **quiet hours**. History keeps at most 100 metadata-only results and can be cleared. Quiet hours are off by default; the initial interval is 22:00–08:00 in the computer's local time. Permission, question, and error alerts bypass quiet hours by default, and each category can be changed. Muted alerts are discarded. Bark connection tests and simulated event tests are skipped during quiet hours; bypass switches apply only to real events.
+Notification Settings also includes a local **delivery history** and **quiet hours**. History keeps at most 100 metadata-only results and can be cleared. Quiet hours are off by default; the initial interval is 22:00–08:00 in the computer's local time. Permission, question, and error alerts bypass quiet hours by default, and each category can be changed. Muted alerts are discarded. The stable release has no notification test buttons.
+
+> **Screenshot placeholder | Bark settings:** Show source and event switches, quota thresholds, custom wording, quiet hours, and delivery history. Hide the Bark device key and private task details before capturing. Add the image to `docs/images/` and replace this paragraph.
 
 The tray offers optional **Launch at login** and **Automatically check for updates** switches, plus a manual update check. Automatic checks run at most once per day and fall back to GitHub's release feed if the API is unavailable. A newer version opens the project's GitHub release page when selected; the app does not install updates automatically. On macOS, move the app to Applications before enabling launch at login. macOS may require approval for its login item; a user LaunchAgent is available as a fallback.
 
@@ -89,9 +99,19 @@ The status light opens no network port. Only when you enable Bark notifications 
 
 ## Install
 
-### Download for Mac
+### Download the stable release
 
-Download the Apple Silicon DMG from the [latest release](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest), then drag **Vibe Coding Light.app** into Applications. Intel Mac users can build from source. The build is ad-hoc signed but has no Apple Developer ID signature or notarization; first launch may require **Open Anyway** in System Settings → Privacy & Security.
+Download the installer for your system from the [latest release](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest):
+
+| System | Package | Install |
+|---|---|---|
+| macOS (Apple Silicon) | `.dmg` | Drag **Vibe Coding Light.app** into Applications |
+| Windows (x64) | `-setup.exe` | Run the installer |
+| Linux (amd64) | `.AppImage` | Make executable, then run |
+
+The macOS build is ad-hoc signed but has no Apple Developer ID signature or notarization; first launch may require **Open Anyway** in System Settings → Privacy & Security. The Windows installer is unsigned. Intel Mac users can build from source. Linux requires a desktop environment and WebKitGTK 4.1.
+
+> **Screenshot placeholder | Installation:** Show the macOS app, the Windows tray icon after installation, and the pet running from the Linux AppImage. Add the images to `docs/images/` and replace this paragraph.
 
 The app keeps the existing `com.cuihuapeng.code-light` bundle identifier and `~/.code-light` hook data directory so previous local settings remain available after the rename.
 
