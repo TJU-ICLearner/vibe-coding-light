@@ -1563,7 +1563,6 @@ pub fn run() {
                 ui_copy::login_item_label(locale, false, false, false),
             )
             .checked(initial_login_other.unwrap_or(false))
-            .enabled(initial_login_other.is_some())
             .build(app)?;
             let update_store = app.state::<Arc<Mutex<app_updates::UpdatePreferencesStore>>>();
             let (auto_check, update_checked, cached_release) = {
@@ -1673,7 +1672,12 @@ pub fn run() {
                         false
                     }
                 },
-                login_failed: false,
+                login_failed: {
+                    #[cfg(target_os = "macos")]
+                    { false }
+                    #[cfg(not(target_os = "macos"))]
+                    { initial_login_other.is_none() }
+                },
                 login_needs_install: false,
                 auto_updates: auto_updates_item,
                 auto_updates_failed: false,
