@@ -73,6 +73,7 @@ struct TrayUi {
     pet_visible: bool,
     claude_feedback: ui_copy::HookFeedback,
     codex_feedback: ui_copy::HookFeedback,
+    integration_feedback: Option<(&'static str, Result<(), String>)>,
 }
 
 fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
@@ -246,6 +247,23 @@ fn handle_tray_menu_action(app: &tauri::AppHandle, id: &str) {
                 refresh_tray_ui(app, current_locale(app));
             }
         },
+        "setup_cursor" | "setup_trae" | "setup_grok" | "setup_deepseek" => {
+            let source = &id[6..];
+            let result = setup_integration_hooks(source);
+            if let Err(error) = &result {
+                eprintln!("Vibe Coding Light {source} hook setup failed: {error}");
+            }
+            let source_name = match source {
+                "cursor" => "Cursor",
+                "trae" => "TRAE",
+                "grok" => "Grok Build",
+                _ => "DeepSeek Harness",
+            };
+            app.state::<Arc<Mutex<TrayUi>>>()
+                .lock()
+                .unwrap()
+                .integration_feedback = Some((source_name, result));
+        }
         "language_zh" => {
             if let Err(error) = set_app_locale_impl(app, ui_locale::AppLocale::ZhCn) {
                 eprintln!("Could not save interface language: {error}");
@@ -380,6 +398,7 @@ struct TrayPanelState {
     notification_settings_label: String,
     setup_claude_label: String,
     setup_codex_label: String,
+    integration_feedback: Option<String>,
     sessions_title: String,
     sessions: Vec<String>,
     language_title: String,
@@ -423,6 +442,36 @@ fn tray_panel_state(app: &tauri::AppHandle) -> TrayPanelState {
         notification_settings_label: labels.notification_settings,
         setup_claude_label: labels.claude_hooks,
         setup_codex_label: labels.codex_hooks,
+        integration_feedback: ui.integration_feedback.as_ref().map(|(source, result)| {
+            let source_label = if *source == "TRAE" {
+                match locale {
+                    ui_locale::AppLocale::ZhCn => "TRAE（中国版）",
+                    ui_locale::AppLocale::En => "TRAE China",
+                }
+            } else {
+                source
+            };
+            match (locale, result, *source == "DeepSeek Harness") {
+                (ui_locale::AppLocale::ZhCn, Ok(()), true) => {
+                    format!("{source_label} Hook 配置已准备；请继续挂载官方桥接插件")
+                }
+                (ui_locale::AppLocale::ZhCn, Ok(()), false) => {
+                    format!("{source_label} Hook 已安装，请重启客户端")
+                }
+                (ui_locale::AppLocale::En, Ok(()), true) => {
+                    format!("{source_label} Hook files prepared; mount the official bridge")
+                }
+                (ui_locale::AppLocale::En, Ok(()), false) => {
+                    format!("{source_label} Hook installed; restart the client")
+                }
+                (ui_locale::AppLocale::ZhCn, Err(error), _) => {
+                    format!("{source_label} Hook 安装失败：{error}")
+                }
+                (ui_locale::AppLocale::En, Err(error), _) => {
+                    format!("{source_label} Hook installation failed: {error}")
+                }
+            }
+        }),
         sessions_title: ui_copy::session_menu_title(locale).into(),
         sessions: ui.session_labels.clone(),
         language_title: labels.language,
@@ -1938,6 +1987,7 @@ pub fn run() {
                 pet_visible: true,
                 claude_feedback: ui_copy::HookFeedback::Initial,
                 codex_feedback: ui_copy::HookFeedback::Initial,
+                integration_feedback: None,
             })));
             let tray_builder = TrayIconBuilder::with_id("main")
                 .icon(initial_icon)

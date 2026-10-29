@@ -6,6 +6,10 @@ pub enum TrayAction {
     NotificationSettings,
     SetupClaude,
     SetupCodex,
+    SetupCursor,
+    SetupTrae,
+    SetupGrok,
+    SetupDeepseek,
     LanguageZh,
     LanguageEn,
     LaunchAtLogin,
@@ -24,6 +28,10 @@ impl TrayAction {
             "notification_settings" => Self::NotificationSettings,
             "setup_claude" => Self::SetupClaude,
             "setup_codex" => Self::SetupCodex,
+            "setup_cursor" => Self::SetupCursor,
+            "setup_trae" => Self::SetupTrae,
+            "setup_grok" => Self::SetupGrok,
+            "setup_deepseek" => Self::SetupDeepseek,
             "language_zh" => Self::LanguageZh,
             "language_en" => Self::LanguageEn,
             "launch_at_login" => Self::LaunchAtLogin,
@@ -95,6 +103,10 @@ mod tests {
             "check_updates",
             "setup_claude",
             "setup_codex",
+            "setup_cursor",
+            "setup_trae",
+            "setup_grok",
+            "setup_deepseek",
         ] {
             assert!(!TrayAction::parse(id).unwrap().closes_panel(), "{id}");
         }

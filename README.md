@@ -164,7 +164,7 @@ Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop
 
 ### Connect other coding assistants
 
-In **Notification Settings → Sources**, Cursor, TRAE, Grok Build, and DeepSeek Harness have separate switches; new sources start off. Click **Install Hook** beside a source, enable that source and the work events you want, then restart its client. Installation preserves existing hooks. These sources use the existing pet state, Bark, and quiet-hour rules. Quota alerts are currently available only for Claude Code and Codex.
+In **Notification Settings → Sources**, Cursor, TRAE, Grok Build, and DeepSeek Harness have separate switches; new sources start off. Click **Install Hook** beside a source, or install it from **Quick Controls → Other Agent Hooks** in the macOS menu bar. Then enable that source and the work events you want, and restart its client. Installation preserves existing hooks. These sources use the existing pet state, Bark, and quiet-hour rules. Quota alerts are currently available only for Claude Code and Codex.
 
 | Source | Configuration | Observable events |
 | --- | --- | --- |

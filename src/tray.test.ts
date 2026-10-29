@@ -7,6 +7,7 @@ const base: TrayPanelState = {
   languageTitle: "语言", chineseLabel: "中文", englishLabel: "英文", loginLabel: "登录时启动", loginEnabled: false, loginAvailable: true,
   autoUpdatesLabel: "自动检查新版本", autoUpdatesEnabled: false, autoUpdatesFailed: false,
   checkUpdatesLabel: "检查新版本", updateRunning: false, releaseLabel: null, quitLabel: "退出 Vibe Coding Light",
+  integrationFeedback: null,
 };
 
 function setup() {
@@ -43,6 +44,21 @@ describe("persistent tray panel", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(api.performAction).toHaveBeenCalledWith("check_updates");
     expect(root.querySelector<HTMLButtonElement>('[data-action="check_updates"]')?.disabled).toBe(true);
+    expect(api.hide).not.toHaveBeenCalled();
+  });
+
+  it("installs each additional Agent Hook from quick controls and reports the result", async () => {
+    const { root, api, controller } = setup();
+    (api.performAction as ReturnType<typeof vi.fn>).mockImplementation(async (action: string) => ({
+      ...base, integrationFeedback: `${action} 已配置`,
+    }));
+    await controller.init();
+    for (const source of ["cursor", "trae", "grok", "deepseek"]) {
+      root.querySelector<HTMLButtonElement>(`[data-action="setup_${source}"]`)!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(api.performAction).toHaveBeenCalledWith(`setup_${source}`);
+      expect(root.querySelector('[role="status"]')?.textContent).toContain(`setup_${source} 已配置`);
+    }
     expect(api.hide).not.toHaveBeenCalled();
   });
 
