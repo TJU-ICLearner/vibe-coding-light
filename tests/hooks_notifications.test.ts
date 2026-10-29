@@ -161,6 +161,15 @@ it("reports a Codex input tool as a question and stays waiting after the tool re
   expect(state.state).toBe("waiting");
 });
 
+it("reports a Codex input question when only the post-tool hook is observed", () => {
+  const input = {
+    session_id: "codex-session", turn_id: "turn-question", tool_name: "request_user_input",
+    tool_input: { questions: [{ title: "Choose one", options: [{ label: "A" }, { label: "B" }] }] },
+    tool_response: { content: [{ type: "text", text: "Shown" }] },
+  };
+  expect(run("codex", "post_tool_use.sh", input)[0]).toMatchObject({ kind: "question" });
+});
+
 it("does not reuse a question from an earlier Codex turn", () => {
   const home = mkdtempSync(join(tmpdir(), "vcl-hook-question-")); roots.push(home);
   const transcript = join(home, "rollout.jsonl");

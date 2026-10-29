@@ -23,6 +23,9 @@ if [ -n "$SESSION_ID" ]; then
         tool_failed=1
     fi
     if [ "$tool_failed" -eq 0 ] && codex_is_question_tool "$INPUT"; then
+        if ! grep -q '"state":"waiting"' "$(session_file "$SESSION_ID")" 2>/dev/null; then
+            write_notification_event "$INPUT" question "$(extract_field "$INPUT" "turn_id")"
+        fi
         write_state "$SESSION_ID" "waiting" "Waiting for user input"
         exit 0
     fi
