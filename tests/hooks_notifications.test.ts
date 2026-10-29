@@ -170,6 +170,28 @@ it("reports a Codex input question when only the post-tool hook is observed", ()
   expect(run("codex", "post_tool_use.sh", input)[0]).toMatchObject({ kind: "question" });
 });
 
+it("captures notification details in Git Bash with a fresh native Windows PID marker", () => {
+  const home = mkdtempSync(join(tmpdir(), "vcl-hook-windows-")); roots.push(home);
+  mkdirSync(join(home, ".code-light"));
+  writeFileSync(join(home, ".code-light/detail-capture"), `99999999 ${Math.floor(Date.now() / 1000)}\n`);
+  for (const [agent, script] of [["codex", "hooks/codex/stop.sh"], ["claude", "hooks/claude/stop.sh"]] as const) {
+    const result = spawnSync("bash", [resolve(script)], {
+      input: JSON.stringify({ session_id: `${agent}-session`, last_assistant_message: "Original reply" }),
+      encoding: "utf8", env: { ...process.env, HOME: home, MSYSTEM: "MINGW64" },
+    });
+    expect(result.status, result.stderr).toBe(0);
+  }
+  const result = spawnSync("bash", [resolve("hooks/integrations/dispatch.sh"), "cursor", "stop"], {
+    input: JSON.stringify({ session_id: "cursor-session", last_assistant_message: "Original reply" }),
+    encoding: "utf8", env: { ...process.env, HOME: home, MSYSTEM: "MINGW64" },
+  });
+  expect(result.status, result.stderr).toBe(0);
+  const eventDir = join(home, ".code-light/events");
+  const events = readdirSync(eventDir).map((name) => JSON.parse(readFileSync(join(eventDir, name), "utf8")));
+  expect(events).toHaveLength(3);
+  expect(events.every((event) => event.details.reply === "Original reply")).toBe(true);
+});
+
 it("does not reuse a question from an earlier Codex turn", () => {
   const home = mkdtempSync(join(tmpdir(), "vcl-hook-question-")); roots.push(home);
   const transcript = join(home, "rollout.jsonl");

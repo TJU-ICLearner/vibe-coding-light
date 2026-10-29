@@ -17,7 +17,11 @@ detail_capture_enabled() {
     [ -r "$CODE_LIGHT_DIR/detail-capture" ] || return 1
     read -r pid updated < "$CODE_LIGHT_DIR/detail-capture" || return 1
     [[ "$pid" =~ ^[0-9]+$ && "$updated" =~ ^[0-9]+$ ]] || return 1
-    kill -0 "$pid" 2>/dev/null || return 1
+    # Tauri writes a native Windows PID, which MSYS `kill` cannot reliably query.
+    case "${MSYSTEM:-$(uname -s 2>/dev/null)}" in
+        MINGW*|MSYS*|CYGWIN*) ;;
+        *) kill -0 "$pid" 2>/dev/null || return 1 ;;
+    esac
     now=$(date +%s)
     (( now >= updated && now - updated <= 15 ))
 }
