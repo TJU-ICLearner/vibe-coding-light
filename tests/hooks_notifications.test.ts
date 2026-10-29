@@ -107,6 +107,53 @@ it("records Codex permission, completion and explicit failure", () => {
   expect(run("codex", "post_tool_use.sh", { session_id: "codex-session", turn_id: "t1", tool_response: { exit_code: 1 } })[0].kind).toBe("error");
 });
 
+it("treats a Codex final answer with structured questions as waiting for the user", () => {
+  const home = mkdtempSync(join(tmpdir(), "vcl-hook-question-")); roots.push(home);
+  const transcript = join(home, "rollout.jsonl");
+  const turn_id = "turn-question";
+  const question = "Which target should I analyze?\n- A\n- B";
+  writeFileSync(transcript, `${JSON.stringify({
+    type: "event_msg",
+    payload: {
+      type: "item_completed", turn_id,
+      item: { type: "AgentMessage", phase: "final_answer", delivery: "async",
+        content: [{ type: "Text", text: question }],
+        questions: [{ title: "Choose a target", options: [{ label: "A" }, { label: "B" }] }] },
+    },
+  })}\n`);
+  mkdirSync(join(home, ".code-light"));
+  writeFileSync(join(home, ".code-light/detail-capture"), `${process.pid} ${Math.floor(Date.now() / 1000)}\n`);
+  const result = spawnSync("bash", [resolve("hooks/codex/stop.sh")], {
+    input: JSON.stringify({ session_id: "codex-session", turn_id, transcript_path: transcript, last_assistant_message: question }),
+    encoding: "utf8", env: { ...process.env, HOME: home },
+  });
+  expect(result.status, result.stderr).toBe(0);
+  const eventDir = join(home, ".code-light/events");
+  const events = readdirSync(eventDir).map((name) => JSON.parse(readFileSync(join(eventDir, name), "utf8")));
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({ source: "codex", kind: "question", details: { question } });
+  const state = JSON.parse(readFileSync(join(home, ".code-light/sessions/codex-session.json"), "utf8"));
+  expect(state.state).toBe("waiting");
+});
+
+it("does not reuse a question from an earlier Codex turn", () => {
+  const home = mkdtempSync(join(tmpdir(), "vcl-hook-question-")); roots.push(home);
+  const transcript = join(home, "rollout.jsonl");
+  const answer = (turn_id: string, questions: unknown[]) => JSON.stringify({
+    type: "event_msg", payload: { type: "item_completed", turn_id,
+      item: { type: "AgentMessage", phase: "final_answer", questions } },
+  });
+  writeFileSync(transcript, `${answer("previous", [{ title: "Old question" }])}\n${answer("current", [])}\n`);
+  const result = spawnSync("bash", [resolve("hooks/codex/stop.sh")], {
+    input: JSON.stringify({ session_id: "codex-session", turn_id: "current", transcript_path: transcript, last_assistant_message: "All done." }),
+    encoding: "utf8", env: { ...process.env, HOME: home },
+  });
+  expect(result.status, result.stderr).toBe(0);
+  const eventDir = join(home, ".code-light/events");
+  const event = JSON.parse(readFileSync(join(eventDir, readdirSync(eventDir)[0]), "utf8"));
+  expect(event.kind).toBe("completed");
+});
+
 it("does not call a successful Codex tool an error", () => {
   const events = run("codex", "post_tool_use.sh", { session_id: "codex-session", turn_id: "t1", tool_response: { exit_code: 0 } });
   expect(events.filter((event) => event.kind === "error")).toEqual([]);

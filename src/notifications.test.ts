@@ -108,11 +108,11 @@ describe("notification settings window", () => {
 
   it("fully localizes visible copy and Codex question coverage, including status errors", async () => {
     const { root, controller } = setup(); await controller.init("zh-CN");
-    expect(root.textContent).toContain("Codex 的部分界面内提问");
+    expect(root.textContent).toContain("Codex 可识别带明确选项的结构化提问");
     controller.setStatus({ ...status, lastSendError: "Bark send failed: Unsent" });
     expect(root.textContent).toContain("无法连接 Bark");
     controller.setLocale("en");
-    expect(root.textContent).toContain("Some questions inside Codex");
+    expect(root.textContent).toContain("Codex recognizes structured questions");
     expect(root.textContent).toContain("Could not connect to Bark");
     expect(root.textContent).not.toContain("无法连接 Bark");
     expect(document.documentElement.lang).toBe("en");

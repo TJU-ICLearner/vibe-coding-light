@@ -22,9 +22,9 @@ main { height: 100%; overflow-y: auto; padding: 18px 14px 12px; }
 .tray-toggle:focus-within { outline: 2px solid #62aa78; }
 .tray-toggle:has(input:disabled), .tray-row:disabled { opacity: .52; cursor: default; }
 .tray-language select { min-width: 110px; max-width: 150px; border: 1px solid #d7e4d8; border-radius: 7px; padding: 4px 6px; background: #fff; color: inherit; font: inherit; font-size: 12px; }
-.tray-sessions { margin: 8px 2px 0; padding: 10px; border-radius: 8px; background: #eef5ee; font-size: 11px; }
+.tray-sessions { margin: 0 2px; padding: 8px 10px; border-radius: 8px; background: #eef5ee; font-size: 11px; }
 .tray-sessions > span { font-weight: 700; color: #5b8064; }
-.tray-sessions ul { margin: 5px 0 0; padding-left: 14px; color: #647b68; line-height: 1.5; }
+.tray-sessions ul { margin: 0; padding-left: 14px; color: #647b68; line-height: 1.5; }
 .tray-sessions li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 footer { padding: 9px 7px 3px; border-top: 1px solid #e5eee5; }
 .tray-quit { color: #9a5445; }

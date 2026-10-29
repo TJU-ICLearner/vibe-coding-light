@@ -57,6 +57,39 @@ extract_field() {
     printf '%s' "$input" | grep -o "\"${field}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/.*:.*"\(.*\)"/\1/'
 }
 
+# Codex Stop also fires when a turn ends with a question for the user. The
+# transcript is an optional, version-dependent source; only a matching,
+# explicitly marked final-answer question counts as waiting.
+codex_stop_has_structured_question() {
+    printf '%s' "$1" | perl -MJSON::PP -0777 -e '
+        my $input = eval { decode_json(<STDIN>) } || {};
+        my $path = $input->{transcript_path};
+        my $turn = $input->{turn_id};
+        exit 1 unless defined($path) && !ref($path) && -f $path && -r $path;
+        exit 1 unless defined($turn) && !ref($turn) && $turn ne "";
+        open my $fh, "<", $path or exit 1;
+        my $size = -s $fh;
+        my $limit = 262144;
+        my $start = $size > $limit ? $size - $limit : 0;
+        seek($fh, $start, 0) or exit 1;
+        read($fh, my $tail, $limit);
+        my @lines = split /\n/, $tail;
+        shift @lines if $start > 0;
+        for my $line (reverse @lines) {
+            my $record = eval { decode_json($line) } || next;
+            next unless $record->{type} eq "event_msg";
+            my $payload = $record->{payload};
+            next unless ref($payload) eq "HASH" && $payload->{type} eq "item_completed";
+            next unless defined($payload->{turn_id}) && $payload->{turn_id} eq $turn;
+            my $item = $payload->{item};
+            next unless ref($item) eq "HASH" && $item->{type} eq "AgentMessage"
+                && $item->{phase} eq "final_answer";
+            exit(ref($item->{questions}) eq "ARRAY" && @{$item->{questions}} ? 0 : 1);
+        }
+        exit 1;
+    ' 2>/dev/null
+}
+
 # Build descriptive message from tool context
 make_message() {
     local tool_name="$1"
@@ -153,7 +186,8 @@ write_notification_event() {
         my %details;
         if ($capture eq "1") {
             for my $pair ([task => $input->{prompt}], [command => $tool->{command}],
-                [error => $error], [reply => $input->{last_assistant_message}], [question => $input->{message}]) {
+                [error => $error], [reply => ($kind eq "question" ? undef : $input->{last_assistant_message})],
+                [question => ($kind eq "question" ? ($input->{last_assistant_message} // $input->{message}) : $input->{message})]) {
                 my $value = $short->($pair->[1]);
                 $details{$pair->[0]} = $value if defined($value);
             }

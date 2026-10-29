@@ -1573,7 +1573,7 @@ fn show_notification_settings(app: &tauri::AppHandle) -> Result<(), String> {
             WebviewUrl::App("notifications.html".into()),
         )
         .title(ui_copy::notification_settings_title(current_locale(app)))
-        .inner_size(740.0, 780.0)
+        .inner_size(900.0, 780.0)
         .min_inner_size(600.0, 600.0)
         .build()
         .map_err(|error| error.to_string())?;

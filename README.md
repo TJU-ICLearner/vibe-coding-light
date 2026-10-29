@@ -182,7 +182,7 @@ The ordinary Doubao app and **Grok Bot** currently expose no local lifecycle hoo
 | Switch | Meaning |
 |---|---|
 | Permission approval needed | An observable agent permission request. |
-| Answer needed | An interactive question captured by a Hook; some questions inside Codex have no observable Hook. |
+| Answer needed | An interactive question captured by a Hook or a Codex question with explicit options recorded as structured data; plain-text questions may remain undetected. |
 | Current turn completed | The current reply ended, not the whole project; resumed work can cancel a pending completion alert. |
 | Execution error | A Hook recorded a tool or command failure. |
 | 80%, 50%, 20% remaining | Available quota crosses the corresponding remaining threshold. |
@@ -222,7 +222,7 @@ Check that you installed the hook for the agent you are using, **start a fresh a
 
 ### Why does Waiting rarely appear?
 
-Waiting is triggered only by approval or interactive requests that a Hook can observe. Work without approval normally goes straight to Completed. Some questions inside Codex have no observable Hook, so they may not trigger a waiting state or a question alert.
+Waiting is triggered by approval requests, interactive requests visible to a Hook, and Codex questions with explicit options recorded as structured questions. Plain-text questions have no reliable structured marker and may still lack a question alert.
 
 ### Bark did not reach my phone or watch
 
