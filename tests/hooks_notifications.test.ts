@@ -177,13 +177,13 @@ it("captures notification details in Git Bash with a fresh native Windows PID ma
   for (const [agent, script] of [["codex", "hooks/codex/stop.sh"], ["claude", "hooks/claude/stop.sh"]] as const) {
     const result = spawnSync("bash", [resolve(script)], {
       input: JSON.stringify({ session_id: `${agent}-session`, last_assistant_message: "Original reply" }),
-      encoding: "utf8", env: { ...process.env, HOME: home, MSYSTEM: "MINGW64" },
+      encoding: "utf8", env: { ...process.env, HOME: home, OS: "Windows_NT", MSYSTEM: "" },
     });
     expect(result.status, result.stderr).toBe(0);
   }
   const result = spawnSync("bash", [resolve("hooks/integrations/dispatch.sh"), "cursor", "stop"], {
     input: JSON.stringify({ session_id: "cursor-session", last_assistant_message: "Original reply" }),
-    encoding: "utf8", env: { ...process.env, HOME: home, MSYSTEM: "MINGW64" },
+    encoding: "utf8", env: { ...process.env, HOME: home, OS: "Windows_NT", MSYSTEM: "" },
   });
   expect(result.status, result.stderr).toBe(0);
   const eventDir = join(home, ".code-light/events");

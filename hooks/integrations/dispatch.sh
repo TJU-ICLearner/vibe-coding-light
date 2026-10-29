@@ -69,7 +69,8 @@ exec perl -MJSON::PP -MTime::HiRes=time -MFile::Path=make_path -MFile::Basename=
     my %details;
     if (open(my $marker, "<", "$base/detail-capture")) {
         my $line = <$marker> // "";
-        my $windows_shell = ($ENV{MSYSTEM} // "") =~ /\A(?:MINGW|MSYS|CYGWIN)/i
+        my $windows_shell = ($ENV{OS} // "") eq "Windows_NT"
+            || ($ENV{MSYSTEM} // "") =~ /\A(?:MINGW|MSYS|CYGWIN)/i
             || $^O =~ /(?:MSWin32|msys|mingw|cygwin)/i;
         if ($line =~ /\A(\d+)\s+(\d+)/ && $now >= $2 && $now - $2 <= 15
             && ($windows_shell || kill(0, $1))) {
