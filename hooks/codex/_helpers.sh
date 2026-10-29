@@ -90,6 +90,21 @@ codex_stop_has_structured_question() {
     ' 2>/dev/null
 }
 
+codex_is_question_tool() {
+    printf '%s' "$1" | perl -MJSON::PP -0777 -e '
+        my $input = eval { decode_json(<STDIN>) } || {};
+        my $name = $input->{tool_name} // "";
+        exit 1 unless $name eq "request_user_input" || $name eq "request_user_input_async";
+        my $tool = $input->{tool_input};
+        exit 1 unless ref($tool) eq "HASH" && ref($tool->{questions}) eq "ARRAY";
+        for my $question (@{$tool->{questions}}) {
+            exit 0 if ref($question) eq "HASH" && defined($question->{title})
+                && !ref($question->{title}) && $question->{title} ne "";
+        }
+        exit 1;
+    ' 2>/dev/null
+}
+
 # Build descriptive message from tool context
 make_message() {
     local tool_name="$1"
@@ -185,9 +200,24 @@ write_notification_event() {
         $error = $response if !defined($error) && !ref($response);
         my %details;
         if ($capture eq "1") {
+            my $question_text = $input->{last_assistant_message} // $input->{message};
+            if ($kind eq "question" && !defined($question_text) && ref($tool->{questions}) eq "ARRAY") {
+                my @lines;
+                for my $question (@{$tool->{questions}}) {
+                    next unless ref($question) eq "HASH";
+                    push @lines, $question->{title} if defined($question->{title}) && !ref($question->{title});
+                    if (ref($question->{options}) eq "ARRAY") {
+                        for my $option (@{$question->{options}}) {
+                            push @lines, "- " . $option->{label}
+                                if ref($option) eq "HASH" && defined($option->{label}) && !ref($option->{label});
+                        }
+                    }
+                }
+                $question_text = join "\n", @lines;
+            }
             for my $pair ([task => $input->{prompt}], [command => $tool->{command}],
                 [error => $error], [reply => ($kind eq "question" ? undef : $input->{last_assistant_message})],
-                [question => ($kind eq "question" ? ($input->{last_assistant_message} // $input->{message}) : $input->{message})]) {
+                [question => ($kind eq "question" ? $question_text : $input->{message})]) {
                 my $value = $short->($pair->[1]);
                 $details{$pair->[0]} = $value if defined($value);
             }

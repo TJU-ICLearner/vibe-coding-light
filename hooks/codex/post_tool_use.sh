@@ -10,6 +10,7 @@ command=$(extract_field "$INPUT" "command")
 message=$(make_message "$tool_name" "$file_path" "$command")
 
 if [ -n "$SESSION_ID" ]; then
+    tool_failed=0
     if printf '%s' "$INPUT" | perl -MJSON::PP -0777 -ne '
         eval {
             my $response = decode_json($_)->{tool_response};
@@ -19,6 +20,13 @@ if [ -n "$SESSION_ID" ]; then
         };
         exit 1;
     ' 2>/dev/null; then
+        tool_failed=1
+    fi
+    if [ "$tool_failed" -eq 0 ] && codex_is_question_tool "$INPUT"; then
+        write_state "$SESSION_ID" "waiting" "Waiting for user input"
+        exit 0
+    fi
+    if [ "$tool_failed" -eq 1 ]; then
         write_notification_event "$INPUT" error "$(extract_field "$INPUT" "turn_id")"
     fi
     write_state "$SESSION_ID" "working" "$message" "$tool_name" "$file_path" "$command"

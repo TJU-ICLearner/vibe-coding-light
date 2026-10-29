@@ -136,6 +136,31 @@ it("treats a Codex final answer with structured questions as waiting for the use
   expect(state.state).toBe("waiting");
 });
 
+it("reports a Codex input tool as a question and stays waiting after the tool returns", () => {
+  const home = mkdtempSync(join(tmpdir(), "vcl-hook-question-")); roots.push(home);
+  mkdirSync(join(home, ".code-light"));
+  writeFileSync(join(home, ".code-light/detail-capture"), `${process.pid} ${Math.floor(Date.now() / 1000)}\n`);
+  const input = {
+    session_id: "codex-session", turn_id: "turn-question", tool_name: "request_user_input_async",
+    tool_input: { questions: [{ title: "Which target should I analyze?", options: [{ label: "A" }, { label: "B" }] }] },
+  };
+  for (const [script, payload] of [
+    ["pre_tool_use.sh", input],
+    ["post_tool_use.sh", { ...input, tool_response: { content: [{ type: "text", text: "Shown" }] } }],
+  ] as const) {
+    const result = spawnSync("bash", [resolve(`hooks/codex/${script}`)], {
+      input: JSON.stringify(payload), encoding: "utf8", env: { ...process.env, HOME: home },
+    });
+    expect(result.status, result.stderr).toBe(0);
+  }
+  const eventDir = join(home, ".code-light/events");
+  const events = readdirSync(eventDir).map((name) => JSON.parse(readFileSync(join(eventDir, name), "utf8")));
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({ kind: "question", details: { question: "Which target should I analyze?\n- A\n- B" } });
+  const state = JSON.parse(readFileSync(join(home, ".code-light/sessions/codex-session.json"), "utf8"));
+  expect(state.state).toBe("waiting");
+});
+
 it("does not reuse a question from an earlier Codex turn", () => {
   const home = mkdtempSync(join(tmpdir(), "vcl-hook-question-")); roots.push(home);
   const transcript = join(home, "rollout.jsonl");

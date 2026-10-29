@@ -52,6 +52,16 @@ pub struct NotificationEngine {
 }
 
 impl NotificationEngine {
+    fn question_pending(&self, event: &AgentEvent) -> bool {
+        event.kind == AgentEventKind::Completed
+            && self.ledger.turn_categories.contains_key(&format!(
+                "{:?}:{}:{}:{:?}",
+                event.source,
+                event.session_id,
+                event.turn_id.as_deref().unwrap_or("no-turn"),
+                AgentEventKind::Question,
+            ))
+    }
     pub fn load(ledger_path: PathBuf) -> Self {
         let mut ledger: Ledger = fs::read(&ledger_path)
             .ok()
@@ -143,6 +153,10 @@ impl NotificationEngine {
             return Vec::new();
         }
         self.ledger.event_ids.insert(event.id.clone(), now_ms);
+        if self.question_pending(&event) {
+            self.persist();
+            return Vec::new();
+        }
         self.session_details
             .retain(|_, (_, seen)| now_ms.saturating_sub(*seen) < EVENT_DEDUPE_MS);
         let context_key = format!("{:?}:{}", event.source, event.session_id);
@@ -345,6 +359,12 @@ impl NotificationEngine {
                     Some(DiagnosticReason::Duplicate),
                 );
             }
+        }
+        if self.question_pending(event) {
+            return (
+                DiagnosticOutcome::Skipped,
+                Some(DiagnosticReason::Superseded),
+            );
         }
         if !settings.enabled {
             return (
@@ -740,6 +760,44 @@ mod tests {
         );
         assert_eq!(next.2.len(), 1);
         assert_eq!(next.2[0].kind, PushKind::Completed);
+    }
+
+    #[test]
+    fn a_question_prevents_completion_for_the_same_turn_until_user_resumes() {
+        use crate::notifications::diagnostics::{DiagnosticOutcome, DiagnosticReason};
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NotificationEngine::load(dir.path().join("ledger.json"));
+        let settings = settings();
+        let asked = engine.on_event_tracked(
+            event("ask", "session", AgentEventKind::Question, 1_000),
+            1_000,
+            &settings,
+        );
+        assert_eq!(asked.0.len(), 1);
+        let completed = engine.on_event_tracked(
+            event("done", "session", AgentEventKind::Completed, 2_000),
+            2_000,
+            &settings,
+        );
+        assert!(completed.0.is_empty());
+        assert_eq!(
+            completed.1,
+            (
+                DiagnosticOutcome::Skipped,
+                Some(DiagnosticReason::Superseded)
+            )
+        );
+        assert!(engine.flush_due(6_000, &settings).is_empty());
+
+        let mut resumed = event("resume", "session", AgentEventKind::Working, 7_000);
+        resumed.new_turn = true;
+        engine.on_event(resumed, 7_000, &settings);
+        engine.on_event(
+            event("after", "session", AgentEventKind::Completed, 8_000),
+            8_000,
+            &settings,
+        );
+        assert_eq!(engine.flush_due(12_000, &settings).len(), 1);
     }
 
     #[test]
