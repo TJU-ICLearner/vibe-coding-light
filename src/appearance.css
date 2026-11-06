@@ -1,0 +1,45 @@
+/* Palette inspiration: zhoulaiqing, Jiangnan Yanyu themes, MIT license.
+   Source: CodemosModern-Themes-Registry, commit ae3942bfa86bd83746650b6d12456451cc2ef47b.
+   Tokens are adjusted for contrast in this application's controls. */
+:root, :root[data-theme="system_light"] {
+  --app-bg: #f4f7f3; --panel: #fbfcfa; --surface: #eef3ed;
+  --text: #243128; --muted: #66756b; --border: #dfe5df;
+  --accent: #477e59; --accent-soft: #e2eee4; --accent-text: #2d6741;
+  --on-accent: #fff; --warning: #9a722b; --danger: #a3473c;
+  --shadow: #304c3a12;
+}
+:root[data-theme="system_dark"] {
+  --app-bg: #161d20; --panel: #202e33; --surface: #26383d;
+  --text: #e0ded8; --muted: #a8b3b5; --border: #405358;
+  --accent: #8faab3; --accent-soft: #344b50; --accent-text: #b9d3d9;
+  --on-accent: #142027; --warning: #ccb58b; --danger: #ed9f9a;
+  --shadow: #0005;
+}
+:root[data-theme="shaxi"] {
+  --app-bg: #121824; --panel: #1b2435; --surface: #263249;
+  --text: #e5d4c1; --muted: #a8b2af; --border: #3d4d56;
+  --accent: #c99b45; --accent-soft: #3c3841; --accent-text: #e8c77f;
+  --on-accent: #161b23; --warning: #e4c253; --danger: #ee9da3;
+  --shadow: #0006;
+}
+:root[data-theme="chenwu"] {
+  --app-bg: #f4f1ec; --panel: #fefdfb; --surface: #e9e7e1;
+  --text: #3e474c; --muted: #6f6b64; --border: #d8d0c4;
+  --accent: #5f7587; --accent-soft: #e2eaeb; --accent-text: #405e70;
+  --on-accent: #fff; --warning: #8f7445; --danger: #a3473c;
+  --shadow: #3e474c12;
+}
+:root[data-theme="zhiqiu"] {
+  --app-bg: #f3ebdb; --panel: #fcf6e7; --surface: #e9dfca;
+  --text: #232624; --muted: #66655e; --border: #d0c9ba;
+  --accent: #6e6756; --accent-soft: #e4d8a2; --accent-text: #504b3d;
+  --on-accent: #fff; --warning: #6a703e; --danger: #97483e;
+  --shadow: #514a381c;
+}
+:root[data-theme="bajiao"] {
+  --app-bg: #f1f4ee; --panel: #fcfdf9; --surface: #e7ede5;
+  --text: #33443d; --muted: #64766b; --border: #d3ded4;
+  --accent: #4f765f; --accent-soft: #e3ece5; --accent-text: #365d44;
+  --on-accent: #fff; --warning: #9b8253; --danger: #a3473c;
+  --shadow: #33443d12;
+}

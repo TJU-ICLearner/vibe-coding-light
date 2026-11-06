@@ -1,0 +1,83 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#pet-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  position: relative;
+}
+
+#pet-wrapper:active {
+  cursor: grabbing;
+}
+
+#photo-reaction { display: none; position: absolute; inset: 0; pointer-events: none; }
+#photo-frame { width: 128px; height: 128px; position: absolute; left: 50%; top: 50%; margin-left: -64px; margin-top: -64px; pointer-events: none; transform-origin: center; }
+#photo-pet { width: 128px; height: 128px; object-fit: contain; display: block; pointer-events: none; }
+.photo-active #photo-reaction { display: block; }
+.photo-active .pet-sprite { display: none; }
+#photo-pet.motion-idle { animation: pet-photo-idle 2.6s ease-in-out infinite; }
+#photo-pet.motion-working { animation: pet-photo-working 1.1s ease-in-out infinite; }
+#photo-pet.motion-waiting { animation: pet-photo-waiting 1.7s ease-in-out infinite; }
+#photo-pet.motion-error { animation: pet-photo-error .34s ease-in-out infinite; }
+#photo-pet.motion-completed { animation: pet-photo-completed .7s ease-out 1; }
+#photo-pet.motion-still { animation: none; }
+#photo-pet.motion-sway { animation: pet-motion-sway 1.7s ease-in-out infinite; }
+#photo-pet.motion-float { animation: pet-motion-float 2s ease-in-out infinite; }
+#photo-pet.motion-breathe { animation: pet-motion-breathe 2.4s ease-in-out infinite; }
+#photo-pet.motion-bounce { animation: pet-motion-bounce .9s ease-in-out infinite; }
+#photo-pet.motion-wobble { animation: pet-motion-wobble 1.2s ease-in-out infinite; }
+#photo-pet.animated { animation: none; }
+@keyframes pet-photo-idle { 50% { transform: translateY(var(--pet-motion-idle-rise)); } }
+@keyframes pet-photo-working { 50% { transform: rotate(var(--pet-motion-angle-left)); } }
+@keyframes pet-photo-waiting { 50% { transform: scale(var(--pet-motion-expand)); } }
+@keyframes pet-photo-error { 50% { transform: translateX(var(--pet-motion-error-shift)); } }
+@keyframes pet-photo-completed { 50% { transform: translateY(var(--pet-motion-complete-rise)) scale(var(--pet-motion-complete-expand)); } }
+@keyframes pet-motion-sway { 25% { transform: translateX(var(--pet-motion-left)); } 75% { transform: translateX(var(--pet-motion-shift)); } }
+@keyframes pet-motion-float { 50% { transform: translateY(var(--pet-motion-idle-rise)); } }
+@keyframes pet-motion-breathe { 50% { transform: scale(var(--pet-motion-expand)); } }
+@keyframes pet-motion-bounce { 50% { transform: translateY(var(--pet-motion-bounce-rise)); } }
+@keyframes pet-motion-wobble { 25% { transform: rotate(var(--pet-motion-angle-left)); } 75% { transform: rotate(var(--pet-motion-angle)); } }
+@media (prefers-reduced-motion: reduce) {
+  #photo-pet[class*="motion-"] { animation: none; }
+}
+
+.pet-sprite {
+  display: block;
+  width: 128px;
+  height: 128px;
+  object-fit: contain;
+  transform: scale(1.5);
+  transform-origin: center center;
+  pointer-events: none;
+}
+
+#pat-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 10; }
+.pat-hand { position: absolute; width: 58px; height: 58px; left: 50%; top: calc(50% - var(--pat-head-offset, 30px) - 44px); opacity: 0; filter: drop-shadow(0 3px 3px #744a3c33); }
+.patting .pat-hand { animation: pat-hand-twice .8s ease-in-out both; }
+.patting .pet-sprite { animation: pet-sprite-pat .8s ease-in-out both; }
+.patting #photo-reaction { animation: pet-photo-pat .8s ease-in-out both; }
+@keyframes pat-hand-twice {
+  0%, 100% { opacity: 0; transform: translate(-50%, -65%) rotate(-12deg); }
+  14%, 57% { opacity: 1; transform: translate(-50%, -5%) rotate(6deg); }
+  30%, 72% { opacity: 1; transform: translate(-50%, 13%) rotate(-5deg); }
+  43%, 85% { opacity: 1; transform: translate(-50%, -8%) rotate(3deg); }
+}
+@keyframes pet-sprite-pat { 0%, 100% { transform: scale(1.5); } 29%, 71% { transform: translateY(3px) scale(1.46); } }
+@keyframes pet-photo-pat { 0%, 100% { transform: translateY(0); } 29%, 71% { transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) {
+  .patting .pat-hand { animation: none; opacity: 1; transform: translate(-50%, 0); }
+  .patting .pet-sprite, .patting #photo-reaction { animation: none; }
+}

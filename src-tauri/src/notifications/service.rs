@@ -1,0 +1,616 @@
+use super::bark::{BarkClient, BarkError};
+use super::claude_quota::ClaudeQuota;
+use super::codex_quota::CodexQuota;
+use super::diagnostics::{DiagnosticEntry, DiagnosticOutcome, DiagnosticReason, DiagnosticStore};
+use super::events::EventSpool;
+use super::keychain::{KeyStore, PlatformKeyStore};
+use super::model::{AgentSource, NotificationSettings, PushCandidate};
+use super::settings::NotificationSettingsStore;
+use super::test_console::{self, TestEvent, TestOutcome, TestRequest, TestResult};
+use super::{should_poll_quota, NotificationCore};
+use chrono::Timelike;
+use serde::Serialize;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter};
+
+const QUOTA_POLL_MS: u64 = 300_000;
+
+enum DeliveryFailure {
+    KeyMissing,
+    Bark(BarkError),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationStatus {
+    pub service_available: bool,
+    pub key_saved: bool,
+    pub claude_hooks_installed: bool,
+    pub codex_hooks_installed: bool,
+    pub cursor_hooks_installed: bool,
+    pub trae_hooks_installed: bool,
+    pub grok_hooks_installed: bool,
+    pub deepseek_hooks_prepared: bool,
+    pub claude_quota_available: bool,
+    pub codex_quota_available: bool,
+    pub test_console_available: bool,
+    pub last_send_error: Option<String>,
+}
+
+pub struct NotificationService {
+    app: AppHandle,
+    data_dir: PathBuf,
+    detail_marker: PathBuf,
+    settings: Mutex<NotificationSettingsStore>,
+    core: Mutex<NotificationCore>,
+    spool: Mutex<EventSpool>,
+    status: Mutex<NotificationStatus>,
+    diagnostics: Mutex<DiagnosticStore>,
+    last_claude_poll: Mutex<u64>,
+    last_codex_poll: Mutex<u64>,
+    key_store: PlatformKeyStore,
+    bark: BarkClient,
+}
+
+impl NotificationService {
+    pub fn start(app: AppHandle, data_dir: PathBuf) -> Result<Arc<Self>, String> {
+        let event_dir = dirs::home_dir()
+            .ok_or("Home directory unavailable")?
+            .join(".code-light/events");
+        let mut spool = EventSpool::new(event_dir);
+        spool.baseline()?;
+        let store = NotificationSettingsStore::load(data_dir.join("notification-settings.json"));
+        let key_store = PlatformKeyStore::default();
+        let status = NotificationStatus {
+            service_available: true,
+            key_saved: key_store.has_key().unwrap_or(false),
+            test_console_available: test_console::rc_available(env!("CARGO_PKG_VERSION")),
+            ..Default::default()
+        };
+        let service = Arc::new(Self {
+            app,
+            data_dir: data_dir.clone(),
+            detail_marker: dirs::home_dir()
+                .ok_or("Home directory unavailable")?
+                .join(".code-light/detail-capture"),
+            settings: Mutex::new(store),
+            core: Mutex::new(NotificationCore::new(
+                data_dir.join("notification-ledger.json"),
+            )),
+            spool: Mutex::new(spool),
+            status: Mutex::new(status),
+            diagnostics: Mutex::new(DiagnosticStore::load(
+                data_dir.join("notification-diagnostics.json"),
+            )),
+            last_claude_poll: Mutex::new(0),
+            last_codex_poll: Mutex::new(0),
+            key_store,
+            bark: BarkClient::new().map_err(|_| "Bark transport unavailable")?,
+        });
+        service.sync_detail_capture(&service.settings());
+        service.sync_claude_proxy();
+        service.refresh_status();
+        let worker = Arc::clone(&service);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(1));
+            worker.tick();
+        });
+        Ok(service)
+    }
+
+    pub fn settings(&self) -> NotificationSettings {
+        self.settings.lock().unwrap().get()
+    }
+
+    pub fn set_settings(
+        &self,
+        value: NotificationSettings,
+    ) -> Result<NotificationSettings, String> {
+        let old = self.settings();
+        {
+            let mut store = self.settings.lock().unwrap();
+            store.set(value.clone())?;
+            self.sync_detail_capture(&value);
+        }
+        self.core
+            .lock()
+            .unwrap()
+            .quota_settings_changed(&old, &value);
+        *self.last_claude_poll.lock().unwrap() = 0;
+        *self.last_codex_poll.lock().unwrap() = 0;
+        self.update_status(|status| {
+            if !should_poll_quota(&value, AgentSource::Claude) {
+                status.claude_quota_available = false;
+            }
+            if !should_poll_quota(&value, AgentSource::Codex) {
+                status.codex_quota_available = false;
+            }
+        });
+        self.sync_claude_proxy();
+        self.refresh_status();
+        Ok(value)
+    }
+
+    pub fn save_key(&self, key: &str) -> Result<(), String> {
+        self.key_store.save(key)?;
+        self.refresh_status();
+        Ok(())
+    }
+
+    pub fn delete_key(&self) -> Result<(), String> {
+        self.key_store.delete()?;
+        self.refresh_status();
+        Ok(())
+    }
+
+    pub fn send_test(&self) -> Result<TestResult, String> {
+        let settings = self.settings();
+        if !settings.enabled {
+            return Err("Notifications are disabled".into());
+        }
+        let local = chrono::Local::now();
+        let minute = (local.hour() * 60 + local.minute()) as u16;
+        if test_console::connection_test_quiet(&settings, minute) {
+            self.record_diagnostic(DiagnosticEntry {
+                at_ms: now_ms(),
+                source: None,
+                kind: "test".into(),
+                outcome: DiagnosticOutcome::Skipped,
+                reason: Some(DiagnosticReason::QuietHours),
+            });
+            return Ok(TestResult {
+                outcome: TestOutcome::Skipped,
+                reason: Some(DiagnosticReason::QuietHours),
+            });
+        }
+        let key = self.key_store.read()?.ok_or("Bark device key not saved")?;
+        let key = super::keychain::validate_bark_key(&key).map_err(str::to_owned)?;
+        let payload = crate::ui_copy::test_notification(crate::current_locale(&self.app));
+        let result = self.bark.send(&key, &payload);
+        self.record_send_result(&result);
+        let (outcome, reason) = diagnostic_send_result(&result);
+        self.record_diagnostic(DiagnosticEntry {
+            at_ms: now_ms(),
+            source: None,
+            kind: "test".into(),
+            outcome,
+            reason,
+        });
+        result
+            .map(|_| TestResult {
+                outcome: TestOutcome::Sent,
+                reason: None,
+            })
+            .map_err(|error| format!("Bark send failed: {error:?}"))
+    }
+
+    pub fn send_simulated(&self, request: TestRequest) -> Result<TestResult, String> {
+        if !test_console::rc_available(env!("CARGO_PKG_VERSION")) {
+            return Err("Simulated notifications are only available in RC builds".into());
+        }
+        let candidate =
+            test_console::candidate(&request, now_ms(), crate::current_locale(&self.app))?;
+        self.deliver_candidate(candidate, Some(request.event))
+            .map_err(|error| match error {
+                DeliveryFailure::KeyMissing => "Bark device key not saved".into(),
+                DeliveryFailure::Bark(error) => format!("Bark send failed: {error:?}"),
+            })
+    }
+
+    pub fn status(&self) -> NotificationStatus {
+        self.refresh_status();
+        self.status.lock().unwrap().clone()
+    }
+
+    pub fn diagnostics(&self) -> Vec<DiagnosticEntry> {
+        self.diagnostics.lock().unwrap().entries()
+    }
+
+    pub fn clear_diagnostics(&self) -> Result<(), String> {
+        self.diagnostics.lock().unwrap().clear()?;
+        let _ = self.app.emit("notification-diagnostics-changed", ());
+        Ok(())
+    }
+
+    fn record_diagnostic(&self, entry: DiagnosticEntry) {
+        if self.diagnostics.lock().unwrap().append(entry).is_ok() {
+            let _ = self.app.emit("notification-diagnostics-changed", ());
+        }
+    }
+
+    fn tick(&self) {
+        let now = now_ms();
+        let settings = {
+            let store = self.settings.lock().unwrap();
+            let settings = store.get();
+            self.sync_detail_capture(&settings);
+            settings
+        };
+        let events = self.spool.lock().unwrap().drain(now);
+        {
+            let mut core = self.core.lock().unwrap();
+            core.events_with_diagnostics(
+                events,
+                now,
+                &settings,
+                || self.settings(),
+                |candidate| self.send_candidate(candidate),
+                |entry| self.record_diagnostic(entry),
+            );
+            core.flush_with_diagnostics(
+                now,
+                &settings,
+                || self.settings(),
+                |candidate| self.send_candidate(candidate),
+                |entry| self.record_diagnostic(entry),
+            );
+        }
+        if should_poll_quota(&settings, AgentSource::Claude) && due(&self.last_claude_poll, now) {
+            let path = self.data_dir.join("claude-quota-snapshot.json");
+            let result = if snapshot_is_fresh(&path) {
+                ClaudeQuota::read_snapshot(&path)
+            } else {
+                Err("Claude quota snapshot stale".into())
+            };
+            let active = should_poll_quota(&self.settings(), AgentSource::Claude);
+            self.update_status(|status| status.claude_quota_available = active && result.is_ok());
+            if let Ok(windows) = result {
+                for window in windows {
+                    let current = self.settings();
+                    self.core.lock().unwrap().quota_with_diagnostics(
+                        window,
+                        now,
+                        &current,
+                        || self.settings(),
+                        |candidate| self.send_candidate(candidate),
+                        |entry| self.record_diagnostic(entry),
+                    );
+                }
+            }
+        }
+        if should_poll_quota(&settings, AgentSource::Codex) && due(&self.last_codex_poll, now) {
+            let result = CodexQuota::read(Duration::from_secs(5));
+            let active = should_poll_quota(&self.settings(), AgentSource::Codex);
+            self.update_status(|status| status.codex_quota_available = active && result.is_ok());
+            if let Ok(windows) = result {
+                for window in windows {
+                    let current = self.settings();
+                    self.core.lock().unwrap().quota_with_diagnostics(
+                        window,
+                        now,
+                        &current,
+                        || self.settings(),
+                        |candidate| self.send_candidate(candidate),
+                        |entry| self.record_diagnostic(entry),
+                    );
+                }
+            }
+        }
+        self.refresh_status();
+    }
+
+    fn sync_detail_capture(&self, settings: &NotificationSettings) {
+        let _ = super::detail_capture::sync(
+            &self.detail_marker,
+            settings.enabled && settings.include_details,
+            now_ms() / 1_000,
+        );
+    }
+
+    fn send_candidate(&self, candidate: PushCandidate) -> Result<(), BarkError> {
+        self.deliver_candidate(candidate, None)
+            .map(|_| ())
+            .map_err(|error| match error {
+                DeliveryFailure::KeyMissing => BarkError::Unsent,
+                DeliveryFailure::Bark(error) => error,
+            })
+    }
+
+    fn record_candidate_result(
+        &self,
+        candidate: &PushCandidate,
+        test_event: Option<TestEvent>,
+        at_ms: u64,
+        outcome: DiagnosticOutcome,
+        reason: Option<DiagnosticReason>,
+    ) {
+        let mut entry = DiagnosticEntry::from_candidate(candidate, at_ms, outcome, reason);
+        if let Some(event) = test_event {
+            entry.kind = test_console::diagnostic_kind(event);
+        }
+        self.record_diagnostic(entry);
+    }
+
+    fn deliver_candidate(
+        &self,
+        candidate: PushCandidate,
+        test_event: Option<TestEvent>,
+    ) -> Result<TestResult, DeliveryFailure> {
+        let settings = self.settings();
+        let now = now_ms();
+        let local = chrono::Local::now();
+        let minute = (local.hour() * 60 + local.minute()) as u16;
+        let decision = test_console::decision(&candidate, &settings, now, minute);
+        if decision.outcome == TestOutcome::Skipped {
+            self.record_candidate_result(
+                &candidate,
+                test_event,
+                now,
+                DiagnosticOutcome::Skipped,
+                decision.reason,
+            );
+            return Ok(decision);
+        }
+        let key = match self.key_store.read().ok().flatten() {
+            Some(key) => key,
+            None => {
+                self.record_candidate_result(
+                    &candidate,
+                    test_event,
+                    now,
+                    DiagnosticOutcome::Failed,
+                    Some(DiagnosticReason::KeyMissing),
+                );
+                return Err(DeliveryFailure::KeyMissing);
+            }
+        };
+        let mut payload = crate::ui_copy::notification_payload_with_settings(
+            &candidate,
+            crate::current_locale(&self.app),
+            &settings,
+        );
+        if test_event.is_some() {
+            payload = test_console::marked_payload(payload, crate::current_locale(&self.app));
+        }
+        let result = match super::keychain::validate_bark_key(&key) {
+            Ok(valid_key) => self.bark.send(valid_key, &payload),
+            Err(_) => Err(BarkError::Rejected),
+        };
+        self.record_send_result(&result);
+        let (outcome, reason) = diagnostic_send_result(&result);
+        self.record_candidate_result(&candidate, test_event, now_ms(), outcome, reason);
+        result
+            .map(|_| TestResult {
+                outcome: TestOutcome::Sent,
+                reason: None,
+            })
+            .map_err(DeliveryFailure::Bark)
+    }
+
+    fn record_send_result(&self, result: &Result<(), BarkError>) {
+        self.update_status(|status| {
+            status.last_send_error = result
+                .as_ref()
+                .err()
+                .map(|error| format!("Bark send failed: {error:?}"))
+        });
+    }
+
+    fn sync_claude_proxy(&self) {
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+        let settings_path = home.join(".claude/settings.json");
+        let Ok(executable) = std::env::current_exe() else {
+            return;
+        };
+        let result = if should_poll_quota(&self.settings(), AgentSource::Claude) {
+            ClaudeQuota::install(&settings_path, &executable, &self.data_dir)
+        } else {
+            ClaudeQuota::remove(&settings_path, &executable, &self.data_dir)
+        };
+        if result.is_err() {
+            self.update_status(|status| status.claude_quota_available = false);
+        }
+    }
+
+    fn refresh_status(&self) {
+        let claude_hooks = crate::hook_install_current("claude");
+        let codex_hooks = crate::hook_install_current("codex");
+        let cursor_hooks = crate::integration_hook_current("cursor");
+        let trae_hooks = crate::integration_hook_current("trae");
+        let grok_hooks = crate::integration_hook_current("grok");
+        let deepseek_hooks = crate::integration_hook_current("deepseek");
+        let key_saved = self.key_store.has_key().unwrap_or(false);
+        self.update_status(|status| {
+            status.claude_hooks_installed = claude_hooks;
+            status.codex_hooks_installed = codex_hooks;
+            status.cursor_hooks_installed = cursor_hooks;
+            status.trae_hooks_installed = trae_hooks;
+            status.grok_hooks_installed = grok_hooks;
+            status.deepseek_hooks_prepared = deepseek_hooks;
+            status.key_saved = key_saved;
+        });
+    }
+
+    fn update_status(&self, change: impl FnOnce(&mut NotificationStatus)) {
+        let mut status = self.status.lock().unwrap();
+        let before = status.clone();
+        change(&mut status);
+        if *status != before {
+            let _ = self.app.emit("notification-status-changed", status.clone());
+        }
+    }
+}
+
+fn diagnostic_send_result(
+    result: &Result<(), BarkError>,
+) -> (DiagnosticOutcome, Option<DiagnosticReason>) {
+    match result {
+        Ok(()) => (DiagnosticOutcome::Sent, None),
+        Err(BarkError::Rejected) => (DiagnosticOutcome::Failed, Some(DiagnosticReason::Rejected)),
+        Err(BarkError::Unsent) => (DiagnosticOutcome::Failed, Some(DiagnosticReason::Network)),
+        Err(BarkError::Ambiguous) => (
+            DiagnosticOutcome::Failed,
+            Some(DiagnosticReason::Unconfirmed),
+        ),
+    }
+}
+
+fn status_or_unavailable(service: Option<&NotificationService>) -> NotificationStatus {
+    service.map(NotificationService::status).unwrap_or_default()
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+fn due(last: &Mutex<u64>, now: u64) -> bool {
+    let mut last = last.lock().unwrap();
+    if *last != 0 && now.saturating_sub(*last) < QUOTA_POLL_MS {
+        return false;
+    }
+    *last = now;
+    true
+}
+fn snapshot_is_fresh(path: &std::path::Path) -> bool {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age <= Duration::from_secs(600))
+}
+
+pub(crate) fn can_access_notification_commands(label: &str) -> bool {
+    label == "notifications"
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+
+    #[test]
+    fn absent_optional_service_reports_unavailable_without_a_panic() {
+        let status = status_or_unavailable(None);
+        assert!(!status.service_available);
+    }
+}
+
+fn ensure_notification_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    if can_access_notification_commands(window.label()) {
+        Ok(())
+    } else {
+        Err("Notification command unavailable from this window".into())
+    }
+}
+
+#[tauri::command]
+pub fn get_notification_settings(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+) -> Result<NotificationSettings, String> {
+    ensure_notification_window(&window)?;
+    Ok(service
+        .as_deref()
+        .map(NotificationService::settings)
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn set_notification_settings(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+    settings: NotificationSettings,
+) -> Result<NotificationSettings, String> {
+    ensure_notification_window(&window)?;
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .set_settings(settings)
+}
+
+#[tauri::command]
+pub fn save_bark_key(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+    key: String,
+) -> Result<(), String> {
+    ensure_notification_window(&window)?;
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .save_key(&key)
+}
+
+#[tauri::command]
+pub fn delete_bark_key(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+) -> Result<(), String> {
+    ensure_notification_window(&window)?;
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .delete_key()
+}
+
+#[tauri::command]
+pub fn send_test_notification(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+) -> Result<TestResult, String> {
+    ensure_notification_window(&window)?;
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .send_test()
+}
+
+#[tauri::command]
+pub fn send_simulated_notification(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+    request: TestRequest,
+) -> Result<TestResult, String> {
+    ensure_notification_window(&window)?;
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .send_simulated(request)
+}
+
+#[tauri::command]
+pub fn get_notification_status(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+) -> Result<NotificationStatus, String> {
+    ensure_notification_window(&window)?;
+    Ok(status_or_unavailable(service.as_deref()))
+}
+
+#[tauri::command]
+pub fn install_integration_hook(
+    window: tauri::WebviewWindow,
+    source: String,
+) -> Result<(), String> {
+    ensure_notification_window(&window)?;
+    crate::setup_integration_hooks(&source)
+}
+
+#[tauri::command]
+pub fn get_notification_diagnostics(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+) -> Result<Vec<DiagnosticEntry>, String> {
+    ensure_notification_window(&window)?;
+    Ok(service
+        .as_deref()
+        .map(NotificationService::diagnostics)
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn clear_notification_diagnostics(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, Option<Arc<NotificationService>>>,
+) -> Result<(), String> {
+    ensure_notification_window(&window)?;
+    service
+        .as_deref()
+        .ok_or("Notification service unavailable")?
+        .clear_diagnostics()
+}
