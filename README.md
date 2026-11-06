@@ -12,9 +12,9 @@
 
 It shows a colored indicator in your system tray so you can tell at a glance what your AI agent is doing — without keeping the terminal visible. Bubu, the built-in animated desktop pet, reacts to your agent's status.
 
-Version 1.0.0 supports **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** and **[OpenAI Codex CLI](https://github.com/openai/codex)**, with optional hooks for Cursor, TRAE, Grok Build, and DeepSeek Harness. DeepSeek Harness needs its official bridge mounted separately.
+Version 1.0.1 supports **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** and **[OpenAI Codex CLI](https://github.com/openai/codex)**, with optional hooks for Cursor, TRAE, Grok Build, and DeepSeek Harness. DeepSeek Harness needs its official bridge mounted separately.
 
-**First public release: 1.0.0.** Download it from the [release page](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest).
+**Current stable release: 1.0.1.** Version 1.0.0 was the first public release. Download the current version from the [release page](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest).
 
 ## Contents
 
@@ -35,18 +35,18 @@ Download the installer for your system from the [latest release](https://github.
 
 | System | Package | Install |
 |---|---|---|
-| macOS 12+ (Apple Silicon) | [DMG](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.0/Vibe.Coding.Light_1.0.0_aarch64.dmg) | Open the DMG, drag **Vibe Coding Light.app** into Applications, then launch it from Applications. |
-| Windows 10+ (x64) | [Installer](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.0/Vibe.Coding.Light_1.0.0_x64-setup.exe) | Run `-setup.exe`, follow the installer, then launch from Start. |
-| Linux (amd64) | [AppImage](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.0/Vibe.Coding.Light_1.0.0_amd64.AppImage) | Make it executable and run; a graphical desktop and WebKitGTK 4.1 are required. |
+| macOS 12+ (Apple Silicon) | [DMG](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/Vibe.Coding.Light_1.0.1_aarch64.dmg) | Open the DMG, drag **Vibe Coding Light.app** into Applications, then launch it from Applications. |
+| Windows 10+ (x64) | [Installer](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/Vibe.Coding.Light_1.0.1_x64-setup.exe) | Run `-setup.exe`, follow the installer, then launch from Start. |
+| Linux (amd64) | [AppImage](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/Vibe.Coding.Light_1.0.1_amd64.AppImage) | Make it executable and run; a graphical desktop and WebKitGTK 4.1 are required. |
 
 On Linux, from the download directory:
 
 ```bash
-chmod +x Vibe.Coding.Light_1.0.0_amd64.AppImage
-./Vibe.Coding.Light_1.0.0_amd64.AppImage
+chmod +x Vibe.Coding.Light_1.0.1_amd64.AppImage
+./Vibe.Coding.Light_1.0.1_amd64.AppImage
 ```
 
-The release also includes [SHA256SUMS.txt](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.0/SHA256SUMS.txt). Compute the installer's digest with `shasum -a 256 <filename>` on macOS, `sha256sum <filename>` on Linux, or `Get-FileHash <filename> -Algorithm SHA256` in Windows PowerShell, then compare it with the corresponding entry in the file.
+The release also includes [SHA256SUMS.txt](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/SHA256SUMS.txt). Compute the installer's digest with `shasum -a 256 <filename>` on macOS, `sha256sum <filename>` on Linux, or `Get-FileHash <filename> -Algorithm SHA256` in Windows PowerShell, then compare it with the corresponding entry in the file.
 Replace `<filename>` with the downloaded file's actual name. In PowerShell, quote paths that contain spaces.
 
 The macOS build is ad-hoc signed but has no Apple Developer ID signature or notarization; first launch may require **Open Anyway** in System Settings → Privacy & Security. The Windows installer is unsigned. Intel Mac users can build from source. Linux requires a desktop environment and WebKitGTK 4.1.
@@ -149,7 +149,7 @@ Choose **Pet the Pet** in the tray menu, or press **⌘B** on macOS (**Ctrl+B** 
 2. Choose **One image for every state** to use one asset, or **Different images for each state** to edit five clearly separated tabs: required Default / Rest plus optional Working, Waiting, Error, and Completed. The preview stays next to the editor on wide windows and above it on narrow windows. Missing state assets use the default. Switching modes keeps your draft; saving in single-image mode stores only the default.
 3. Each slot accepts PNG, JPEG, or a transparent GIF (up to 10 MiB per file and 25 MiB for the whole pet). On macOS 14+, choose **Remove background automatically** for a still image; choose **Keep transparent PNG** for an image with existing transparency. Transparent PNG and GIF work on all supported desktop systems. GIFs require **Keep transparent GIF animation** and are not cut out frame by frame. Still images may be up to 4096 pixels per side; GIFs may be up to 1024 pixels per side and must have 2–120 frames.
 4. For each static image, choose its own motion: follow the agent state, still, sway, float, breathe, bounce, or wobble. GIFs keep their own animation and do not offer an extra motion effect. An empty state uses the default image and its motion.
-5. Preview each state, enter a **1–64 character** name and a size from **0.5 to 3**, then click **Save and Use**. The pet window grows with the image, and the preview shows its actual window dimensions. Previewing alone does not replace the active pet. **My pets** lets you choose **Default Bubu**, **Default Yier**, or a saved pet. Selecting either built-in pet plays its GIF in the preview, where you can switch among five states. Built-in pets cannot be deleted.
+5. Preview each state, enter a **1–64 character** name and a size from **0.5 to 3**, then click **Save and Use**. The pet window grows with the image, and the preview shows its actual window dimensions. Previewing alone does not replace the active pet. **My pets** lets you choose **Default Bubu**, **Default Yier**, or a saved pet. In different-images mode, clicking a state tab immediately previews that state for the selected built-in pet, a saved pet, or a new draft; states without their own image use the default. In one-image mode, use the state preview menu to inspect a selected pet. Built-in pets cannot be deleted.
 
 Static assets are stored as processed 256×256 PNGs; GIF bytes, timing, and loop settings are kept. Everything stays in Vibe Coding Light's local app data; source photos are not uploaded. Existing single-image pets remain usable, including their saved placement. New pets are centered; horizontal and vertical offset controls have been removed. Windows and Linux also support transparent PNG/GIF custom pets.
 

@@ -355,7 +355,7 @@ describe("settings preview", () => {
 });
 
 describe("saved pets", () => {
-  it("previews either built-in GIF set and lets users switch preview state", async () => {
+  it("uses state tabs to preview either built-in GIF set", async () => {
     let selected = "builtin-cat";
     vi.mocked(invoke).mockImplementation(async (command, args) => {
       if (command === "get_app_locale") return "zh-CN";
@@ -370,12 +370,148 @@ describe("saved pets", () => {
     const choices = [...document.querySelectorAll<HTMLButtonElement>("#saved-pets button")].map((button) => button.textContent);
     expect(choices).toContain("默认布布");
     expect(choices).toContain("默认一二");
+    enterStateMode();
+    expect(document.querySelector<HTMLElement>("#builtin-preview-control")!.hidden).toBe(true);
+    expect([...document.querySelectorAll("#slot-tabs .tab-detail")].every((item) => item.textContent === "已设置")).toBe(true);
+    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="working"]')!.click();
+    expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/bubu/working.gif");
     document.querySelector<HTMLButtonElement>('#saved-pets [data-pet-id="builtin-yier"]')!.click();
-    await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/yier/default.gif"));
+    await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/yier/working.gif"));
+    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="error"]')!.click();
+    expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/yier/error.gif");
+    const style = document.querySelector<HTMLSelectElement>("#pet-style")!;
+    style.value = "single"; style.dispatchEvent(new Event("change"));
+    expect(document.querySelector<HTMLElement>("#builtin-preview-control")!.hidden).toBe(false);
     const previewState = document.querySelector<HTMLSelectElement>("#builtin-preview-state")!;
+    expect(previewState.value).toBe("error");
     previewState.value = "working";
     previewState.dispatchEvent(new Event("change"));
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/yier/working.gif");
+  });
+
+  it("previews saved custom GIF states with default fallback and then follows a new draft", async () => {
+    let selected = "saved";
+    const saved = {
+      kind: "photo" as const, id: "saved", scale: 2, offset_x: 0, offset_y: 0,
+      assets: {
+        default: { kind: "gif" as const, data_url: "data:image/gif;base64,REVT" },
+        working: { kind: "gif" as const, data_url: "data:image/gif;base64,V09SSw==" },
+      },
+      motions: {}, invalid_slots: [],
+    };
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === "get_app_locale") return "zh-CN";
+      if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true, transparent_gif: true };
+      if (command === "list_photo_pets") return [photo("saved")];
+      if (command === "get_active_pet") return selected === "saved" ? saved : { kind: "builtin", id: selected };
+      if (command === "select_pet") { selected = (args as { id: string }).id; return; }
+      if (command === "delete_photo_pet") { selected = "builtin-cat"; return; }
+      if (command === "prepare_pet_preview") return { kind: "png", data_url: "data:image/png;base64,RFJBRlQ=" };
+      return [];
+    });
+    document.body.innerHTML = settingsMarkup();
+    mountSettings();
+    await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe(saved.assets.default.data_url));
+    expect(document.querySelector("#preview-context")?.textContent).toContain("saved");
+    expect(document.querySelector<HTMLElement>("#processed-frame")?.style.transform).toBe("scale(2)");
+    enterStateMode();
+    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="working"]')!.click();
+    expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe(saved.assets.working.data_url);
+    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="waiting"]')!.click();
+    expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe(saved.assets.default.data_url);
+    expect(document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="waiting"] .tab-detail')?.textContent).toBe("使用默认");
+    chooseFile(document.querySelector("#photo-file")!, file("new"));
+    await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,RFJBRlQ="));
+    expect(document.querySelector("#preview-context")?.textContent).toContain("草稿");
+    expect(document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="waiting"] .tab-detail')?.textContent).toBe("已设置");
+    document.querySelector<HTMLButtonElement>('#saved-pets .saved-row button[aria-label="删除 saved"]')!.click();
+    await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/bubu/waiting.gif"));
+    expect(document.querySelector("#preview-context")?.textContent).toContain("默认布布");
+  });
+
+  it("returns to a retained draft when its scale, motion, or processing mode changes", async () => {
+    let selected = "builtin-cat";
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === "get_app_locale") return "zh-CN";
+      if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true, transparent_gif: true };
+      if (command === "get_active_pet") return { kind: "builtin", id: selected };
+      if (command === "select_pet") { selected = (args as { id: string }).id; return; }
+      if (command === "prepare_pet_preview") return { kind: "png", data_url: "data:image/png;base64,UE5H" };
+      return [];
+    });
+    document.body.innerHTML = settingsMarkup();
+    mountSettings();
+    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toContain("制作新桌宠"));
+    await vi.waitFor(() => expect(document.querySelector<HTMLSelectElement>("#photo-mode")!.options.length).toBeGreaterThan(0));
+    chooseFile(document.querySelector("#photo-file")!, file("new"));
+    await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H"));
+    const selectYier = async () => {
+      document.querySelector<HTMLButtonElement>('#saved-pets [data-pet-id="builtin-yier"]')!.click();
+      await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/yier/default.gif"));
+    };
+    await selectYier();
+    const scale = document.querySelector<HTMLInputElement>("#pet-scale")!;
+    scale.value = "1.7"; scale.dispatchEvent(new Event("input"));
+    expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H");
+    expect(document.querySelector<HTMLElement>("#processed-frame")?.style.transform).toBe("scale(1.7)");
+    expect(document.querySelector("#status")?.textContent).toContain("预览已生成");
+    await selectYier();
+    const motion = document.querySelector<HTMLSelectElement>("#pet-motion")!;
+    motion.value = "sway"; motion.dispatchEvent(new Event("change"));
+    expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H");
+    expect(document.querySelector<HTMLImageElement>("#processed-preview")?.className).toBe("motion-sway");
+    await selectYier();
+    const mode = document.querySelector<HTMLSelectElement>("#photo-mode")!;
+    mode.value = "keep_alpha"; mode.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H"));
+    expect(document.querySelector("#preview-context")?.textContent).toContain("草稿");
+  });
+
+  it("does not let an older refresh overwrite a later pet selection", async () => {
+    const oldActive = deferred<{ kind: "builtin"; id: "builtin-cat" }>();
+    let activeReads = 0;
+    const controller = new SettingsController({
+      prepare: vi.fn(), save: vi.fn(), list: async () => [photo("saved")], select: async () => {}, delete: vi.fn(),
+      active: () => ++activeReads === 1 ? oldActive.promise : Promise.resolve({ kind: "builtin", id: "builtin-yier" }),
+    });
+    const refreshing = controller.refresh();
+    await vi.waitFor(() => expect(activeReads).toBe(1));
+    await controller.select("builtin-yier");
+    oldActive.resolve({ kind: "builtin", id: "builtin-cat" });
+    await refreshing;
+    expect(controller.selectedId).toBe("builtin-yier");
+    expect(controller.pets.map((pet) => pet.id)).toEqual(["saved"]);
+    expect(controller.activePet.kind).toBe("builtin");
+    if (controller.activePet.kind === "builtin") expect(controller.activePet.id).toBe("builtin-yier");
+  });
+
+  it("applies rapid pet selections in click order and clears stale feedback errors", async () => {
+    const first = deferred<void>();
+    const second = deferred<void>();
+    let active = "builtin-cat";
+    const choose = vi.fn(async (id: string) => {
+      if (id === "builtin-yier") await first.promise;
+      if (id === "saved") await second.promise;
+      active = id;
+    });
+    const controller = new SettingsController({
+      prepare: vi.fn(), save: vi.fn(), list: async () => [photo("saved")],
+      select: choose, delete: vi.fn(),
+      active: async () => active === "saved"
+        ? { kind: "photo", id: "saved", assets: {}, motions: {}, invalid_slots: [], scale: 1, offset_x: 0, offset_y: 0 }
+        : { kind: "builtin", id: active as "builtin-cat" | "builtin-yier" },
+    });
+    controller.error = { code: "internal_error", detail: "old error" };
+    const selectingYier = controller.select("builtin-yier");
+    const selectingSaved = controller.select("saved");
+    await vi.waitFor(() => expect(choose).toHaveBeenCalledTimes(1));
+    first.resolve();
+    await vi.waitFor(() => expect(choose).toHaveBeenCalledTimes(2));
+    second.resolve();
+    await Promise.all([selectingYier, selectingSaved]);
+    expect(controller.selectedId).toBe("saved");
+    expect(controller.activePet.kind).toBe("photo");
+    expect(controller.error).toBeNull();
   });
 
   it("updates selected pet only after select and delete succeed", async () => {

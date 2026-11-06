@@ -34,6 +34,7 @@ button:disabled { opacity: .52; cursor: default; }
 .preview-box { width: 100%; min-height: 174px; display: grid; place-items: center; border-radius: 10px; border: 1px solid #dde5df; overflow: hidden; }
 .preview-box.checker { background-color: #fff; background-image: linear-gradient(45deg, #e8ece8 25%, transparent 25%), linear-gradient(-45deg, #e8ece8 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e8ece8 75%), linear-gradient(-45deg, transparent 75%, #e8ece8 75%); background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0; }
 .preview-viewport { width: 128px; height: 128px; position: relative; }
+.preview-context { grid-column: 1 / -1; margin: 0 0 9px; color: #607467; font-size: .72rem; }
 .preview-window { width: 128px; height: 128px; overflow: hidden; position: absolute; left: 0; top: 0; transform-origin: top left; border: 1px solid #cbd9cf; background: #ffffff15; }
 #processed-frame { width: 128px; height: 128px; position: absolute; left: 50%; top: 50%; margin-left: -64px; margin-top: -64px; transform-origin: center; }
 #processed-preview { width: 128px; height: 128px; object-fit: contain; }
@@ -99,6 +100,7 @@ button:disabled { opacity: .52; cursor: default; }
   .panel { padding: 16px; }
   .editor-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "preview" "editor"; gap: 13px; }
   .preview-panel { position: static; display: grid; grid-template-columns: minmax(0, 1fr) 72px; column-gap: 12px; align-items: end; margin-bottom: 0; }
+  .preview-panel.selected-preview { grid-template-columns: minmax(0, 1fr); }
   .editor-main > .panel:first-child { margin-top: 0; }
   .preview-heading { grid-column: 1 / -1; }
   .preview-box { min-height: 146px; }
@@ -114,7 +116,7 @@ button:disabled { opacity: .52; cursor: default; }
 /* Shared appearance tokens. The checkerboard intentionally stays neutral so image alpha is visible. */
 :root[data-theme] { color: var(--text); background: var(--app-bg); }
 :root[data-theme] body { background: var(--app-bg); }
-:root[data-theme] :is(header p, .hint, .preview-size, .original-row, .builtin-preview-control, .tab-detail, .file-name, .slot-status) { color: var(--muted); }
+:root[data-theme] :is(header p, .hint, .preview-size, .preview-context, .original-row, .builtin-preview-control, .tab-detail, .file-name, .slot-status) { color: var(--muted); }
 :root[data-theme] .eyebrow { color: var(--accent-text); }
 :root[data-theme] :is(.panel, .asset-editor, .preview-panel, .original-thumb, .slot-tabs button) { background: var(--panel); border-color: var(--border); }
 :root[data-theme] :is(input, select, button) { color: var(--text); background: var(--panel); border-color: var(--border); }

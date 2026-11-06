@@ -12,9 +12,9 @@
 
 让你一眼就能看到 AI 编程助手正在做什么 —— 不需要一直盯着终端窗口。内置桌宠布布也会根据 Agent 的状态做出反应。
 
-1.0.0 版支持 **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** 和 **[OpenAI Codex CLI](https://github.com/openai/codex)**，并提供 Cursor、TRAE、Grok Build 与 DeepSeek Harness 的可选 Hook 接入；DeepSeek Harness 需额外挂载官方桥接插件。
+1.0.1 版支持 **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** 和 **[OpenAI Codex CLI](https://github.com/openai/codex)**，并提供 Cursor、TRAE、Grok Build 与 DeepSeek Harness 的可选 Hook 接入；DeepSeek Harness 需额外挂载官方桥接插件。
 
-**首个公开正式版：1.0.0。** 请从[发布页](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest)下载。
+**当前正式版：1.0.1。** 1.0.0 是首个公开正式版；请从[发布页](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest)下载当前版本。
 
 ## 目录
 
@@ -35,18 +35,18 @@
 
 | 系统 | 安装包 | 安装方式 |
 |---|---|---|
-| macOS 12+（Apple Silicon） | [DMG](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.0/Vibe.Coding.Light_1.0.0_aarch64.dmg) | 打开 DMG，将 **Vibe Coding Light.app** 拖入“应用程序”，再从“应用程序”启动。 |
-| Windows 10+（x64） | [安装程序](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.0/Vibe.Coding.Light_1.0.0_x64-setup.exe) | 运行 `-setup.exe`，按提示安装，再从开始菜单启动。 |
-| Linux（amd64） | [AppImage](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.0/Vibe.Coding.Light_1.0.0_amd64.AppImage) | 添加执行权限后运行；需要图形桌面与 WebKitGTK 4.1。 |
+| macOS 12+（Apple Silicon） | [DMG](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/Vibe.Coding.Light_1.0.1_aarch64.dmg) | 打开 DMG，将 **Vibe Coding Light.app** 拖入“应用程序”，再从“应用程序”启动。 |
+| Windows 10+（x64） | [安装程序](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/Vibe.Coding.Light_1.0.1_x64-setup.exe) | 运行 `-setup.exe`，按提示安装，再从开始菜单启动。 |
+| Linux（amd64） | [AppImage](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/Vibe.Coding.Light_1.0.1_amd64.AppImage) | 添加执行权限后运行；需要图形桌面与 WebKitGTK 4.1。 |
 
 Linux 示例（在下载目录中执行）：
 
 ```bash
-chmod +x Vibe.Coding.Light_1.0.0_amd64.AppImage
-./Vibe.Coding.Light_1.0.0_amd64.AppImage
+chmod +x Vibe.Coding.Light_1.0.1_amd64.AppImage
+./Vibe.Coding.Light_1.0.1_amd64.AppImage
 ```
 
-发布页还提供 [SHA256SUMS.txt](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.0/SHA256SUMS.txt)。下载后可用 `shasum -a 256 <文件名>`（macOS）、`sha256sum <文件名>`（Linux）或 PowerShell 的 `Get-FileHash <文件名> -Algorithm SHA256`（Windows）计算安装包摘要，与清单中对应文件的值比较。
+发布页还提供 [SHA256SUMS.txt](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/SHA256SUMS.txt)。下载后可用 `shasum -a 256 <文件名>`（macOS）、`sha256sum <文件名>`（Linux）或 PowerShell 的 `Get-FileHash <文件名> -Algorithm SHA256`（Windows）计算安装包摘要，与清单中对应文件的值比较。
 将 `<文件名>` 替换为实际下载的文件名；Windows PowerShell 中如文件名含空格，请用引号包住路径。
 
 macOS 安装包使用 ad-hoc 签名，尚未通过 Apple Developer ID 签名或公证；首次打开可能需要在“系统设置 → 隐私与安全性”点击“仍要打开”。Windows 安装包尚未代码签名。Intel Mac 可从源码构建。Linux 需要可用的桌面环境与 WebKitGTK 4.1。
@@ -151,7 +151,7 @@ Vibe Coding Light 内置两套桌宠：**默认布布**和**默认一二**。新
 2. 选择**单图：所有状态共用一张**；或选择**按状态：为不同状态设置素材**。按状态模式有必选的默认／休息素材，以及可选的工作、等待、出错和完成素材。宽窗口时预览固定在编辑区旁，窄窗口时预览排在编辑区前。未设置的状态会使用默认素材。切换模式会保留草稿；单图模式保存时只写入默认素材。
 3. 每个位置可上传 PNG、JPEG 或已有透明背景的 GIF（单文件不超过 10 MiB，整套素材合计不超过 25 MiB）。macOS 14 及以上可为静态图片选择**自动去背景**；已有透明背景的 PNG 选**保留透明 PNG**。各桌面系统都可使用透明 PNG 或透明 GIF。GIF 须选**保留透明 GIF 动画**，不会逐帧抠图。静态图宽高均不超过 4096 像素；GIF 宽高均不超过 1024 像素，须有 2–120 帧。
 4. 每张静态图都可单独选择动效：跟随状态、静止、左右摇摆、上下浮动、呼吸、弹跳或轻微晃动。GIF 保留自身逐帧动画，不叠加额外动效；缺少素材的状态沿用默认图片及其动效。
-5. 预览各状态，设置 **1–64 字符**的名称和 **0.5–3 倍**大小，再点击**保存并使用**。桌宠窗口会随图片放大，预览旁显示实际窗口尺寸。仅预览不会更换当前桌宠。同一窗口的**我的桌宠**可选择**默认布布**、**默认一二**或已保存桌宠；选中默认桌宠时，预览区直接播放其 GIF，并可切换五种状态。两套内置桌宠不能删除。
+5. 预览各状态，设置 **1–64 字符**的名称和 **0.5–3 倍**大小，再点击**保存并使用**。桌宠窗口会随图片放大，预览旁显示实际窗口尺寸。仅预览不会更换当前桌宠。同一窗口的**我的桌宠**可选择**默认布布**、**默认一二**或已保存桌宠。按状态模式下，点击状态选项卡就会立即预览当前选中的内置桌宠、已保存桌宠或新草稿的对应素材；未设置专属素材时使用默认素材。单图模式下，可通过预览区的状态菜单查看已选桌宠。两套内置桌宠不能删除。
 
 静态素材在本地处理为 256×256 透明 PNG；GIF 保留原始动画数据。素材和设置都保存在本机，原图不会上传。旧版单图桌宠及其已保存的位置仍可使用；新桌宠居中显示，设置页不再提供水平、垂直偏移。Windows 和 Linux 也支持透明 PNG/GIF 自定义桌宠。
 

@@ -7,6 +7,7 @@ import type { Locale, PetError, UiKey } from "./i18n";
 import type { DraftMode } from "./pet/asset_draft";
 import type { ActivePet, ImportCapabilities, PetImageMode, PetManifest, PetMotion, PetSlot, PreparedAssetPayload } from "./pet/types";
 import { builtinGif, BUILTIN_BUBU_ID, BUILTIN_YIER_ID, isBuiltinPetId } from "./pet/builtin";
+import { imageForState, motionForState } from "./pet/motion";
 import { applyPetMotionMetrics, BUILTIN_PET_SCALE, petWindowSide, validPetScale } from "./pet/window_size";
 import "./appearance.css";
 import "./settings.css";
@@ -62,8 +63,12 @@ export class SettingsController {
   busy = false;
   pets: PetManifest[] = [];
   selectedId: string = BUILTIN_BUBU_ID;
+  activePet: ActivePet = { kind: "builtin", id: BUILTIN_BUBU_ID };
   invalidSlots: PetSlot[] = [];
   private listeners = new Set<() => void>();
+  private selectionQueue: Promise<void> = Promise.resolve();
+  private activeGeneration = 0;
+  private petsGeneration = 0;
 
   constructor(private readonly api: SettingsApi) {
     this.draft = new AssetDraft(() => this.notify());
@@ -75,6 +80,12 @@ export class SettingsController {
     this.listeners.add(listener); return () => this.listeners.delete(listener);
   }
   private notify(): void { this.listeners.forEach((listener) => listener()); }
+
+  private enqueueSelection(work: () => Promise<void>): Promise<void> {
+    const operation = this.selectionQueue.then(work);
+    this.selectionQueue = operation.catch(() => {});
+    return operation;
+  }
 
   private fail(code: string): never {
     const error = codedError(code);
@@ -103,11 +114,21 @@ export class SettingsController {
   }
 
   async refresh(): Promise<void> {
+    const activeGeneration = ++this.activeGeneration;
+    const petsGeneration = ++this.petsGeneration;
     const [pets, active] = await Promise.all([this.api.list(), this.api.active()]);
-    this.pets = pets;
-    this.selectedId = active.kind === "photo" ? active.id : active.id ?? BUILTIN_BUBU_ID;
-    this.invalidSlots = active.kind === "photo" ? (active.invalid_slots ?? []) : [];
-    this.notify();
+    let changed = false;
+    if (petsGeneration === this.petsGeneration) {
+      this.pets = pets;
+      changed = true;
+    }
+    if (activeGeneration === this.activeGeneration) {
+      this.activePet = active;
+      this.selectedId = active.kind === "photo" ? active.id : active.id ?? BUILTIN_BUBU_ID;
+      this.invalidSlots = active.kind === "photo" ? (active.invalid_slots ?? []) : [];
+      changed = true;
+    }
+    if (changed) this.notify();
   }
 
   async save(name: string, scale: number, motions: Partial<Record<PetSlot, PetMotion>>): Promise<PetManifest> {
@@ -135,26 +156,39 @@ export class SettingsController {
     } finally { this.busy = false; this.notify(); }
   }
 
-  async select(id: string): Promise<void> {
-    try {
-      await this.api.select(id);
-      this.selectedId = id;
-      const active = await this.api.active();
-      this.invalidSlots = active.kind === "photo" ? (active.invalid_slots ?? []) : [];
-      this.feedback = "selected_success";
-      this.notify();
-    } catch (error) { this.error = asPetError(error); this.notify(); throw error; }
+  select(id: string): Promise<void> {
+    this.activeGeneration++;
+    return this.enqueueSelection(async () => {
+      try {
+        await this.api.select(id);
+        const active = await this.api.active();
+        this.selectedId = id;
+        this.activePet = active;
+        this.invalidSlots = active.kind === "photo" ? (active.invalid_slots ?? []) : [];
+        this.error = null;
+        this.feedback = "selected_success";
+        this.notify();
+      } catch (error) { this.error = asPetError(error); this.notify(); throw error; }
+    });
   }
 
-  async delete(id: string): Promise<void> {
-    try {
-      await this.api.delete(id);
-      this.pets = this.pets.filter((pet) => pet.id !== id);
-      if (this.selectedId === id) this.selectedId = BUILTIN_BUBU_ID;
-      if (isBuiltinPetId(this.selectedId)) this.invalidSlots = [];
-      this.feedback = "deleted_success";
-      this.notify();
-    } catch (error) { this.error = asPetError(error); this.notify(); throw error; }
+  delete(id: string): Promise<void> {
+    this.activeGeneration++;
+    this.petsGeneration++;
+    return this.enqueueSelection(async () => {
+      try {
+        await this.api.delete(id);
+        this.pets = this.pets.filter((pet) => pet.id !== id);
+        if (this.selectedId === id) {
+          this.activePet = await this.api.active();
+          this.selectedId = this.activePet.kind === "photo" ? this.activePet.id : this.activePet.id ?? BUILTIN_BUBU_ID;
+        }
+        if (isBuiltinPetId(this.selectedId)) this.invalidSlots = [];
+        this.error = null;
+        this.feedback = "deleted_success";
+        this.notify();
+      } catch (error) { this.error = asPetError(error); this.notify(); throw error; }
+    });
   }
 }
 
@@ -192,8 +226,10 @@ export function mountSettings(): void {
   const motionInput = root.querySelector<HTMLSelectElement>("#pet-motion")!;
   const motionHint = root.querySelector<HTMLElement>("#motion-hint")!;
   const original = root.querySelector<HTMLImageElement>("#original-preview")!;
+  const previewPanel = root.querySelector<HTMLElement>("#preview-panel")!;
   const originalRow = root.querySelector<HTMLElement>("#original-row")!;
   const processed = root.querySelector<HTMLImageElement>("#processed-preview")!;
+  const previewContext = root.querySelector<HTMLElement>("#preview-context")!;
   const builtinPreviewControl = root.querySelector<HTMLElement>("#builtin-preview-control")!;
   const builtinPreviewState = root.querySelector<HTMLSelectElement>("#builtin-preview-state")!;
   const processedFrame = root.querySelector<HTMLElement>("#processed-frame")!;
@@ -212,7 +248,7 @@ export function mountSettings(): void {
   const motions = new Map<PetSlot, PetMotion>();
   let selectedSlot: PetSlot = "default";
   let builtinPreviewSlot: PetSlot = "default";
-  let showSelectedBuiltin = true;
+  let previewMode: "selected" | "draft" = "selected";
   let lastStateSlot: PetSlot = "default";
   let capabilities: ImportCapabilities = { automatic: false, transparent_png: false, transparent_gif: false };
   let capabilitiesLoaded = false;
@@ -255,6 +291,11 @@ export function mountSettings(): void {
   const selectedAsset = () =>
     controller.draft.get(selectedSlot)?.asset ?? controller.draft.get("default")?.asset ?? null;
 
+  const clearEditingFeedback = () => {
+    controller.feedback = null;
+    controller.error = null;
+  };
+
   const motionValues: PetMotion[] = ["follow_state", "still", "sway", "float", "breathe", "bounce", "wobble"];
   const configureMotion = () => {
     motionInput.replaceChildren(...motionValues.map((motion) => new Option(t(locale, `motion_${motion}` as UiKey), motion)));
@@ -277,7 +318,9 @@ export function mountSettings(): void {
   const updateTransform = () => {
     const draftScale = Number(scaleInput.value);
     const valid = validPetScale(draftScale);
-    const scale = showSelectedBuiltin && isBuiltinPetId(controller.selectedId) ? BUILTIN_PET_SCALE : draftScale;
+    const scale = previewMode === "selected"
+      ? controller.activePet.kind === "photo" ? controller.activePet.scale : BUILTIN_PET_SCALE
+      : draftScale;
     if (validPetScale(scale)) {
       const side = petWindowSide(scale);
       const displaySide = Math.min(side, 160);
@@ -300,10 +343,17 @@ export function mountSettings(): void {
 
   const render = () => {
     renderStaticCopy();
-    const previewBuiltin = showSelectedBuiltin && isBuiltinPetId(controller.selectedId);
-    builtinPreviewControl.hidden = !previewBuiltin;
-    originalRow.hidden = previewBuiltin;
-    if (previewBuiltin) {
+    const previewSelected = previewMode === "selected";
+    previewPanel.classList.toggle("selected-preview", previewSelected);
+    const previewSlot = controller.mode === "states" ? selectedSlot : builtinPreviewSlot;
+    const selectedPet = controller.activePet;
+    const selectedName = selectedPet.kind === "builtin"
+      ? t(locale, selectedPet.id === BUILTIN_YIER_ID ? "builtin_yier" : "builtin_cat")
+      : controller.pets.find((pet) => pet.id === selectedPet.id)?.name ?? selectedPet.id;
+    previewContext.textContent = previewSelected ? t(locale, "selected_preview", { name: selectedName }) : t(locale, "draft_preview");
+    builtinPreviewControl.hidden = !previewSelected || controller.mode === "states";
+    originalRow.hidden = previewSelected;
+    if (previewSelected) {
       builtinPreviewState.replaceChildren(...slots.map((slot) => new Option(t(locale, slotKeys[slot]), slot)));
       builtinPreviewState.value = builtinPreviewSlot;
     }
@@ -315,14 +365,19 @@ export function mountSettings(): void {
     const originalUrl = originalUrls.get(selectedSlot) ?? originalUrls.get("default");
     if (originalUrl) original.src = originalUrl;
     else original.removeAttribute("src");
-    const previewSource = previewBuiltin ? builtinGif(controller.selectedId, builtinPreviewSlot) : asset?.data_url;
+    const selectedImage = selectedPet.kind === "photo" ? imageForState(selectedPet, previewSlot === "default" ? "idle" : previewSlot) : null;
+    const previewSource = previewSelected
+      ? selectedPet.kind === "builtin" ? builtinGif(selectedPet.id, previewSlot) : selectedImage?.asset.data_url
+      : asset?.data_url;
     if (previewSource) {
       if (processed.getAttribute("src") !== previewSource) processed.src = previewSource;
     } else processed.removeAttribute("src");
     processed.style.visibility = previewSource ? "visible" : "hidden";
-    const previewMotion = motions.get(selectedEntry?.asset ? selectedSlot : "default") ?? "follow_state";
-    processed.className = previewBuiltin || asset?.kind === "gif" ? "animated"
-      : `motion-${previewMotion === "follow_state" ? selectedSlot === "default" ? "idle" : selectedSlot : previewMotion}`;
+    const previewMotion = previewSelected && selectedPet.kind === "photo"
+      ? motionForState(selectedPet, previewSlot === "default" ? "idle" : previewSlot)
+      : motions.get(selectedEntry?.asset ? selectedSlot : "default") ?? "follow_state";
+    processed.className = (previewSelected && selectedPet.kind === "builtin") || previewMotion === "gif" || (!previewSelected && asset?.kind === "gif") ? "animated"
+      : `motion-${previewMotion === "follow_state" ? previewSlot === "default" ? "idle" : previewSlot : previewMotion}`;
     configureMotion();
     slotTitle.textContent = t(locale, slotKeys[selectedSlot]);
     slotFileLabel.textContent = t(locale, selectedSlot === "default" ? "default_asset" : "upload_image");
@@ -345,7 +400,10 @@ export function mountSettings(): void {
       tab.replaceChildren();
       const label = document.createElement("span"); label.className = "tab-label"; label.textContent = t(locale, slotKeys[slot]);
       const detail = document.createElement("span"); detail.className = "tab-detail";
-      detail.textContent = t(locale, controller.draft.get(slot)?.asset ? "slot_set" : slot === "default" ? "slot_required" : "slot_fallback");
+      const hasAsset = previewSelected
+        ? selectedPet.kind === "builtin" || Boolean(selectedPet.assets[slot])
+        : Boolean(controller.draft.get(slot)?.asset);
+      detail.textContent = t(locale, hasAsset ? "slot_set" : slot === "default" ? "slot_required" : "slot_fallback");
       tab.append(label, detail);
     });
     const blocking = controller.draft.blockingError(controller.mode);
@@ -354,6 +412,7 @@ export function mountSettings(): void {
       : capabilitiesLoaded && fileInput.disabled ? t(locale, "mac_only")
       : controller.busy || controller.draft.isBusy(controller.mode) ? t(locale, "processing")
       : controller.feedback ? t(locale, controller.feedback)
+      : previewSelected ? t(locale, "start_new_pet")
       : asset ? t(locale, "preview_ready") : t(locale, "select_default");
     status.classList.toggle("error", Boolean(controller.error || blocking));
     savedWarning.hidden = controller.invalidSlots.length === 0;
@@ -367,9 +426,10 @@ export function mountSettings(): void {
       builtin.dataset.petId = id;
       builtin.textContent = t(locale, label);
       builtin.className = controller.selectedId === id ? "selected" : "";
+      builtin.disabled = controller.busy;
       builtin.onclick = () => {
         void controller.select(id).then(() => {
-          showSelectedBuiltin = true;
+          previewMode = "selected";
           builtinPreviewSlot = "default";
           render();
         }).catch(() => {});
@@ -380,10 +440,15 @@ export function mountSettings(): void {
       const row = document.createElement("div"); row.className = "saved-row";
       const choose = document.createElement("button"); choose.type = "button";
       choose.textContent = pet.name; choose.className = controller.selectedId === pet.id ? "selected" : "";
-      choose.onclick = () => { void controller.select(pet.id).then(() => { showSelectedBuiltin = false; render(); }).catch(() => {}); };
+      choose.disabled = controller.busy;
+      choose.onclick = () => { void controller.select(pet.id).then(() => { previewMode = "selected"; builtinPreviewSlot = "default"; render(); }).catch(() => {}); };
       const remove = document.createElement("button"); remove.type = "button"; remove.textContent = t(locale, "delete");
+      remove.disabled = controller.busy;
       remove.setAttribute("aria-label", t(locale, "delete_named", { name: pet.name }));
-      remove.onclick = () => { void controller.delete(pet.id).catch(() => {}); };
+      remove.onclick = () => {
+        const wasSelected = controller.selectedId === pet.id;
+        void controller.delete(pet.id).then(() => { if (wasSelected) previewMode = "selected"; render(); }).catch(() => {});
+      };
       row.append(choose, remove); list.append(row);
     }
   };
@@ -413,13 +478,14 @@ export function mountSettings(): void {
   };
   styleInput.onchange = () => {
     const nextMode = styleInput.value as DraftMode;
+    if (controller.mode === "states" && nextMode === "single") builtinPreviewSlot = selectedSlot;
     controller.setMode(nextMode);
     selectSlot(nextMode === "single" ? "default" : lastStateSlot);
   };
   fileInput.onchange = () => {
     const file = fileInput.files?.[0];
     if (!file) return;
-    showSelectedBuiltin = false;
+    previewMode = "draft";
     files.set(selectedSlot, file);
     motions.delete(selectedSlot);
     configureModes();
@@ -442,15 +508,21 @@ export function mountSettings(): void {
     const file = files.get(selectedSlot);
     const mode = modeInput.value as PetImageMode;
     modes.set(selectedSlot, mode);
-    if (file) void controller.loadSlot(selectedSlot, file, mode);
+    if (file) {
+      previewMode = "draft";
+      void controller.loadSlot(selectedSlot, file, mode);
+    }
   };
   motionInput.onchange = () => {
     if (controller.draft.get(selectedSlot)?.asset?.kind !== "png") return;
     motions.set(selectedSlot, motionInput.value as PetMotion);
+    previewMode = "draft";
+    clearEditingFeedback();
     render();
   };
   slotClear.onclick = () => {
     const slot = selectedSlot;
+    clearEditingFeedback();
     controller.draft.clear(slot);
     files.delete(slot);
     const url = originalUrls.get(slot);
@@ -459,12 +531,20 @@ export function mountSettings(): void {
     fileInput.value = "";
     modes.delete(slot);
     motions.delete(slot);
+    previewMode = "draft";
     configureModes();
     render();
   };
-  scaleInput.addEventListener("input", render);
+  scaleInput.addEventListener("input", () => {
+    if (controller.previewUrl) {
+      previewMode = "draft";
+      clearEditingFeedback();
+    }
+    render();
+  });
   saveButton.onclick = () => {
-    void controller.save(nameInput.value, Number(scaleInput.value), Object.fromEntries(motions) as Partial<Record<PetSlot, PetMotion>>).catch(() => {});
+    void controller.save(nameInput.value, Number(scaleInput.value), Object.fromEntries(motions) as Partial<Record<PetSlot, PetMotion>>)
+      .then(() => { previewMode = "selected"; render(); }).catch(() => {});
   };
   processed.addEventListener("animationend", (event) => {
     if (event.animationName === "pet-photo-completed" && !processed.classList.contains("animated")) processed.className = "motion-idle";
