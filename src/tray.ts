@@ -57,8 +57,10 @@ export class TrayPanelController {
   private tab: "overview" | "agents" | "settings" = "overview";
   private state: TrayPanelState | null = null;
   private pending = false;
+  private refreshing = false;
   private error = false;
   private deferredRender = false;
+  private refreshGeneration = 0;
 
   constructor(private readonly root: HTMLElement, private readonly api: TrayPanelApi) {
     root.addEventListener("click", (event) => {
@@ -93,16 +95,22 @@ export class TrayPanelController {
   }
 
   async refresh(): Promise<void> {
-    if (this.pending) return;
+    if (this.pending || this.refreshing) return;
+    this.refreshing = true;
+    const generation = ++this.refreshGeneration;
     const wasError = this.error;
     try {
       const next = await this.api.getState();
+      if (generation !== this.refreshGeneration) return;
       const changed = JSON.stringify(next) !== JSON.stringify(this.state);
       this.state = next;
       this.error = false;
       if (!changed && !wasError) return;
     } catch {
+      if (generation !== this.refreshGeneration) return;
       this.error = true;
+    } finally {
+      this.refreshing = false;
     }
     if ((document.activeElement as HTMLElement)?.dataset.role === "language") {
       this.deferredRender = true;
@@ -113,6 +121,7 @@ export class TrayPanelController {
 
   private async runAction(action: string): Promise<void> {
     if (this.pending) return;
+    this.refreshGeneration++;
     this.pending = true;
     this.error = false;
     try {
@@ -136,7 +145,7 @@ export class TrayPanelController {
     const focusRole = focused?.dataset.role;
     document.documentElement.lang = s.locale;
     if (window.matchMedia) applyAppearance(s.appearance, window.matchMedia("(prefers-color-scheme: dark)").matches);
-    const button = (action: string, label: string, extra = "") => `<button type="button" class="tray-row ${extra}" data-action="${action}" ${this.pending ? "disabled" : ""}>${escapeHtml(label)}<span aria-hidden="true">›</span></button>`;
+    const button = (action: string, label: string, extra = "", disabled = false) => `<button type="button" class="tray-row ${extra}" data-action="${action}" ${disabled || this.pending ? "disabled" : ""}>${escapeHtml(label)}<span aria-hidden="true">›</span></button>`;
     const toggle = (action: string, label: string, checked: boolean, disabled = false) => `<label class="tray-toggle"><span>${escapeHtml(label)}</span><input type="checkbox" data-action="${action}" aria-label="${escapeHtml(label)}" ${checked ? "checked" : ""} ${disabled || this.pending ? "disabled" : ""}><i aria-hidden="true"></i></label>`;
     const agentNames: Record<string, string> = { claude: "Claude Code", codex: "Codex", cursor: "Cursor", trae: zh ? "TRAE（中国版）" : "TRAE China", grok: "Grok Build", deepseek: "DeepSeek Harness" };
     const agentStatus = (id: string) => !s.notificationServiceAvailable ? (zh ? "状态不可用" : "Status unavailable") : !s.agentHooks[id] ? (zh ? "未接入" : "Not connected") : id === "deepseek" ? (zh ? "桥接待挂载" : "Bridge pending") : !s.agentSources[id] || !s.notificationEnabled ? (zh ? "已暂停" : "Paused") : (zh ? "已接入" : "Connected");
@@ -144,7 +153,7 @@ export class TrayPanelController {
     const nav = `<nav class="tray-nav" aria-label="${zh ? "菜单页面" : "Menu pages"}">${(["overview", "agents", "settings"] as const).map((tab, index) => `<button type="button" data-tab="${tab}" class="${this.tab === tab ? "active" : ""}" aria-current="${this.tab === tab ? "page" : "false"}">${[zh ? "概览" : "Overview", zh ? "Agent 接入" : "Agent setup", zh ? "设置" : "Settings"][index]}</button>`).join("")}</nav>`;
     const overview = `
       <section class="tray-current"><span class="tray-label">${zh ? "当前会话" : "CURRENT SESSION"}</span><strong>${escapeHtml(currentSession)}</strong></section>
-      <section class="tray-section"><h2>${zh ? "桌宠" : "Desktop pet"}</h2>${toggle("toggle_pet", s.togglePetLabel, s.petVisible)}<div class="tray-actions">${button("pet_action", s.petActionLabel)}${button("customize_pet", s.customizePetLabel)}</div></section>
+      <section class="tray-section"><h2>${zh ? "桌宠" : "Desktop pet"}</h2>${toggle("toggle_pet", s.togglePetLabel, s.petVisible)}<div class="tray-actions">${button("pet_action", s.petActionLabel, "", !s.petVisible)}${button("customize_pet", s.customizePetLabel)}</div></section>
       <section class="tray-section"><h2>${zh ? "最近会话" : "Recent sessions"}</h2><div class="tray-sessions"><ul>${s.sessions.slice(1).map((session) => `<li>${escapeHtml(session)}</li>`).join("") || `<li>${zh ? "暂无其他会话" : "No other sessions"}</li>`}</ul></div></section>
       <section class="tray-section"><h2>${zh ? "通知" : "Notifications"}</h2><div class="tray-status-line"><span>Bark</span><strong>${!s.notificationServiceAvailable ? (zh ? "不可用" : "Unavailable") : !s.barkKeySaved ? (zh ? "未配置" : "Not configured") : !s.notificationEnabled ? (zh ? "已暂停" : "Paused") : s.barkSendFailed ? (zh ? "上次发送失败" : "Last send failed") : (zh ? "已开启" : "On")}</strong></div>${button("notification_settings", s.notificationSettingsLabel)}</section>`;
     const agents = `<section class="tray-section tray-agent-intro"><h2>${zh ? "Agent 接入" : "Agent setup"}</h2><p class="tray-section-hint">${zh ? "安装 Hook 后，到通知设置中开启对应来源。" : "Install a Hook, then enable its source in Notification Settings."}</p></section><section class="tray-agent-list">${Object.keys(agentNames).map((id) => `<article class="tray-agent"><div><strong>${escapeHtml(agentNames[id])}</strong><span class="${s.agentHooks[id] && s.agentSources[id] && s.notificationEnabled ? "ready" : ""}">${agentStatus(id)}</span></div><button type="button" data-action="setup_${id}" ${this.pending ? "disabled" : ""}>${id === "deepseek" ? (zh ? "准备 Hook" : "Prepare Hook") : (zh ? "设置 Hook" : "Set up Hook")}</button></article>`).join("")}</section>${s.integrationFeedback ? `<p class="tray-hook-feedback" role="status">${escapeHtml(s.integrationFeedback)}</p>` : ""}<section class="tray-section">${button("notification_settings", s.notificationSettingsLabel)}</section>`;

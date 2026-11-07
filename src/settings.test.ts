@@ -355,6 +355,27 @@ describe("settings preview", () => {
 });
 
 describe("saved pets", () => {
+  it("disables saving a draft while a pet selection is still pending", async () => {
+    const selecting = deferred<void>();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "get_app_locale") return "en";
+      if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true, transparent_gif: true };
+      if (command === "get_active_pet") return { kind: "builtin", id: "builtin-cat" };
+      if (command === "prepare_pet_preview") return { kind: "png", data_url: "data:image/png;base64,UE5H" };
+      if (command === "select_pet") return selecting.promise;
+      return [];
+    });
+    document.body.innerHTML = settingsMarkup();
+    mountSettings();
+    await vi.waitFor(() => expect(document.querySelector<HTMLSelectElement>("#photo-mode")!.options.length).toBeGreaterThan(0));
+    chooseFile(document.querySelector("#photo-file")!, file("draft"));
+    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(false));
+    document.querySelector<HTMLButtonElement>('#saved-pets [data-pet-id="builtin-yier"]')!.click();
+    expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(true);
+    selecting.resolve();
+    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(false));
+  });
+
   it("uses state tabs to preview either built-in GIF set", async () => {
     let selected = "builtin-cat";
     vi.mocked(invoke).mockImplementation(async (command, args) => {

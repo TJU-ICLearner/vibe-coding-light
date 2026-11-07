@@ -12,9 +12,9 @@
 
 让你一眼就能看到 AI 编程助手正在做什么 —— 不需要一直盯着终端窗口。内置桌宠布布也会根据 Agent 的状态做出反应。
 
-1.0.1 版支持 **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** 和 **[OpenAI Codex CLI](https://github.com/openai/codex)**，并提供 Cursor、TRAE、Grok Build 与 DeepSeek Harness 的可选 Hook 接入；DeepSeek Harness 需额外挂载官方桥接插件。
+1.0.2 版支持 **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** 和 **[OpenAI Codex CLI](https://github.com/openai/codex)**，并提供 Cursor、TRAE、Grok Build 与 DeepSeek Harness 的可选 Hook 接入；DeepSeek Harness 需额外挂载官方桥接插件。
 
-**当前正式版：1.0.1。** 1.0.0 是首个公开正式版；请从[发布页](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest)下载当前版本。
+**当前正式版：1.0.2。** 1.0.0 是首个公开正式版；请从[发布页](https://github.com/TJU-ICLearner/vibe-coding-light/releases/latest)下载当前版本。
 
 ## 目录
 
@@ -35,18 +35,18 @@
 
 | 系统 | 安装包 | 安装方式 |
 |---|---|---|
-| macOS 12+（Apple Silicon） | [DMG](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/Vibe.Coding.Light_1.0.1_aarch64.dmg) | 打开 DMG，将 **Vibe Coding Light.app** 拖入“应用程序”，再从“应用程序”启动。 |
-| Windows 10+（x64） | [安装程序](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/Vibe.Coding.Light_1.0.1_x64-setup.exe) | 运行 `-setup.exe`，按提示安装，再从开始菜单启动。 |
-| Linux（amd64） | [AppImage](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/Vibe.Coding.Light_1.0.1_amd64.AppImage) | 添加执行权限后运行；需要图形桌面与 WebKitGTK 4.1。 |
+| macOS 12+（Apple Silicon） | [DMG](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.2/Vibe.Coding.Light_1.0.2_aarch64.dmg) | 打开 DMG，将 **Vibe Coding Light.app** 拖入“应用程序”，再从“应用程序”启动。 |
+| Windows 10+（x64） | [安装程序](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.2/Vibe.Coding.Light_1.0.2_x64-setup.exe) | 运行 `-setup.exe`，按提示安装，再从开始菜单启动。 |
+| Linux（amd64） | [AppImage](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.2/Vibe.Coding.Light_1.0.2_amd64.AppImage) | 添加执行权限后运行；需要图形桌面与 WebKitGTK 4.1。 |
 
 Linux 示例（在下载目录中执行）：
 
 ```bash
-chmod +x Vibe.Coding.Light_1.0.1_amd64.AppImage
-./Vibe.Coding.Light_1.0.1_amd64.AppImage
+chmod +x Vibe.Coding.Light_1.0.2_amd64.AppImage
+./Vibe.Coding.Light_1.0.2_amd64.AppImage
 ```
 
-发布页还提供 [SHA256SUMS.txt](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.1/SHA256SUMS.txt)。下载后可用 `shasum -a 256 <文件名>`（macOS）、`sha256sum <文件名>`（Linux）或 PowerShell 的 `Get-FileHash <文件名> -Algorithm SHA256`（Windows）计算安装包摘要，与清单中对应文件的值比较。
+发布页还提供 [SHA256SUMS.txt](https://github.com/TJU-ICLearner/vibe-coding-light/releases/download/v1.0.2/SHA256SUMS.txt)。下载后可用 `shasum -a 256 <文件名>`（macOS）、`sha256sum <文件名>`（Linux）或 PowerShell 的 `Get-FileHash <文件名> -Algorithm SHA256`（Windows）计算安装包摘要，与清单中对应文件的值比较。
 将 `<文件名>` 替换为实际下载的文件名；Windows PowerShell 中如文件名含空格，请用引号包住路径。
 
 macOS 安装包使用 ad-hoc 签名，尚未通过 Apple Developer ID 签名或公证；首次打开可能需要在“系统设置 → 隐私与安全性”点击“仍要打开”。Windows 安装包尚未代码签名。Intel Mac 可从源码构建。Linux 需要可用的桌面环境与 WebKitGTK 4.1。

@@ -82,12 +82,16 @@ function sendErrorFeedback(error: unknown): NotificationFeedback {
 
 export class NotificationSettingsController {
   private settings: NotificationSettings | null = null;
+  private persistedSettings: NotificationSettings | null = null;
   private status: NotificationStatus | null = null;
   private diagnostics: DiagnosticEntry[] = [];
   private locale: NotificationLocale = "zh-CN";
+  private localeOverridden = false;
+  private statusRevision = 0;
   private feedback: NotificationFeedback | null = null;
   private quietError = false;
   private saveQueue: Promise<void> = Promise.resolve();
+  private saveRevision = 0;
   private selectedEvent: TemplateEvent = "permission";
   private templateDrafts: Record<string, { title: string; body: string }> = {};
   private installFeedback = "";
@@ -104,14 +108,41 @@ export class NotificationSettingsController {
   }
 
   async init(locale: NotificationLocale): Promise<void> {
-    this.locale = locale;
-    [this.settings, this.status, this.diagnostics] = await Promise.all([this.api.getSettings(), this.api.getStatus(), this.api.getDiagnostics()]);
+    if (!this.localeOverridden) this.locale = locale;
+    const statusRevision = this.statusRevision;
+    const [settings, status, diagnostics] = await Promise.all([this.api.getSettings(), this.api.getStatus(), this.api.getDiagnostics()]);
+    this.settings = settings;
+    this.persistedSettings = structuredClone(settings);
+    if (statusRevision === this.statusRevision) this.status = status;
+    this.diagnostics = diagnostics;
     this.render();
   }
 
-  setLocale(locale: NotificationLocale): void { this.locale = locale; this.render(); }
-  setStatus(status: NotificationStatus): void { this.status = status; this.render(); }
+  setLocale(locale: NotificationLocale): void { this.localeOverridden = true; this.locale = locale; this.render(); }
+  setStatus(status: NotificationStatus): void { this.statusRevision++; this.status = status; this.render(); }
   setDiagnostics(entries: DiagnosticEntry[]): void { this.diagnostics = entries; this.render(); }
+
+  private queueSettingsSave(next: NotificationSettings): Promise<void> {
+    const revision = ++this.saveRevision;
+    this.saveQueue = this.saveQueue.then(async () => {
+      try {
+        const saved = await this.api.setSettings(next);
+        this.persistedSettings = structuredClone(saved);
+        if (revision === this.saveRevision) {
+          this.settings = saved;
+          this.feedback = null;
+          this.render();
+        }
+      } catch {
+        if (revision === this.saveRevision) {
+          this.settings = structuredClone(this.persistedSettings ?? next);
+          this.feedback = "settingsFailure";
+          this.render();
+        }
+      }
+    });
+    return this.saveQueue;
+  }
 
   private async onChange(event: Event): Promise<void> {
     const input = event.target as HTMLInputElement;
@@ -128,11 +159,7 @@ export class NotificationSettingsController {
       next.templates[key] = { ...this.templateDrafts[key] };
       this.settings = next;
       this.updateTemplatePreview();
-      this.saveQueue = this.saveQueue.then(async () => {
-        try { await this.api.setSettings(next); this.feedback = null; }
-        catch { this.feedback = "settingsFailure"; this.render(); }
-      });
-      await this.saveQueue;
+      await this.queueSettingsSave(next);
       return;
     }
     const path = input?.dataset.path;
@@ -160,16 +187,7 @@ export class NotificationSettingsController {
     } else return;
     this.settings = next;
     this.render();
-    this.saveQueue = this.saveQueue.then(async () => {
-      try {
-        await this.api.setSettings(next);
-        this.feedback = null;
-      } catch {
-        this.feedback = "settingsFailure";
-      }
-      this.render();
-    });
-    await this.saveQueue;
+    await this.queueSettingsSave(next);
   }
 
   private async onClick(event: Event): Promise<void> {
@@ -202,11 +220,7 @@ export class NotificationSettingsController {
       delete this.templateDrafts[key];
       this.settings = next;
       this.render();
-      this.saveQueue = this.saveQueue.then(async () => {
-        try { await this.api.setSettings(next); this.feedback = null; }
-        catch { this.feedback = "settingsFailure"; this.render(); }
-      });
-      await this.saveQueue;
+      await this.queueSettingsSave(next);
       return;
     }
     if (action === "save-key") {
@@ -227,9 +241,12 @@ export class NotificationSettingsController {
     if (!this.settings || !this.status) return;
     const active = this.root.contains(document.activeElement) ? document.activeElement as HTMLInputElement | HTMLTextAreaElement : null;
     const activeTemplateField = active?.dataset?.templateField;
-    const selection = activeTemplateField ? { start: active!.selectionStart, end: active!.selectionEnd } : null;
+    const barkKey = this.root.querySelector<HTMLInputElement>("#bark-key")?.value ?? "";
+    const activeBarkKey = active?.id === "bark-key";
+    const selection = activeTemplateField || activeBarkKey ? { start: active!.selectionStart, end: active!.selectionEnd } : null;
     const s = this.settings, status = this.status, t = notificationCopy(this.locale);
-    const feedback = this.feedback ?? (status.lastSendError ? sendErrorFeedback(status.lastSendError) : null);
+    const settingsFailed = this.feedback === "settingsFailure";
+    const feedback = settingsFailed ? null : this.feedback ?? (status.lastSendError ? sendErrorFeedback(status.lastSendError) : null);
     const feedbackError = feedback !== null;
     document.documentElement.lang = this.locale;
     const toggle = (path: string, label: string, checked: boolean) => `<label class="switch-row"><span>${label}</span><input type="checkbox" data-path="${path}" ${checked ? "checked" : ""} aria-label="${label}"><i aria-hidden="true"></i></label>`;
@@ -267,6 +284,7 @@ export class NotificationSettingsController {
     this.root.innerHTML = `
       <header class="page-head"><p class="eyebrow">VIBE CODING LIGHT / NOTIFICATIONS</p><h1>${t.title}</h1><p>${t.intro}</p></header>
       <section class="hero-card"><div><h2>${t.master}</h2><p>${t.masterHint}</p></div>${toggle("enabled", t.master, s.enabled)}</section>
+      ${settingsFailed ? `<p id="settings-feedback" class="notice" role="alert">${t.settingsFailure}</p>` : ""}
       <div class="settings-grid">
         <section class="card connection"><div class="card-title"><span class="card-index">01</span><h2>${t.connection}</h2></div><p class="key-status ${status.keySaved ? "good" : ""}">${status.keySaved ? t.keySaved : t.keyMissing}</p><label class="field-label" for="bark-key">${t.key}</label><div class="key-entry"><input id="bark-key" type="password" autocomplete="off" spellcheck="false" placeholder="${t.keyPlaceholder}"><button type="button" id="save-key" data-action="save-key">${t.saveKey}</button></div><div class="actions"><button type="button" data-action="delete-key" ${status.keySaved ? "" : "disabled"}>${t.deleteKey}</button></div><p id="feedback" role="status" class="${feedbackError ? "error" : ""}">${feedback ? t[feedback] : ""}</p></section>
         <section class="card sources"><div class="card-title"><span class="card-index">02</span><h2>${t.sources}</h2></div><p class="hint">${t.sourceHint}</p><div class="source-list">${sourceRows}</div><p class="hint source-footer">${t.extraSourceHint}</p><p class="availability" role="status">${escapeHtml(this.installFeedback)}</p></section>
@@ -287,6 +305,12 @@ export class NotificationSettingsController {
       ${!status.serviceAvailable ? `<p class="notice" role="status">${t.serviceUnavailable}</p>` : ""}
       <footer>${t.footer}</footer>`;
     this.updateTemplatePreview();
+    const restoredBarkKey = this.root.querySelector<HTMLInputElement>("#bark-key");
+    if (restoredBarkKey) restoredBarkKey.value = barkKey;
+    if (activeBarkKey && restoredBarkKey) {
+      restoredBarkKey.focus();
+      if (selection && selection.start !== null && selection.end !== null) restoredBarkKey.setSelectionRange(selection.start, selection.end);
+    }
     if (activeTemplateField) {
       const replacement = this.root.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-template-field="${activeTemplateField}"]`);
       if (replacement) {

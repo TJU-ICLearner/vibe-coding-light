@@ -67,9 +67,7 @@ async function init() {
   );
   window.addEventListener("beforeunload", () => patController?.dispose());
   const petWindowSizer = new PetWindowSizer(getCurrentWindow(), currentMonitor, (scale) => photoRenderer?.setFitScale(scale));
-  const currentState = await invoke<StatePayload>("get_current_state");
-  setPetState(currentState.state);
-
+  let stateEventSeen = false;
   let petRequestId = 0;
   const refreshPet = async () => {
     const id = ++petRequestId;
@@ -79,17 +77,18 @@ async function init() {
     photoRenderer?.applyPet(pet);
     await petWindowSizer.request(pet);
   };
-  await refreshPet();
-
   await listen("pet-changed", () => { void refreshPet(); });
-
   await listen<StatePayload>("state-changed", (event) => {
+    stateEventSeen = true;
     setPetState(event.payload.state);
   });
-
   await listen("pet", () => {
     patController?.start();
   });
+
+  const currentState = await invoke<StatePayload>("get_current_state");
+  if (!stateEventSeen) setPetState(currentState.state);
+  await refreshPet();
 
   await initDrag();
 }

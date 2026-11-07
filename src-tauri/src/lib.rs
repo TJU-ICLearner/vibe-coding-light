@@ -93,6 +93,7 @@ fn refresh_tray_ui(app: &tauri::AppHandle, locale: ui_locale::AppLocale) {
     );
     let _ = ui.toggle_pet.set_text(labels.toggle_pet);
     let _ = ui.pet_action.set_text(labels.pet_action);
+    let _ = ui.pet_action.set_enabled(ui.pet_visible);
     if let Some(item) = &ui.customize_pet {
         let _ = item.set_text(labels.customize_pet);
     }

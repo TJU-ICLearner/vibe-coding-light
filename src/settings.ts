@@ -61,6 +61,7 @@ export class SettingsController {
   error: PetError | null = null;
   feedback: UiKey | null = null;
   busy = false;
+  selectionPending = 0;
   pets: PetManifest[] = [];
   selectedId: string = BUILTIN_BUBU_ID;
   activePet: ActivePet = { kind: "builtin", id: BUILTIN_BUBU_ID };
@@ -82,7 +83,12 @@ export class SettingsController {
   private notify(): void { this.listeners.forEach((listener) => listener()); }
 
   private enqueueSelection(work: () => Promise<void>): Promise<void> {
-    const operation = this.selectionQueue.then(work);
+    this.selectionPending++;
+    this.notify();
+    const operation = this.selectionQueue.then(work).finally(() => {
+      this.selectionPending--;
+      this.notify();
+    });
     this.selectionQueue = operation.catch(() => {});
     return operation;
   }
@@ -333,7 +339,7 @@ export function mountSettings(): void {
       applyPetMotionMetrics(processed, scale);
       previewSize.textContent = `${side} × ${side}`;
     }
-    saveButton.disabled = controller.busy || controller.draft.isBusy(controller.mode) ||
+    saveButton.disabled = controller.busy || controller.selectionPending > 0 || controller.draft.isBusy(controller.mode) ||
       Boolean(controller.draft.blockingError(controller.mode)) || !controller.previewUrl || !valid;
     if (!valid && controller.previewUrl && !controller.error) {
       status.textContent = t(locale, "invalid_transform_hint");

@@ -29,6 +29,51 @@ function setup() {
 beforeEach(() => document.body.replaceChildren());
 
 describe("notification settings window", () => {
+  it("keeps a Bark key being typed when status or language changes", async () => {
+    const { root, controller } = setup();
+    await controller.init("zh-CN");
+    const key = root.querySelector<HTMLInputElement>("#bark-key")!;
+    key.value = "unsaved-device-key";
+    key.focus();
+    key.setSelectionRange(7, 7);
+    controller.setStatus({ ...status, claudeQuotaAvailable: true });
+    expect(root.querySelector<HTMLInputElement>("#bark-key")?.value).toBe("unsaved-device-key");
+    expect(document.activeElement).toBe(root.querySelector("#bark-key"));
+    expect(root.querySelector<HTMLInputElement>("#bark-key")?.selectionStart).toBe(7);
+    controller.setLocale("en");
+    expect(root.querySelector<HTMLInputElement>("#bark-key")?.value).toBe("unsaved-device-key");
+  });
+
+  it("keeps a newer locale event when the initial locale read finishes later", async () => {
+    const { root, controller } = setup();
+    controller.setLocale("en");
+    await controller.init("zh-CN");
+    expect(document.documentElement.lang).toBe("en");
+    expect(root.querySelector("h1")?.textContent).toBe("Notification Settings");
+  });
+
+  it("keeps a newer status event when the initial status read finishes later", async () => {
+    const { root, api, controller } = setup();
+    let finishStatus!: (value: NotificationStatus) => void;
+    (api.getStatus as ReturnType<typeof vi.fn>).mockImplementationOnce(() => new Promise((resolve) => { finishStatus = resolve; }));
+    const initializing = controller.init("en");
+    controller.setStatus({ ...status, keySaved: true });
+    finishStatus({ ...status, keySaved: false });
+    await initializing;
+    expect(root.querySelector(".key-status")?.textContent).toBe("Saved in the system credential store");
+  });
+
+  it("restores a switch when saving it fails and shows the error near the settings", async () => {
+    const { root, api, controller } = setup();
+    (api.setSettings as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("disk full"));
+    await controller.init("en");
+    const master = root.querySelector<HTMLInputElement>('[data-path="enabled"]')!;
+    master.checked = true;
+    master.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(root.querySelector("#settings-feedback")?.textContent).toContain("Could not save settings"));
+    expect(root.querySelector<HTMLInputElement>('[data-path="enabled"]')?.checked).toBe(false);
+  });
+
   it("installs a new source hook from its row without enabling Bark", async () => {
     const { root, api, controller } = setup();
     await controller.init("en");

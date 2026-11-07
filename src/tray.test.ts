@@ -26,6 +26,41 @@ function setup() {
 beforeEach(() => document.body.replaceChildren());
 
 describe("persistent tray panel", () => {
+  it("does not let an older poll undo a completed toggle action", async () => {
+    const { root, api, controller } = setup();
+    await controller.init();
+    root.querySelector<HTMLButtonElement>('[data-tab="settings"]')!.click();
+    let finishPoll!: (state: TrayPanelState) => void;
+    (api.getState as ReturnType<typeof vi.fn>).mockImplementationOnce(() => new Promise((resolve) => { finishPoll = resolve; }));
+    const polling = controller.refresh();
+    root.querySelector<HTMLInputElement>('[data-action="launch_at_login"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLInputElement>('[data-action="launch_at_login"]')?.checked).toBe(true));
+    finishPoll({ ...base, loginEnabled: false });
+    await polling;
+    expect(root.querySelector<HTMLInputElement>('[data-action="launch_at_login"]')?.checked).toBe(true);
+  });
+
+  it("does not offer the pat action while the pet is hidden", async () => {
+    const { root, api, controller } = setup();
+    (api.getState as ReturnType<typeof vi.fn>).mockResolvedValue({ ...base, petVisible: false });
+    await controller.init();
+    expect(root.querySelector<HTMLButtonElement>('[data-action="pet_action"]')?.disabled).toBe(true);
+  });
+
+  it("waits for a slow poll before starting another one", async () => {
+    const { api, controller } = setup();
+    await controller.init();
+    let finishPoll!: (state: TrayPanelState) => void;
+    (api.getState as ReturnType<typeof vi.fn>).mockImplementationOnce(() => new Promise((resolve) => { finishPoll = resolve; }));
+    const first = controller.refresh();
+    await controller.refresh();
+    expect(api.getState).toHaveBeenCalledTimes(2);
+    finishPoll({ ...base });
+    await first;
+    await controller.refresh();
+    expect(api.getState).toHaveBeenCalledTimes(3);
+  });
+
   it("shows current session only once and keeps controls across three tabs", async () => {
     const { root, controller } = setup();
     await controller.init();
