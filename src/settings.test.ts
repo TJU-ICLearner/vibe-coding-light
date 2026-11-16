@@ -75,6 +75,49 @@ describe("settings preview", () => {
     name.value = "A edited"; name.dispatchEvent(new Event("input"));
     expect(save.disabled).toBe(false);
   });
+  it("does not offer duplicate save after the profile was written but list refresh failed", async () => {
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "get_app_locale") return "en";
+      if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true, transparent_gif: true };
+      if (command === "get_active_pet") return { kind: "builtin", id: "builtin-cat" };
+      if (command === "prepare_pet_preview") return { kind: "png", data_url: "data:image/png;base64,UE5H" };
+      if (command === "save_pet_profile") return photo("saved");
+      if (command === "list_photo_pets" && vi.mocked(invoke).mock.calls.some(([name]) => name === "save_pet_profile")) throw new Error("list unavailable");
+      return [];
+    });
+    document.body.innerHTML = settingsMarkup(); mountSettings();
+    await vi.waitFor(() => expect(document.querySelector<HTMLSelectElement>("#photo-mode")!.options.length).toBeGreaterThan(0));
+    chooseFile(document.querySelector<HTMLInputElement>("#photo-file")!, file("A"));
+    const save = document.querySelector<HTMLButtonElement>("#save-pet")!;
+    await vi.waitFor(() => expect(save.disabled).toBe(false));
+    save.click();
+    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toContain("saved"));
+    expect(save.disabled).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>("#retry-pet-refresh")?.hidden).toBe(false);
+    save.click();
+    expect(vi.mocked(invoke).mock.calls.filter(([name]) => name === "save_pet_profile")).toHaveLength(1);
+  });
+  it("does not offer duplicate save when the new pet was saved but not selected", async () => {
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "get_app_locale") return "en";
+      if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true, transparent_gif: true };
+      if (command === "get_active_pet") return { kind: "builtin", id: "builtin-cat" };
+      if (command === "prepare_pet_preview") return { kind: "png", data_url: "data:image/png;base64,UE5H" };
+      if (command === "save_pet_profile") throw { code: "saved_not_selected", saved_pet: photo("partial") };
+      return [];
+    });
+    document.body.innerHTML = settingsMarkup(); mountSettings();
+    await vi.waitFor(() => expect(document.querySelector<HTMLSelectElement>("#photo-mode")!.options.length).toBeGreaterThan(0));
+    chooseFile(document.querySelector<HTMLInputElement>("#photo-file")!, file("A"));
+    const save = document.querySelector<HTMLButtonElement>("#save-pet")!;
+    await vi.waitFor(() => expect(save.disabled).toBe(false));
+    save.click();
+    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toContain("saved but could not be selected"));
+    expect(save.disabled).toBe(true);
+    expect(document.querySelector("#saved-pets")?.textContent).toContain("partial");
+    save.click();
+    expect(vi.mocked(invoke).mock.calls.filter(([name]) => name === "save_pet_profile")).toHaveLength(1);
+  });
   it("shows five ordered tabs and keeps preview before the editor in the DOM", async () => {
     mountFullSettings("en");
     enterStateMode();
@@ -604,5 +647,112 @@ describe("saved pets", () => {
     remove.resolve(); await deleting;
     expect(controller.pets).toHaveLength(0);
     expect(controller.selectedId).toBe("builtin-cat");
+  });
+
+  it("keeps a saved pet selected when its follow-up list read fails", async () => {
+    const saved = photo("new");
+    const controller = new SettingsController({
+      prepare: async () => ({ kind: "png", data_url: "data:image/png;base64,UE5H" }),
+      save: async () => saved,
+      list: async () => { throw new Error("list unavailable"); },
+      active: async () => { throw new Error("active unavailable"); },
+      select: vi.fn(), delete: vi.fn(),
+    });
+    await controller.load(file("A"), "keep_alpha");
+    await expect(controller.save("new", 0.8, {})).resolves.toEqual(saved);
+    expect(controller.selectedId).toBe("new");
+    expect(controller.pets.map((pet) => pet.id)).toContain("new");
+    expect(controller.activePet.kind).toBe("photo");
+    expect(controller.feedback).toBe("saved_refresh_failed");
+    expect(controller.refreshFailed).toBe(true);
+  });
+
+  it("keeps a profile that was saved but could not be selected from being saved twice", async () => {
+    const saved = photo("partial");
+    const controller = new SettingsController({
+      prepare: async () => ({ kind: "png", data_url: "data:image/png;base64,UE5H" }),
+      save: async () => { throw { code: "saved_not_selected", saved_pet: saved }; },
+      list: async () => [], active: async () => ({ kind: "builtin", id: "builtin-cat" }),
+      select: vi.fn(), delete: vi.fn(),
+    });
+    await controller.load(file("A"), "keep_alpha");
+    await expect(controller.save("partial", 0.8, {})).resolves.toEqual(saved);
+    expect(controller.pets.map((pet) => pet.id)).toEqual(["partial"]);
+    expect(controller.selectedId).toBe("builtin-cat");
+    expect(controller.error).toBeNull();
+    expect(controller.feedback).toBe("saved_not_selected");
+  });
+
+  it("does not call a successful selection a failure when active read fails", async () => {
+    const controller = new SettingsController({
+      prepare: vi.fn(), save: vi.fn(), list: async () => [],
+      select: async () => {}, delete: vi.fn(),
+      active: async () => { throw new Error("active unavailable"); },
+    });
+    await expect(controller.select("builtin-yier")).resolves.toBeUndefined();
+    expect(controller.selectedId).toBe("builtin-yier");
+    expect(controller.error).toBeNull();
+    expect(controller.feedback).toBe("selected_refresh_failed");
+  });
+
+  it("does not call a successful deletion a failure when active read fails", async () => {
+    const controller = new SettingsController({
+      prepare: vi.fn(), save: vi.fn(), list: async () => [photo("p1")],
+      select: async () => {}, delete: async () => {},
+      active: vi.fn().mockResolvedValueOnce({ kind: "photo", id: "p1", assets: {}, motions: {}, invalid_slots: [], scale: 0.8, offset_x: 0, offset_y: 0 })
+        .mockRejectedValueOnce(new Error("active unavailable")),
+    });
+    await controller.refresh();
+    await expect(controller.delete("p1")).resolves.toBeUndefined();
+    expect(controller.pets).toHaveLength(0);
+    expect(controller.selectedId).toBe("builtin-cat");
+    expect(controller.error).toBeNull();
+    expect(controller.feedback).toBe("deleted_refresh_failed");
+  });
+
+  it("keeps the successful half of an initial pet refresh and allows retry", async () => {
+    const list = vi.fn().mockRejectedValueOnce(new Error("list unavailable")).mockResolvedValueOnce([photo("p1")]);
+    const controller = new SettingsController({
+      prepare: vi.fn(), save: vi.fn(), list, select: vi.fn(), delete: vi.fn(),
+      active: async () => ({ kind: "builtin", id: "builtin-yier" }),
+    });
+    expect(await controller.refresh()).toBe(false);
+    expect(controller.selectedId).toBe("builtin-yier");
+    expect(controller.refreshFailed).toBe(true);
+    expect(await controller.refresh()).toBe(true);
+    expect(controller.pets.map((pet) => pet.id)).toEqual(["p1"]);
+    expect(controller.refreshFailed).toBe(false);
+  });
+
+  it("shows the selected pet before a slow saved-pet list finishes", async () => {
+    const slowList = deferred<ReturnType<typeof photo>[]>();
+    const controller = new SettingsController({
+      prepare: vi.fn(), save: vi.fn(), list: () => slowList.promise, select: vi.fn(), delete: vi.fn(),
+      active: async () => ({ kind: "builtin", id: "builtin-yier" }),
+    });
+    const loading = controller.refresh();
+    try {
+      await vi.waitFor(() => expect(controller.selectedId).toBe("builtin-yier"));
+    } finally {
+      slowList.resolve([photo("p1")]);
+      await loading;
+    }
+    expect(controller.pets.map((pet) => pet.id)).toEqual(["p1"]);
+  });
+
+  it("shows saved pets before a slow selected-pet read finishes", async () => {
+    const slowActive = deferred<{ kind: "builtin"; id: "builtin-yier" }>();
+    const controller = new SettingsController({
+      prepare: vi.fn(), save: vi.fn(), list: async () => [photo("p1")], select: vi.fn(), delete: vi.fn(),
+      active: () => slowActive.promise,
+    });
+    const loading = controller.refresh();
+    try {
+      await vi.waitFor(() => expect(controller.pets.map((pet) => pet.id)).toEqual(["p1"]));
+    } finally {
+      slowActive.resolve({ kind: "builtin", id: "builtin-yier" });
+      await loading;
+    }
+    expect(controller.selectedId).toBe("builtin-yier");
   });
 });

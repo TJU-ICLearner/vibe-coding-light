@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { NotificationSettingsController, type NotificationApi, type NotificationSettings, type NotificationStatus } from "./notifications";
+import { NotificationSettingsController, type DiagnosticEntry, type NotificationApi, type NotificationSettings, type NotificationStatus } from "./notifications";
 
 const defaults: NotificationSettings = {
   enabled: false,
@@ -297,6 +297,60 @@ describe("notification settings window", () => {
     expect(root.querySelector('[role="alert"]')?.textContent).toContain("Could not load");
     root.querySelector<HTMLButtonElement>('[data-action="retry-init"]')!.click();
     await vi.waitFor(() => expect(root.querySelector("h1")?.textContent).toBe("Notification Settings"));
+  });
+
+  it("keeps settings and pending wording usable when initial diagnostics fail", async () => {
+    localStorage.setItem("vibe-coding-light.notification-template-drafts.v1", JSON.stringify({ "en.permission": { title: "Approval", body: "Please answer {question}" } }));
+    const { root, api, controller } = setup();
+    (api.getDiagnostics as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("diagnostics unavailable"));
+    await controller.init("en");
+    expect(root.querySelector<HTMLInputElement>('[data-path="enabled"]')).not.toBeNull();
+    expect(root.querySelector<HTMLTextAreaElement>('[data-template-field="body"]')?.value).toBe("Please answer {question}");
+    expect(root.querySelector("#diagnostics-refresh-error")?.textContent).toContain("Could not refresh");
+    root.querySelector<HTMLButtonElement>('[data-action="retry-diagnostics"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector("#diagnostics-refresh-error")).toBeNull());
+  });
+
+  it("shows unknown status instead of a false missing key when initial status fails", async () => {
+    const { root, api, controller } = setup();
+    (api.getStatus as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("status unavailable"));
+    await controller.init("en");
+    expect(root.querySelector<HTMLInputElement>('[data-path="enabled"]')).not.toBeNull();
+    expect(root.querySelector(".key-status")?.textContent).toBe("Status unavailable");
+    expect(root.querySelector("#status-refresh-error")?.textContent).toContain("could not refresh");
+    root.querySelector<HTMLButtonElement>('[data-action="retry-status"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector("#status-refresh-error")).toBeNull());
+    expect(root.querySelector(".key-status")?.textContent).toBe("No key saved");
+  });
+
+  it("clears a stale status warning after saving a key refreshes status", async () => {
+    const { root, api, controller } = setup();
+    (api.getStatus as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("status unavailable"));
+    await controller.init("en");
+    root.querySelector<HTMLInputElement>("#bark-key")!.value = "device-key";
+    root.querySelector<HTMLButtonElement>('[data-action="save-key"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector(".key-status")?.textContent).toBe("No key saved"));
+    expect(root.querySelector("#status-refresh-error")).toBeNull();
+  });
+
+  it("renders editable settings before slow status and diagnostics reads finish", async () => {
+    const { root, api, controller } = setup();
+    let finishStatus!: (value: NotificationStatus) => void;
+    let finishDiagnostics!: (value: DiagnosticEntry[]) => void;
+    (api.getStatus as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise<NotificationStatus>((resolve) => { finishStatus = resolve; }));
+    (api.getDiagnostics as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise<DiagnosticEntry[]>((resolve) => { finishDiagnostics = resolve; }));
+    const loading = controller.init("en");
+    try {
+      await vi.waitFor(() => expect(root.querySelector<HTMLInputElement>('[data-path="enabled"]')).not.toBeNull());
+      expect(root.querySelector(".key-status")?.textContent).toBe("Loading status…");
+      expect(root.querySelector(".diagnostic-empty")?.textContent).toBe("Loading diagnostics…");
+    } finally {
+      finishStatus({ ...status, keySaved: true });
+      finishDiagnostics([{ atMs: 1000, source: "codex", kind: "completed", outcome: "sent", reason: null }]);
+      await loading;
+    }
+    await vi.waitFor(() => expect(root.querySelector(".key-status")?.textContent).toBe("Saved in the system credential store"));
+    expect(root.querySelector(".diagnostic-list li")).not.toBeNull();
   });
 
   it("keeps keyboard focus on a switch after a save-triggered redraw", async () => {

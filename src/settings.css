@@ -63,6 +63,7 @@ button:disabled { opacity: .52; cursor: default; }
 .slot-status.error, #status.error, .warning { color: #ae3944; }
 .subtle-button { border: 0; padding: 5px 0; color: #7e4a4d; background: transparent; font-size: .72rem; text-decoration: underline; }
 .subtle-button:hover { background: transparent; color: #a72f3b; }
+#retry-pet-refresh { margin: 0 0 10px; }
 .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
 #status { min-height: 1.3em; margin: 12px 0 0; color: #3c7853; font-size: .8rem; line-height: 1.4; }
 .primary { width: 100%; margin-top: 13px; background: #287b53; color: #fff; border-color: #287b53; font-weight: 750; padding: 11px; }

@@ -17,6 +17,8 @@ const MAX_PROFILE_BYTES: usize = 25 * 1024 * 1024;
 pub struct PetCommandError {
     code: String,
     detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    saved_pet: Option<PetManifest>,
 }
 
 impl PetCommandError {
@@ -24,12 +26,14 @@ impl PetCommandError {
         Self {
             code: code.into(),
             detail: None,
+            saved_pet: None,
         }
     }
     fn internal(detail: impl Into<String>) -> Self {
         Self {
             code: "internal_error".into(),
             detail: Some(detail.into()),
+            saved_pet: None,
         }
     }
 }
@@ -61,6 +65,11 @@ impl From<PetStoreError> for PetCommandError {
             PetStoreError::InvalidManifest => Self::new("invalid_manifest"),
             PetStoreError::NotFound => Self::new("not_found"),
             PetStoreError::CannotDeleteBuiltin => Self::new("cannot_delete_builtin"),
+            PetStoreError::SavedButNotSelected(manifest) => Self {
+                code: "saved_not_selected".into(),
+                detail: None,
+                saved_pet: Some(manifest),
+            },
         }
     }
 }
@@ -257,9 +266,8 @@ pub fn save_pet_profile(
 ) -> Result<PetManifest, PetCommandError> {
     let decoded = decode_profile_assets(&assets)?;
     let manifest = store
-        .save_profile(&name, &decoded, scale, &motions)
+        .save_and_select_profile(&name, &decoded, scale, &motions)
         .map_err(PetCommandError::from)?;
-    store.select(&manifest.id).map_err(PetCommandError::from)?;
     let _ = app.emit("pet-changed", ());
     Ok(manifest)
 }
@@ -274,9 +282,19 @@ pub fn save_photo_pet(
 ) -> Result<PetManifest, PetCommandError> {
     let png = decode_png_data_url(&png_data_url)?;
     let manifest = store
-        .save(&name, &png, scale)
+        .save_and_select_profile(
+            &name,
+            &BTreeMap::from([(
+                PetSlot::Default,
+                PetAsset {
+                    kind: PetAssetKind::Png,
+                    bytes: png,
+                },
+            )]),
+            scale,
+            &BTreeMap::new(),
+        )
         .map_err(PetCommandError::from)?;
-    store.select(&manifest.id).map_err(PetCommandError::from)?;
     let _ = app.emit("pet-changed", ());
     Ok(manifest)
 }

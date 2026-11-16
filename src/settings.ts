@@ -60,6 +60,7 @@ export class SettingsController {
   mode: DraftMode = "single";
   error: PetError | null = null;
   feedback: UiKey | null = null;
+  refreshFailed = false;
   busy = false;
   selectionPending = 0;
   pets: PetManifest[] = [];
@@ -119,22 +120,29 @@ export class SettingsController {
     this.notify();
   }
 
-  async refresh(): Promise<void> {
+  async refresh(): Promise<boolean> {
     const activeGeneration = ++this.activeGeneration;
     const petsGeneration = ++this.petsGeneration;
-    const [pets, active] = await Promise.all([this.api.list(), this.api.active()]);
-    let changed = false;
-    if (petsGeneration === this.petsGeneration) {
-      this.pets = pets;
-      changed = true;
+    const petsRead = this.api.list().then((pets) => {
+      if (petsGeneration === this.petsGeneration) { this.pets = pets; this.notify(); }
+      return true;
+    }, () => false);
+    const activeRead = this.api.active().then((active) => {
+      if (activeGeneration === this.activeGeneration) {
+        this.activePet = active;
+        this.selectedId = active.kind === "photo" ? active.id : active.id ?? BUILTIN_BUBU_ID;
+        this.invalidSlots = active.kind === "photo" ? (active.invalid_slots ?? []) : [];
+        this.notify();
+      }
+      return true;
+    }, () => false);
+    const [petsOk, activeOk] = await Promise.all([petsRead, activeRead]);
+    const complete = petsOk && activeOk;
+    if (petsGeneration === this.petsGeneration && activeGeneration === this.activeGeneration) {
+      this.refreshFailed = !complete;
+      this.notify();
     }
-    if (activeGeneration === this.activeGeneration) {
-      this.activePet = active;
-      this.selectedId = active.kind === "photo" ? active.id : active.id ?? BUILTIN_BUBU_ID;
-      this.invalidSlots = active.kind === "photo" ? (active.invalid_slots ?? []) : [];
-      changed = true;
-    }
-    if (changed) this.notify();
+    return complete;
   }
 
   async save(name: string, scale: number, motions: Partial<Record<PetSlot, PetMotion>>): Promise<PetManifest> {
@@ -153,10 +161,25 @@ export class SettingsController {
     this.busy = true; this.error = null; this.feedback = null; this.notify();
     try {
       const saved = await this.api.save(name, assets, scale, selectedMotions);
-      await this.refresh();
-      this.feedback = "saved_success";
+      this.pets = [saved, ...this.pets.filter((pet) => pet.id !== saved.id)];
+      this.selectedId = saved.id;
+      this.activePet = { kind: "photo", id: saved.id, assets, motions: selectedMotions, invalid_slots: [], scale: saved.scale, offset_x: 0, offset_y: 0 };
+      this.invalidSlots = [];
+      this.notify();
+      const refreshed = await this.refresh();
+      this.feedback = refreshed ? "saved_success" : "saved_refresh_failed";
       return saved;
     } catch (error) {
+      const partial = error && typeof error === "object" && "code" in error && error.code === "saved_not_selected"
+        && "saved_pet" in error && error.saved_pet && typeof error.saved_pet === "object"
+        && "id" in error.saved_pet && typeof error.saved_pet.id === "string"
+        ? error.saved_pet as PetManifest : null;
+      if (partial) {
+        this.pets = [partial, ...this.pets.filter((pet) => pet.id !== partial.id)];
+        this.error = null;
+        this.feedback = "saved_not_selected";
+        return partial;
+      }
       this.error = asPetError(error);
       throw error;
     } finally { this.busy = false; this.notify(); }
@@ -167,12 +190,23 @@ export class SettingsController {
     return this.enqueueSelection(async () => {
       try {
         await this.api.select(id);
-        const active = await this.api.active();
         this.selectedId = id;
-        this.activePet = active;
-        this.invalidSlots = active.kind === "photo" ? (active.invalid_slots ?? []) : [];
+        if (isBuiltinPetId(id)) this.activePet = { kind: "builtin", id };
+        else if (this.activePet.kind !== "photo" || this.activePet.id !== id) {
+          this.activePet = { kind: "photo", id, assets: {}, motions: {}, invalid_slots: [], scale: this.pets.find((pet) => pet.id === id)?.scale ?? 1, offset_x: 0, offset_y: 0 };
+        }
+        this.invalidSlots = [];
         this.error = null;
-        this.feedback = "selected_success";
+        this.notify();
+        try {
+          const active = await this.api.active();
+          this.activePet = active;
+          this.invalidSlots = active.kind === "photo" ? (active.invalid_slots ?? []) : [];
+          this.feedback = "selected_success";
+        } catch {
+          this.refreshFailed = true;
+          this.feedback = "selected_refresh_failed";
+        }
         this.notify();
       } catch (error) { this.error = asPetError(error); this.notify(); throw error; }
     });
@@ -186,12 +220,21 @@ export class SettingsController {
         await this.api.delete(id);
         this.pets = this.pets.filter((pet) => pet.id !== id);
         if (this.selectedId === id) {
-          this.activePet = await this.api.active();
-          this.selectedId = this.activePet.kind === "photo" ? this.activePet.id : this.activePet.id ?? BUILTIN_BUBU_ID;
+          this.activePet = { kind: "builtin", id: BUILTIN_BUBU_ID };
+          this.selectedId = BUILTIN_BUBU_ID;
         }
         if (isBuiltinPetId(this.selectedId)) this.invalidSlots = [];
         this.error = null;
-        this.feedback = "deleted_success";
+        this.notify();
+        try {
+          const active = await this.api.active();
+          this.activePet = active;
+          this.selectedId = active.kind === "photo" ? active.id : active.id ?? BUILTIN_BUBU_ID;
+          this.feedback = "deleted_success";
+        } catch {
+          this.refreshFailed = true;
+          this.feedback = "deleted_refresh_failed";
+        }
         this.notify();
       } catch (error) { this.error = asPetError(error); this.notify(); throw error; }
     });
@@ -227,6 +270,7 @@ export function mountSettings(): void {
   const slotStatus = root.querySelector<HTMLElement>("#slot-status")!;
   const slotClear = root.querySelector<HTMLButtonElement>("#slot-clear")!;
   const savedWarning = root.querySelector<HTMLElement>("#saved-warning")!;
+  const retryPetRefresh = root.querySelector<HTMLButtonElement>("#retry-pet-refresh")!;
   const fileInput = root.querySelector<HTMLInputElement>("#photo-file")!;
   const modeInput = root.querySelector<HTMLSelectElement>("#photo-mode")!;
   const motionInput = root.querySelector<HTMLSelectElement>("#pet-motion")!;
@@ -264,6 +308,7 @@ export function mountSettings(): void {
   let savedRevision: number | null = null;
   let confirmDeleteId: string | null = null;
   let deletingId: string | null = null;
+  let retryingPet = false;
   let locale: Locale = "zh-CN";
   let localeEventSeen = false;
 
@@ -423,14 +468,18 @@ export function mountSettings(): void {
       : blocking ? formatPetError(locale, blocking)
       : capabilitiesLoaded && fileInput.disabled ? t(locale, "mac_only")
       : controller.busy || controller.draft.isBusy(controller.mode) ? t(locale, "processing")
+      : controller.feedback === "saved_not_selected" ? t(locale, "saved_not_selected")
       : !previewSelected && savedRevision === draftRevision && controller.previewUrl ? t(locale, "draft_already_saved")
       : controller.feedback ? t(locale, controller.feedback)
+      : controller.refreshFailed ? t(locale, "pet_refresh_failed")
       : previewSelected ? t(locale, "start_new_pet")
       : asset ? t(locale, "preview_ready") : t(locale, "select_default");
     status.classList.toggle("error", Boolean(controller.error || blocking));
     savedWarning.hidden = controller.invalidSlots.length === 0;
     savedWarning.textContent = controller.invalidSlots.length
       ? t(locale, "invalid_saved_slots", { slots: controller.invalidSlots.map((slot) => t(locale, slotKeys[slot])).join(locale === "en" ? ", " : "、") }) : "";
+    retryPetRefresh.hidden = !controller.refreshFailed;
+    retryPetRefresh.disabled = retryingPet;
     updateTransform();
     list.replaceChildren();
     for (const [id, label] of [[BUILTIN_BUBU_ID, "builtin_cat"], [BUILTIN_YIER_ID, "builtin_yier"]] as const) {
@@ -515,6 +564,14 @@ export function mountSettings(): void {
     tabs.append(tab);
   }
   controller.onChange(render);
+  retryPetRefresh.onclick = () => {
+    if (retryingPet) return;
+    retryingPet = true;
+    render();
+    void controller.refresh().then((complete) => {
+      if (complete && controller.feedback?.endsWith("_refresh_failed")) controller.feedback = null;
+    }).finally(() => { retryingPet = false; render(); });
+  };
   resumeDraft.onclick = () => { previewMode = "draft"; render(); };
   builtinPreviewState.onchange = () => {
     builtinPreviewSlot = builtinPreviewState.value as PetSlot;
@@ -602,7 +659,7 @@ export function mountSettings(): void {
     if (saveButton.disabled || previewMode !== "draft" || savedRevision === draftRevision) return;
     const savingRevision = draftRevision;
     void controller.save(nameInput.value, Number(scaleInput.value), Object.fromEntries(motions) as Partial<Record<PetSlot, PetMotion>>)
-      .then(() => { savedRevision = savingRevision; if (draftRevision === savingRevision) previewMode = "selected"; render(); }).catch(() => {});
+      .then((saved) => { savedRevision = savingRevision; if (draftRevision === savingRevision && controller.selectedId === saved.id) previewMode = "selected"; render(); }).catch(() => {});
   };
   processed.addEventListener("animationend", (event) => {
     if (event.animationName === "pet-photo-completed" && !processed.classList.contains("animated")) processed.className = "motion-idle";

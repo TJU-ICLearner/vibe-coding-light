@@ -97,6 +97,7 @@ pub enum PetStoreError {
     InvalidManifest,
     NotFound,
     CannotDeleteBuiltin,
+    SavedButNotSelected(PetManifest),
 }
 
 impl std::fmt::Display for PetStoreError {
@@ -113,6 +114,7 @@ impl std::fmt::Display for PetStoreError {
             Self::InvalidManifest => write!(f, "Pet settings are invalid"),
             Self::NotFound => write!(f, "Pet was not found"),
             Self::CannotDeleteBuiltin => write!(f, "Built-in pets cannot be deleted"),
+            Self::SavedButNotSelected(_) => write!(f, "Pet was saved but could not be selected"),
         }
     }
 }
@@ -373,6 +375,19 @@ impl PetStore {
         )
         .map_err(io_error)?;
         fs::rename(staging.path(), pets.join(id)).map_err(io_error)?;
+        Ok(manifest)
+    }
+
+    pub fn save_and_select_profile(
+        &self,
+        name: &str,
+        assets: &PetAssets,
+        scale: f32,
+        motions: &BTreeMap<PetSlot, PetMotion>,
+    ) -> Result<PetManifest, PetStoreError> {
+        let manifest = self.save_profile(name, assets, scale, motions)?;
+        self.select(&manifest.id)
+            .map_err(|_| PetStoreError::SavedButNotSelected(manifest.clone()))?;
         Ok(manifest)
     }
 
@@ -781,6 +796,32 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(store.selected_id().as_deref(), Some(saved.id.as_str()));
         assert_eq!(store.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn failed_selection_reports_the_profile_that_was_already_saved() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("selected-pet.json")).unwrap();
+        let store = PetStore::new(root.path().to_path_buf());
+        let result = store.save_and_select_profile(
+            "saved but not selected",
+            &two_asset_profile(),
+            0.8,
+            &BTreeMap::new(),
+        );
+        let Err(PetStoreError::SavedButNotSelected(manifest)) = result else {
+            panic!("expected a partial save result");
+        };
+        assert_eq!(
+            store
+                .list()
+                .unwrap()
+                .iter()
+                .map(|pet| pet.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![manifest.id.as_str()]
+        );
+        assert!(matches!(store.active(), ActivePet::Builtin));
     }
 
     #[test]

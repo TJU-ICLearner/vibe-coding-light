@@ -53,6 +53,11 @@ type TemplateEvent = "permission" | "question" | "completed" | "error" | "quota8
 const templateEvents: TemplateEvent[] = ["permission", "question", "completed", "error", "quota80", "quota50", "quota20", "quota0", "recovered"];
 const templateDraftStorageKey = "vibe-coding-light.notification-template-drafts.v1";
 type PendingTemplate = { title: string; body: string } | null;
+const unknownStatus: NotificationStatus = {
+  serviceAvailable: false, keySaved: false, claudeHooksInstalled: false, codexHooksInstalled: false,
+  cursorHooksInstalled: false, traeHooksInstalled: false, grokHooksInstalled: false, deepseekHooksPrepared: false,
+  claudeQuotaAvailable: false, codexQuotaAvailable: false, testConsoleAvailable: false, lastSendError: null,
+};
 
 function readPendingTemplates(): Record<string, PendingTemplate> {
   const entries: Record<string, PendingTemplate> = Object.create(null);
@@ -117,9 +122,14 @@ export class NotificationSettingsController {
   private status: NotificationStatus | null = null;
   private diagnostics: DiagnosticEntry[] = [];
   private diagnosticsRefreshFailed = false;
+  private diagnosticsLoading = false;
+  private statusRefreshFailed = false;
+  private statusLoading = false;
   private locale: NotificationLocale = "zh-CN";
   private localeOverridden = false;
   private statusRevision = 0;
+  private diagnosticsRevision = 0;
+  private initGeneration = 0;
   private feedback: NotificationFeedback | null = null;
   private quietError = false;
   private saveQueue: Promise<void> = Promise.resolve();
@@ -155,12 +165,32 @@ export class NotificationSettingsController {
     this.initializing = true;
     if (!this.localeOverridden) this.locale = locale;
     const statusRevision = this.statusRevision;
+    const diagnosticsRevision = this.diagnosticsRevision;
+    const generation = ++this.initGeneration;
+    this.statusLoading = true;
+    this.diagnosticsLoading = true;
+    void this.api.getStatus().then((status) => {
+      if (generation === this.initGeneration && statusRevision === this.statusRevision) this.setStatus(status);
+    }, () => {
+      if (generation === this.initGeneration && statusRevision === this.statusRevision) {
+        this.statusLoading = false;
+        this.statusRefreshFailed = true;
+        this.render();
+      }
+    });
+    void this.api.getDiagnostics().then((diagnostics) => {
+      if (generation === this.initGeneration && diagnosticsRevision === this.diagnosticsRevision) this.setDiagnostics(diagnostics);
+    }, () => {
+      if (generation === this.initGeneration && diagnosticsRevision === this.diagnosticsRevision) {
+        this.diagnosticsLoading = false;
+        this.diagnosticsRefreshFailed = true;
+        this.render();
+      }
+    });
     try {
-      const [settings, status, diagnostics] = await Promise.all([this.api.getSettings(), this.api.getStatus(), this.api.getDiagnostics()]);
+      const settings = await this.api.getSettings();
       this.settings = settings;
       this.persistedSettings = structuredClone(settings);
-      if (statusRevision === this.statusRevision) this.status = status;
-      this.diagnostics = diagnostics;
       this.loadFailed = false;
       for (const [key, draft] of Object.entries(this.pendingTemplates)) {
         this.dirtyTemplateKeys.add(key);
@@ -177,12 +207,24 @@ export class NotificationSettingsController {
   }
 
   setLocale(locale: NotificationLocale): void { this.localeOverridden = true; this.locale = locale; this.render(); }
-  setStatus(status: NotificationStatus): void { this.statusRevision++; this.status = status; this.render(); }
-  setDiagnostics(entries: DiagnosticEntry[]): void { this.diagnostics = entries; this.diagnosticsRefreshFailed = false; this.render(); }
+  setStatus(status: NotificationStatus): void { this.statusRevision++; this.status = status; this.statusLoading = false; this.statusRefreshFailed = false; this.render(); }
+  setDiagnostics(entries: DiagnosticEntry[]): void { this.diagnosticsRevision++; this.diagnostics = entries; this.diagnosticsLoading = false; this.diagnosticsRefreshFailed = false; this.render(); }
 
   async refreshDiagnostics(): Promise<void> {
     try { this.setDiagnostics(await this.api.getDiagnostics()); }
     catch { this.diagnosticsRefreshFailed = true; this.render(); }
+  }
+
+  async refreshStatus(): Promise<void> {
+    const revision = this.statusRevision;
+    this.statusLoading = true;
+    this.render();
+    try {
+      const status = await this.api.getStatus();
+      if (revision === this.statusRevision) this.setStatus(status);
+    } catch {
+      if (revision === this.statusRevision) { this.statusLoading = false; this.statusRefreshFailed = true; this.render(); }
+    }
   }
 
   private queueSettingsSave(next: NotificationSettings, template = false): Promise<boolean> {
@@ -316,6 +358,7 @@ export class NotificationSettingsController {
     if (!button) return;
     const action = button.dataset.action;
     if (action === "retry-init") { await this.init(this.locale); return; }
+    if (action === "retry-status") { await this.refreshStatus(); return; }
     if (action === "retry-template") { await this.flushTemplateDrafts(); return; }
     if (action === "retry-diagnostics") { await this.refreshDiagnostics(); return; }
     if (action?.startsWith("install-")) {
@@ -329,7 +372,7 @@ export class NotificationSettingsController {
         const statusField = ({ cursor: "cursorHooksInstalled", trae: "traeHooksInstalled", grok: "grokHooksInstalled", deepseek: "deepseekHooksPrepared" } as const)[source as "cursor" | "trae" | "grok" | "deepseek"];
         if (this.status && statusField) this.status = { ...this.status, [statusField]: true };
         let refreshFailed = false;
-        try { this.status = await this.api.getStatus(); } catch { refreshFailed = true; }
+        try { this.setStatus(await this.api.getStatus()); } catch { refreshFailed = true; }
         const copy = notificationCopy(this.locale);
         this.installFeedback = `${source === "deepseek" ? copy.deepseekPrepared : copy.installSuccess}${refreshFailed ? ` · ${copy.statusRefreshFailed}` : ""}`;
       } catch (error) {
@@ -372,7 +415,7 @@ export class NotificationSettingsController {
         await this.api.saveKey(key);
         if (input) input.value = "";
         if (this.status) this.status = { ...this.status, keySaved: true };
-        try { this.status = await this.api.getStatus(); this.feedback = null; }
+        try { this.setStatus(await this.api.getStatus()); this.feedback = null; }
         catch { this.feedback = "keySavedRefreshFailed"; }
       }
       catch (error) { this.feedback = error === "Invalid Bark device key" ? "invalidKey" : "saveFailure"; }
@@ -380,7 +423,7 @@ export class NotificationSettingsController {
       try {
         await this.api.deleteKey();
         if (this.status) this.status = { ...this.status, keySaved: false };
-        try { this.status = await this.api.getStatus(); this.feedback = null; }
+        try { this.setStatus(await this.api.getStatus()); this.feedback = null; }
         catch { this.feedback = "keyDeletedRefreshFailed"; }
       }
       catch { this.feedback = "saveFailure"; }
@@ -395,7 +438,7 @@ export class NotificationSettingsController {
       this.root.innerHTML = `<section class="card load-error" role="alert"><h1>${t.title}</h1><p>${t.loadFailed}</p><button type="button" data-action="retry-init">${t.loadRetry}</button></section>`;
       return;
     }
-    if (!this.settings || !this.status) return;
+    if (!this.settings) return;
     const active = this.root.contains(document.activeElement) ? document.activeElement as HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement | HTMLSelectElement : null;
     const activeTemplateField = active?.dataset?.templateField;
     const barkKey = this.root.querySelector<HTMLInputElement>("#bark-key")?.value ?? "";
@@ -405,17 +448,18 @@ export class NotificationSettingsController {
     const activeId = active?.id;
     const activeText = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement ? active : null;
     const selection = (activeTemplateField || activeBarkKey) && activeText ? { start: activeText.selectionStart, end: activeText.selectionEnd } : null;
-    const s = this.settings, status = this.status, t = notificationCopy(this.locale);
+    const s = this.settings, status = this.status ?? unknownStatus, statusKnown = this.status !== null, t = notificationCopy(this.locale);
+    const statusPlaceholder = this.statusLoading ? t.statusLoading : t.statusUnknown;
     const settingsFailed = this.feedback === "settingsFailure";
     const feedback = settingsFailed ? null : this.feedback ?? (status.lastSendError ? sendErrorFeedback(status.lastSendError) : null);
     const feedbackError = feedback !== null;
     document.documentElement.lang = this.locale;
     const toggle = (path: string, label: string, checked: boolean) => `<label class="switch-row"><span>${label}</span><input type="checkbox" data-path="${path}" ${checked ? "checked" : ""} aria-label="${label}"><i aria-hidden="true"></i></label>`;
     const sourceRow = (source: "claude" | "codex" | "cursor" | "trae" | "grok" | "deepseek", availability: string, installable: boolean) => `<div class="integration-source">${toggle(`sources.${source}`, t[source], s.sources[source])}<span class="availability">${availability}</span>${installable ? `<button type="button" data-action="install-${source}" ${this.installingSources.has(source) ? "disabled" : ""}>${t.installHook}</button>` : `<span class="integration-action-space" aria-hidden="true"></span>`}</div>`;
-    const sourceRows = sourceRow("claude", status.claudeHooksInstalled ? t.hooksInstalled : t.hooksMissing, false)
-      + sourceRow("codex", status.codexHooksInstalled ? t.hooksInstalled : t.hooksMissing, false)
+    const sourceRows = sourceRow("claude", !statusKnown ? statusPlaceholder : status.claudeHooksInstalled ? t.hooksInstalled : t.hooksMissing, false)
+      + sourceRow("codex", !statusKnown ? statusPlaceholder : status.codexHooksInstalled ? t.hooksInstalled : t.hooksMissing, false)
       + (["cursor", "trae", "grok", "deepseek"] as const).map((source) => sourceRow(source,
-        source === "deepseek" ? (status.deepseekHooksPrepared ? t.deepseekPrepared : t.deepseekNeedsBridge) : (status[`${source}HooksInstalled`] ? t.hooksInstalled : t.hooksMissing), true)).join("");
+        !statusKnown ? statusPlaceholder : source === "deepseek" ? (status.deepseekHooksPrepared ? t.deepseekPrepared : t.deepseekNeedsBridge) : (status[`${source}HooksInstalled`] ? t.hooksInstalled : t.hooksMissing), true)).join("");
     const eventSelected = Object.values(s.events).some(Boolean) || Object.values(s.quota).some(Boolean);
     const labels: Record<TemplateEvent, string> = {
       permission: t.templatePermission, question: t.templateQuestion, completed: t.templateCompleted,
@@ -448,11 +492,12 @@ export class NotificationSettingsController {
       <header class="page-head"><p class="eyebrow">VIBE CODING LIGHT / NOTIFICATIONS</p><h1>${t.title}</h1><p>${t.intro}</p></header>
       <section class="hero-card"><div><h2>${t.master}</h2><p>${t.masterHint}</p></div>${toggle("enabled", t.master, s.enabled)}</section>
       ${settingsFailed ? `<p id="settings-feedback" class="notice" role="alert">${t.settingsFailure}</p>` : ""}
+      ${this.statusRefreshFailed ? `<div class="notice" role="status"><span id="status-refresh-error">${t.statusInitialFailure}</span><button type="button" data-action="retry-status" ${this.statusLoading ? "disabled" : ""}>${t.statusRetry}</button></div>` : ""}
       <div class="settings-grid">
-        <section class="card connection"><div class="card-title"><span class="card-index">01</span><h2>${t.connection}</h2></div><p class="key-status ${status.keySaved ? "good" : ""}">${status.keySaved ? t.keySaved : t.keyMissing}</p><label class="field-label" for="bark-key">${t.key}</label><div class="key-entry"><input id="bark-key" type="password" autocomplete="off" spellcheck="false" placeholder="${t.keyPlaceholder}"><button type="button" id="save-key" data-action="save-key">${t.saveKey}</button></div><div class="actions"><button type="button" data-action="delete-key" ${status.keySaved ? "" : "disabled"}>${t.deleteKey}</button></div><p id="feedback" role="status" class="${feedbackError ? "error" : ""}">${feedback ? t[feedback] : ""}</p></section>
+        <section class="card connection"><div class="card-title"><span class="card-index">01</span><h2>${t.connection}</h2></div><p class="key-status ${statusKnown && status.keySaved ? "good" : ""}">${!statusKnown ? statusPlaceholder : status.keySaved ? t.keySaved : t.keyMissing}</p><label class="field-label" for="bark-key">${t.key}</label><div class="key-entry"><input id="bark-key" type="password" autocomplete="off" spellcheck="false" placeholder="${t.keyPlaceholder}"><button type="button" id="save-key" data-action="save-key">${t.saveKey}</button></div><div class="actions"><button type="button" data-action="delete-key" ${statusKnown && status.keySaved ? "" : "disabled"}>${t.deleteKey}</button></div><p id="feedback" role="status" class="${feedbackError ? "error" : ""}">${feedback ? t[feedback] : ""}</p></section>
         <section class="card sources"><div class="card-title"><span class="card-index">02</span><h2>${t.sources}</h2></div><p class="hint">${t.sourceHint}</p><div class="source-list">${sourceRows}</div><p class="hint source-footer">${t.extraSourceHint}</p><p class="availability" role="status">${escapeHtml(this.installFeedback)}</p></section>
         <section class="card events"><div class="card-title"><span class="card-index">03</span><h2>${t.events}</h2></div><p class="hint">${t.eventHint}</p>${toggle("events.permission", t.permission, s.events.permission)}${toggle("events.question", t.question, s.events.question)}${toggle("events.completed", t.completed, s.events.completed)}${toggle("events.error", t.error, s.events.error)}<p class="hint coverage">${t.codexQuestionHint}</p></section>
-        <section class="card quotas"><div class="card-title"><span class="card-index">04</span><h2>${t.quotas}</h2></div><p class="hint">${t.quotaHint}</p><div class="quota-status"><span>${t.claudeQuota}</span><strong id="claude-quota-status">${status.claudeQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div><div class="quota-status"><span>${t.codexQuota}</span><strong id="codex-quota-status">${status.codexQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div>${toggle("quota.at80", t.at80, s.quota.at80)}${toggle("quota.at50", t.at50, s.quota.at50)}${toggle("quota.at20", t.at20, s.quota.at20)}${toggle("quota.at0", t.at0, s.quota.at0)}${toggle("quota.at_week0", t.atWeek0, s.quota.at_week0)}${toggle("quota.recovered", t.recovered, s.quota.recovered)}</section>
+        <section class="card quotas"><div class="card-title"><span class="card-index">04</span><h2>${t.quotas}</h2></div><p class="hint">${t.quotaHint}</p><div class="quota-status"><span>${t.claudeQuota}</span><strong id="claude-quota-status">${!statusKnown ? statusPlaceholder : status.claudeQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div><div class="quota-status"><span>${t.codexQuota}</span><strong id="codex-quota-status">${!statusKnown ? statusPlaceholder : status.codexQuotaAvailable ? t.quotaAvailable : t.quotaUnavailable}</strong></div>${toggle("quota.at80", t.at80, s.quota.at80)}${toggle("quota.at50", t.at50, s.quota.at50)}${toggle("quota.at20", t.at20, s.quota.at20)}${toggle("quota.at0", t.at0, s.quota.at0)}${toggle("quota.at_week0", t.atWeek0, s.quota.at_week0)}${toggle("quota.recovered", t.recovered, s.quota.recovered)}</section>
       </div>
       <section class="card quiet-hours"><div class="card-title"><span class="card-index">05</span><h2>${t.quietTitle}</h2></div><p class="hint">${t.quietHint}</p>${toggle("quiet_hours.enabled", t.quietEnabled, s.quiet_hours.enabled)}<div class="quiet-time-grid"><label class="field-label">${t.quietStart}<input type="time" data-path="quiet_hours.start_minute" value="${timeValue(s.quiet_hours.start_minute)}"></label><label class="field-label">${t.quietEnd}<input type="time" data-path="quiet_hours.end_minute" value="${timeValue(s.quiet_hours.end_minute)}"></label></div>${this.quietError ? `<p class="quiet-error" role="alert">${t.quietInvalid}</p>` : ""}<p class="hint quiet-bypass-title">${t.quietBypass}</p>${toggle("quiet_hours.bypass.permission", t.permission, s.quiet_hours.bypass.permission)}${toggle("quiet_hours.bypass.question", t.question, s.quiet_hours.bypass.question)}${toggle("quiet_hours.bypass.completed", t.completed, s.quiet_hours.bypass.completed)}${toggle("quiet_hours.bypass.error", t.error, s.quiet_hours.bypass.error)}${toggle("quiet_hours.bypass.quota", t.quotas, s.quiet_hours.bypass.quota)}</section>
       <section class="card templates"><div class="card-title"><span class="card-index">06</span><h2>${t.templatesTitle}</h2></div><p class="hint">${t.templatesHint}</p>
@@ -463,9 +508,9 @@ export class NotificationSettingsController {
           <p class="token-hint">${t.templateTokens}</p><div class="template-actions"><button type="button" data-action="reset-template">${t.templateReset}</button><span id="template-save-status" role="status"></span><button type="button" data-action="retry-template" ${this.templateSaveState === "failed" ? "" : "hidden"}>${t.templateRetry}</button></div>
         </div><div class="template-preview"><span>${t.templatePreview}</span><div id="template-preview"><strong id="preview-title"></strong><p id="preview-body"></p></div></div>
       </section>
-      <section class="card diagnostics"><div class="card-title"><span class="card-index">07</span><h2>${t.diagnosticsTitle}</h2></div><p class="hint">${t.diagnosticsHint}</p>${this.diagnosticsRefreshFailed ? `<p id="diagnostics-refresh-error" class="quiet-error" role="status">${t.diagnosticsRefreshFailed}</p><button type="button" data-action="retry-diagnostics">${t.diagnosticsRetry}</button>` : ""}<div class="diagnostic-actions"><button type="button" data-action="clear-diagnostics" ${this.diagnostics.length ? "" : "disabled"}>${t.diagnosticsClear}</button></div>${diagnosticRows ? `<ol class="diagnostic-list">${diagnosticRows}</ol>` : `<p class="diagnostic-empty">${t.diagnosticsEmpty}</p>`}</section>
+      <section class="card diagnostics"><div class="card-title"><span class="card-index">07</span><h2>${t.diagnosticsTitle}</h2></div><p class="hint">${t.diagnosticsHint}</p>${this.diagnosticsRefreshFailed ? `<p id="diagnostics-refresh-error" class="quiet-error" role="status">${t.diagnosticsRefreshFailed}</p><button type="button" data-action="retry-diagnostics">${t.diagnosticsRetry}</button>` : ""}<div class="diagnostic-actions"><button type="button" data-action="clear-diagnostics" ${this.diagnostics.length ? "" : "disabled"}>${t.diagnosticsClear}</button></div>${diagnosticRows ? `<ol class="diagnostic-list">${diagnosticRows}</ol>` : `<p class="diagnostic-empty">${this.diagnosticsLoading ? t.diagnosticsLoading : t.diagnosticsEmpty}</p>`}</section>
       ${!eventSelected ? `<p class="notice">${t.noTypes}</p>` : ""}
-      ${!status.serviceAvailable ? `<p class="notice" role="status">${t.serviceUnavailable}</p>` : ""}
+      ${statusKnown && !status.serviceAvailable ? `<p class="notice" role="status">${t.serviceUnavailable}</p>` : ""}
       <footer>${t.footer}</footer>`;
     this.updateTemplatePreview();
     this.updateTemplateSaveStatus();

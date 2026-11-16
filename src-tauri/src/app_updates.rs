@@ -38,8 +38,13 @@ const PRE_1_0_TEST_TAGS: &[&str] = &[
     "v1.8.0-rc.1",
 ];
 
-fn is_pre_1_0_test_tag(tag: &str) -> bool {
+const FIRST_STABLE_RELEASE_DAY: i64 = 1_793_923_200; // 2026-11-06 00:00 UTC
+
+fn is_pre_1_0_test_release(tag: &str, published_at: Option<&str>) -> bool {
     PRE_1_0_TEST_TAGS.contains(&tag)
+        && !published_at
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_some_and(|date| date.timestamp() >= FIRST_STABLE_RELEASE_DAY)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,6 +58,8 @@ struct ApiRelease {
     tag_name: String,
     draft: bool,
     prerelease: bool,
+    #[serde(default)]
+    published_at: Option<String>,
 }
 
 pub fn select_release(body: &str, current_version: &str) -> Result<Option<ReleaseInfo>, String> {
@@ -66,7 +73,7 @@ pub fn select_release(body: &str, current_version: &str) -> Result<Option<Releas
             continue;
         }
         let tag = release.tag_name;
-        if current.pre.is_empty() && is_pre_1_0_test_tag(&tag) {
+        if is_pre_1_0_test_release(&tag, release.published_at.as_deref()) {
             continue;
         }
         if !tag
@@ -100,13 +107,38 @@ pub fn select_atom_release(
 ) -> Result<Option<ReleaseInfo>, String> {
     let mut reader = Reader::from_str(body);
     let mut in_entry = false;
+    let mut in_updated = false;
+    let mut entry_tag: Option<String> = None;
+    let mut entry_updated: Option<String> = None;
     let mut saw_feed = false;
     let mut releases = Vec::new();
     loop {
         match reader.read_event().map_err(|error| error.to_string())? {
             Event::Start(element) if element.name().as_ref() == b"feed" => saw_feed = true,
-            Event::Start(element) if element.name().as_ref() == b"entry" => in_entry = true,
-            Event::End(element) if element.name().as_ref() == b"entry" => in_entry = false,
+            Event::Start(element) if element.name().as_ref() == b"entry" => {
+                in_entry = true;
+                entry_tag = None;
+                entry_updated = None;
+            }
+            Event::End(element) if element.name().as_ref() == b"entry" => {
+                if let Some(tag) = entry_tag.take() {
+                    let prerelease = tag
+                        .strip_prefix('v')
+                        .and_then(|value| Version::parse(value).ok())
+                        .is_some_and(|version| !version.pre.is_empty());
+                    releases.push(serde_json::json!({"tag_name": tag, "draft": false, "prerelease": prerelease, "published_at": entry_updated}));
+                }
+                in_entry = false;
+            }
+            Event::Start(element) if in_entry && element.name().as_ref() == b"updated" => {
+                in_updated = true;
+            }
+            Event::End(element) if element.name().as_ref() == b"updated" => {
+                in_updated = false;
+            }
+            Event::Text(value) if in_updated => {
+                entry_updated = std::str::from_utf8(value.as_ref()).ok().map(str::to_owned);
+            }
             Event::Start(element) | Event::Empty(element)
                 if in_entry && element.name().as_ref() == b"link" =>
             {
@@ -129,11 +161,12 @@ pub fn select_atom_release(
                         .as_deref()
                         .and_then(|value| value.strip_prefix(RELEASE_BASE))
                     {
-                        if let Some(version) = tag
+                        if tag
                             .strip_prefix('v')
                             .and_then(|value| Version::parse(value).ok())
+                            .is_some()
                         {
-                            releases.push(serde_json::json!({"tag_name": tag, "draft": false, "prerelease": !version.pre.is_empty()}));
+                            entry_tag = Some(tag.to_string());
                         }
                     }
                 }
@@ -194,6 +227,7 @@ fn fetch_release_from(
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct UpdatePreferences {
+    cache_schema: u8,
     pub auto_check: bool,
     pub last_checked_at: u64,
     pub checked_successfully: bool,
@@ -207,10 +241,16 @@ pub struct UpdatePreferencesStore {
 
 impl UpdatePreferencesStore {
     pub fn load(path: PathBuf) -> Self {
-        let value = fs::read(&path)
+        let mut value: UpdatePreferences = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
+        if value.cache_schema == 0 {
+            value.cache_schema = 1;
+            value.last_checked_at = 0;
+            value.checked_successfully = false;
+            value.last_release_version = None;
+        }
         Self { path, value }
     }
 
@@ -240,6 +280,7 @@ impl UpdatePreferencesStore {
         let mut next = self.value.clone();
         next.checked_successfully = true;
         next.last_release_version = release.map(|item| item.version.clone());
+        next.cache_schema = 1;
         self.save(next)
     }
 
@@ -249,13 +290,13 @@ impl UpdatePreferencesStore {
         }
         let current = Version::parse(current_version).ok()?;
         let release = Version::parse(self.value.last_release_version.as_deref()?).ok()?;
+        if current.pre.is_empty() && !release.pre.is_empty() {
+            return None;
+        }
         if release <= current {
             return None;
         }
         let version = release.to_string();
-        if current.pre.is_empty() && is_pre_1_0_test_tag(&format!("v{version}")) {
-            return None;
-        }
         Some(ReleaseInfo {
             url: format!("{RELEASE_BASE}v{version}"),
             version,
@@ -285,19 +326,19 @@ mod tests {
 
     #[test]
     fn atom_feed_can_supply_release_when_api_is_unavailable() {
-        let feed = r#"<?xml version="1.0"?><feed><entry><link rel="alternate" type="text/html" href="https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.7.0-rc.2"/></entry><entry><link rel="alternate" href="https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.6.0"/></entry></feed>"#;
+        let feed = r#"<?xml version="1.0"?><feed><entry><link rel="alternate" type="text/html" href="https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.0.3-rc.2"/></entry><entry><link rel="alternate" href="https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.0.2"/></entry></feed>"#;
         assert_eq!(
-            select_atom_release(feed, "1.7.0-rc.1")
+            select_atom_release(feed, "1.0.3-rc.1")
                 .unwrap()
                 .unwrap()
                 .version,
-            "1.7.0-rc.2"
+            "1.0.3-rc.2"
         );
         assert_eq!(
-            select_atom_release(feed, "1.5.0").unwrap().unwrap().version,
-            "1.6.0"
+            select_atom_release(feed, "1.0.1").unwrap().unwrap().version,
+            "1.0.2"
         );
-        assert!(select_atom_release("<broken", "1.5.0").is_err());
+        assert!(select_atom_release("<broken", "1.0.1").is_err());
     }
 
     #[test]
@@ -306,7 +347,7 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
-            let feed = "<feed><entry><link rel=\"alternate\" href=\"https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.7.0-rc.2\"/></entry></feed>";
+            let feed = "<feed><entry><link rel=\"alternate\" href=\"https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.0.3-rc.2\"/></entry></feed>";
             for response in [
                 "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                     .to_string(),
@@ -329,32 +370,32 @@ mod tests {
             .unwrap();
         let result = fetch_release_from(
             &client,
-            "1.7.0-rc.1",
+            "1.0.3-rc.1",
             &format!("http://{address}/api"),
             &format!("http://{address}/feed"),
         )
         .unwrap();
-        assert_eq!(result.unwrap().version, "1.7.0-rc.2");
+        assert_eq!(result.unwrap().version, "1.0.3-rc.2");
         server.join().unwrap();
     }
 
     #[test]
     fn release_selection_respects_channel_and_semver() {
         let body = r#"[
-          {"tag_name":"v1.7.0-rc.1","draft":false,"prerelease":true},
-          {"tag_name":"v1.6.0","draft":false,"prerelease":false},
+          {"tag_name":"v1.0.3-rc.2","draft":false,"prerelease":true},
+          {"tag_name":"v1.0.2","draft":false,"prerelease":false},
           {"tag_name":"v9.0.0","draft":true,"prerelease":false},
           {"tag_name":"bad/tag","draft":false,"prerelease":false}
         ]"#;
-        let prerelease = select_release(body, "1.6.0-rc.3").unwrap().unwrap();
-        assert_eq!(prerelease.version, "1.7.0-rc.1");
+        let prerelease = select_release(body, "1.0.3-rc.1").unwrap().unwrap();
+        assert_eq!(prerelease.version, "1.0.3-rc.2");
         assert_eq!(
             prerelease.url,
-            "https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.7.0-rc.1"
+            "https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.0.3-rc.2"
         );
-        let stable = select_release(body, "1.5.0").unwrap().unwrap();
-        assert_eq!(stable.version, "1.6.0");
-        assert!(select_release(body, "1.6.0").unwrap().is_none());
+        let stable = select_release(body, "1.0.1").unwrap().unwrap();
+        assert_eq!(stable.version, "1.0.2");
+        assert!(select_release(body, "1.0.2").unwrap().is_none());
     }
 
     #[test]
@@ -367,6 +408,78 @@ mod tests {
         assert!(select_release(body, "1.0.0").unwrap().is_none());
         let feed = r#"<feed><entry><link rel="alternate" href="https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.5.0"/></entry></feed>"#;
         assert!(select_atom_release(feed, "1.0.0").unwrap().is_none());
+    }
+
+    #[test]
+    fn current_rc_ignores_removed_test_tags_in_api_and_atom() {
+        let body = r#"[
+          {"tag_name":"v1.8.0-rc.1","draft":false,"prerelease":true},
+          {"tag_name":"v1.0.3-rc.2","draft":false,"prerelease":true}
+        ]"#;
+        assert_eq!(
+            select_release(body, "1.0.3-rc.1").unwrap().unwrap().version,
+            "1.0.3-rc.2"
+        );
+        let feed = r#"<feed><entry><link rel="alternate" href="https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.8.0-rc.1"/></entry><entry><link rel="alternate" href="https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.0.3-rc.2"/></entry></feed>"#;
+        assert_eq!(
+            select_atom_release(feed, "1.0.3-rc.1")
+                .unwrap()
+                .unwrap()
+                .version,
+            "1.0.3-rc.2"
+        );
+    }
+
+    #[test]
+    fn current_rc_ignores_a_cached_removed_test_release() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("updates.json");
+        fs::write(&path, r#"{"auto_check":true,"last_checked_at":100000,"checked_successfully":true,"last_release_version":"1.8.0-rc.1"}"#).unwrap();
+        let loaded = UpdatePreferencesStore::load(path);
+        assert!(loaded.cached_release("1.0.3-rc.1").is_none());
+        assert!(loaded.should_check(100_001));
+    }
+
+    #[test]
+    fn a_new_release_reusing_an_old_tag_is_not_hidden() {
+        let body = r#"[{"tag_name":"v1.1.0","draft":false,"prerelease":false,"published_at":"2026-12-01T00:00:00Z"}]"#;
+        assert_eq!(
+            select_release(body, "1.0.3-rc.2").unwrap().unwrap().version,
+            "1.1.0"
+        );
+        let feed = r#"<feed><entry><updated>2026-12-01T00:00:00Z</updated><link rel="alternate" href="https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.1.0"/></entry></feed>"#;
+        assert_eq!(
+            select_atom_release(feed, "1.0.3-rc.2")
+                .unwrap()
+                .unwrap()
+                .version,
+            "1.1.0"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = UpdatePreferencesStore::load(dir.path().join("updates.json"));
+        store
+            .save_result(Some(&ReleaseInfo {
+                version: "1.1.0".into(),
+                url: format!("{RELEASE_BASE}v1.1.0"),
+            }))
+            .unwrap();
+        assert_eq!(store.cached_release("1.0.3-rc.2").unwrap().version, "1.1.0");
+    }
+
+    #[test]
+    fn stable_build_does_not_offer_a_cached_prerelease() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("updates.json");
+        let mut store = UpdatePreferencesStore::load(path.clone());
+        store
+            .save_result(Some(&ReleaseInfo {
+                version: "1.0.3-rc.2".into(),
+                url: format!("{RELEASE_BASE}v1.0.3-rc.2"),
+            }))
+            .unwrap();
+        assert!(UpdatePreferencesStore::load(path)
+            .cached_release("1.0.2")
+            .is_none());
     }
 
     #[test]
@@ -400,15 +513,15 @@ mod tests {
         store.set_auto_check(true).unwrap();
         store.mark_checked(100_000).unwrap();
         let release = ReleaseInfo {
-            version: "1.8.0-rc.1".into(),
-            url: "https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.8.0-rc.1"
+            version: "1.0.3-rc.2".into(),
+            url: "https://github.com/TJU-ICLearner/vibe-coding-light/releases/tag/v1.0.3-rc.2"
                 .into(),
         };
         store.save_result(Some(&release)).unwrap();
         let loaded = UpdatePreferencesStore::load(path);
         assert!(!loaded.should_check(100_001));
-        assert_eq!(loaded.cached_release("1.7.0-rc.1").unwrap(), release);
-        assert!(loaded.cached_release("1.8.0-rc.1").is_none());
-        assert!(loaded.cached_release("1.0.0").is_none());
+        assert_eq!(loaded.cached_release("1.0.3-rc.1").unwrap(), release);
+        assert!(loaded.cached_release("1.0.3-rc.2").is_none());
+        assert!(loaded.cached_release("1.0.3").is_none());
     }
 }
