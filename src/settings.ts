@@ -243,6 +243,7 @@ export function mountSettings(): void {
   const previewWindow = root.querySelector<HTMLElement>(".preview-window")!;
   const previewSize = root.querySelector<HTMLElement>(".preview-size")!;
   const saveButton = root.querySelector<HTMLButtonElement>("#save-pet")!;
+  const resumeDraft = root.querySelector<HTMLButtonElement>("#resume-draft")!;
   const nameInput = root.querySelector<HTMLInputElement>("#pet-name")!;
   const scaleInput = root.querySelector<HTMLInputElement>("#pet-scale")!;
   const list = root.querySelector<HTMLElement>("#saved-pets")!;
@@ -259,6 +260,8 @@ export function mountSettings(): void {
   let capabilities: ImportCapabilities = { automatic: false, transparent_png: false, transparent_gif: false };
   let capabilitiesLoaded = false;
   let suggestedName = "";
+  let draftRevision = 0;
+  let savedRevision: number | null = null;
   let locale: Locale = "zh-CN";
   let localeEventSeen = false;
 
@@ -339,7 +342,7 @@ export function mountSettings(): void {
       applyPetMotionMetrics(processed, scale);
       previewSize.textContent = `${side} × ${side}`;
     }
-    saveButton.disabled = controller.busy || controller.selectionPending > 0 || controller.draft.isBusy(controller.mode) ||
+    saveButton.disabled = previewMode === "selected" || savedRevision === draftRevision || controller.busy || controller.selectionPending > 0 || controller.draft.isBusy(controller.mode) ||
       Boolean(controller.draft.blockingError(controller.mode)) || !controller.previewUrl || !valid;
     if (!valid && controller.previewUrl && !controller.error) {
       status.textContent = t(locale, "invalid_transform_hint");
@@ -357,6 +360,7 @@ export function mountSettings(): void {
       ? t(locale, selectedPet.id === BUILTIN_YIER_ID ? "builtin_yier" : "builtin_cat")
       : controller.pets.find((pet) => pet.id === selectedPet.id)?.name ?? selectedPet.id;
     previewContext.textContent = previewSelected ? t(locale, "selected_preview", { name: selectedName }) : t(locale, "draft_preview");
+    resumeDraft.hidden = !previewSelected || !controller.previewUrl;
     builtinPreviewControl.hidden = !previewSelected || controller.mode === "states";
     originalRow.hidden = previewSelected;
     if (previewSelected) {
@@ -417,6 +421,7 @@ export function mountSettings(): void {
       : blocking ? formatPetError(locale, blocking)
       : capabilitiesLoaded && fileInput.disabled ? t(locale, "mac_only")
       : controller.busy || controller.draft.isBusy(controller.mode) ? t(locale, "processing")
+      : !previewSelected && savedRevision === draftRevision && controller.previewUrl ? t(locale, "draft_already_saved")
       : controller.feedback ? t(locale, controller.feedback)
       : previewSelected ? t(locale, "start_new_pet")
       : asset ? t(locale, "preview_ready") : t(locale, "select_default");
@@ -478,6 +483,7 @@ export function mountSettings(): void {
     tabs.append(tab);
   }
   controller.onChange(render);
+  resumeDraft.onclick = () => { previewMode = "draft"; render(); };
   builtinPreviewState.onchange = () => {
     builtinPreviewSlot = builtinPreviewState.value as PetSlot;
     render();
@@ -486,11 +492,13 @@ export function mountSettings(): void {
     const nextMode = styleInput.value as DraftMode;
     if (controller.mode === "states" && nextMode === "single") builtinPreviewSlot = selectedSlot;
     controller.setMode(nextMode);
+    draftRevision++;
     selectSlot(nextMode === "single" ? "default" : lastStateSlot);
   };
   fileInput.onchange = () => {
     const file = fileInput.files?.[0];
     if (!file) return;
+    draftRevision++;
     previewMode = "draft";
     files.set(selectedSlot, file);
     motions.delete(selectedSlot);
@@ -515,6 +523,7 @@ export function mountSettings(): void {
     const mode = modeInput.value as PetImageMode;
     modes.set(selectedSlot, mode);
     if (file) {
+      draftRevision++;
       previewMode = "draft";
       void controller.loadSlot(selectedSlot, file, mode);
     }
@@ -522,11 +531,13 @@ export function mountSettings(): void {
   motionInput.onchange = () => {
     if (controller.draft.get(selectedSlot)?.asset?.kind !== "png") return;
     motions.set(selectedSlot, motionInput.value as PetMotion);
+    draftRevision++;
     previewMode = "draft";
     clearEditingFeedback();
     render();
   };
   slotClear.onclick = () => {
+    draftRevision++;
     const slot = selectedSlot;
     clearEditingFeedback();
     controller.draft.clear(slot);
@@ -542,15 +553,24 @@ export function mountSettings(): void {
     render();
   };
   scaleInput.addEventListener("input", () => {
+    draftRevision++;
     if (controller.previewUrl) {
       previewMode = "draft";
       clearEditingFeedback();
     }
     render();
   });
+  nameInput.addEventListener("input", () => {
+    draftRevision++;
+    if (controller.previewUrl) previewMode = "draft";
+    clearEditingFeedback();
+    render();
+  });
   saveButton.onclick = () => {
+    if (saveButton.disabled || previewMode !== "draft" || savedRevision === draftRevision) return;
+    const savingRevision = draftRevision;
     void controller.save(nameInput.value, Number(scaleInput.value), Object.fromEntries(motions) as Partial<Record<PetSlot, PetMotion>>)
-      .then(() => { previewMode = "selected"; render(); }).catch(() => {});
+      .then(() => { savedRevision = savingRevision; if (draftRevision === savingRevision) previewMode = "selected"; render(); }).catch(() => {});
   };
   processed.addEventListener("animationend", (event) => {
     if (event.animationName === "pet-photo-completed" && !processed.classList.contains("animated")) processed.className = "motion-idle";

@@ -94,7 +94,15 @@ export class NotificationSettingsController {
   private saveRevision = 0;
   private selectedEvent: TemplateEvent = "permission";
   private templateDrafts: Record<string, { title: string; body: string }> = {};
+  private dirtyTemplateKeys = new Set<string>();
+  private resetTemplateKeys = new Set<string>();
+  private templateEditRevision = 0;
+  private templateSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private templateSaveState: "idle" | "saving" | "saved" | "failed" = "idle";
   private installFeedback = "";
+  private installingSources = new Set<string>();
+  private loadFailed = false;
+  private initializing = false;
 
   constructor(private readonly root: HTMLElement, private readonly api: NotificationApi) {
     root.addEventListener("change", (event) => { void this.onChange(event); });
@@ -103,28 +111,37 @@ export class NotificationSettingsController {
       if ((event.target as HTMLElement)?.hasAttribute("data-template-field")) {
         this.rememberTemplateDraft();
         this.updateTemplatePreview();
+        this.markTemplateDirty();
       }
     });
   }
 
   async init(locale: NotificationLocale): Promise<void> {
+    if (this.initializing) return;
+    this.initializing = true;
     if (!this.localeOverridden) this.locale = locale;
     const statusRevision = this.statusRevision;
-    const [settings, status, diagnostics] = await Promise.all([this.api.getSettings(), this.api.getStatus(), this.api.getDiagnostics()]);
-    this.settings = settings;
-    this.persistedSettings = structuredClone(settings);
-    if (statusRevision === this.statusRevision) this.status = status;
-    this.diagnostics = diagnostics;
-    this.render();
+    try {
+      const [settings, status, diagnostics] = await Promise.all([this.api.getSettings(), this.api.getStatus(), this.api.getDiagnostics()]);
+      this.settings = settings;
+      this.persistedSettings = structuredClone(settings);
+      if (statusRevision === this.statusRevision) this.status = status;
+      this.diagnostics = diagnostics;
+      this.loadFailed = false;
+      this.render();
+    } catch {
+      this.loadFailed = true;
+      this.render();
+    } finally { this.initializing = false; }
   }
 
   setLocale(locale: NotificationLocale): void { this.localeOverridden = true; this.locale = locale; this.render(); }
   setStatus(status: NotificationStatus): void { this.statusRevision++; this.status = status; this.render(); }
   setDiagnostics(entries: DiagnosticEntry[]): void { this.diagnostics = entries; this.render(); }
 
-  private queueSettingsSave(next: NotificationSettings): Promise<void> {
+  private queueSettingsSave(next: NotificationSettings, template = false): Promise<boolean> {
     const revision = ++this.saveRevision;
-    this.saveQueue = this.saveQueue.then(async () => {
+    const operation = this.saveQueue.then(async () => {
       try {
         const saved = await this.api.setSettings(next);
         this.persistedSettings = structuredClone(saved);
@@ -133,33 +150,80 @@ export class NotificationSettingsController {
           this.feedback = null;
           this.render();
         }
+        return true;
       } catch {
         if (revision === this.saveRevision) {
           this.settings = structuredClone(this.persistedSettings ?? next);
-          this.feedback = "settingsFailure";
+          this.feedback = template ? null : "settingsFailure";
           this.render();
         }
+        return false;
       }
     });
-    return this.saveQueue;
+    this.saveQueue = operation.then(() => {});
+    return operation;
+  }
+
+  private markTemplateDirty(): void {
+    const key = `${this.locale}.${this.selectedEvent}`;
+    this.resetTemplateKeys.delete(key);
+    this.dirtyTemplateKeys.add(key);
+    this.templateEditRevision++;
+    this.templateSaveState = "saving";
+    this.updateTemplateSaveStatus();
+    if (this.templateSaveTimer !== null) clearTimeout(this.templateSaveTimer);
+    this.templateSaveTimer = setTimeout(() => { void this.flushTemplateDrafts(); }, 250);
+  }
+
+  private async flushTemplateDrafts(): Promise<void> {
+    if (this.templateSaveTimer !== null) clearTimeout(this.templateSaveTimer);
+    this.templateSaveTimer = null;
+    if (!this.settings || this.dirtyTemplateKeys.size === 0) return;
+    const keys = [...this.dirtyTemplateKeys];
+    const editRevision = this.templateEditRevision;
+    this.dirtyTemplateKeys.clear();
+    const next = structuredClone(this.settings) as NotificationSettings;
+    for (const key of keys) {
+      if (this.resetTemplateKeys.has(key)) delete next.templates[key];
+      else next.templates[key] = { ...this.templateDrafts[key] };
+    }
+    this.settings = next;
+    this.templateSaveState = "saving";
+    this.updateTemplateSaveStatus();
+    const saved = await this.queueSettingsSave(next, true);
+    if (editRevision === this.templateEditRevision) {
+      if (!saved) for (const key of keys) this.dirtyTemplateKeys.add(key);
+      else for (const key of keys) this.resetTemplateKeys.delete(key);
+      this.templateSaveState = saved && this.dirtyTemplateKeys.size === 0 ? "saved" : saved ? "saving" : "failed";
+    }
+    this.updateTemplateSaveStatus();
+  }
+
+  private updateTemplateSaveStatus(): void {
+    const status = this.root.querySelector<HTMLElement>("#template-save-status");
+    const retry = this.root.querySelector<HTMLButtonElement>('[data-action="retry-template"]');
+    const t = notificationCopy(this.locale);
+    if (status) status.textContent = this.templateSaveState === "saving" ? t.templateSaving
+      : this.templateSaveState === "saved" ? t.templateSaved
+      : this.templateSaveState === "failed" ? t.templateSaveFailed : "";
+    status?.classList.toggle("error", this.templateSaveState === "failed");
+    if (retry) retry.hidden = this.templateSaveState !== "failed";
   }
 
   private async onChange(event: Event): Promise<void> {
     const input = event.target as HTMLInputElement;
     if (input?.id === "template-event") {
+      void this.flushTemplateDrafts();
       this.selectedEvent = input.value as TemplateEvent;
       this.render();
       return;
     }
     const field = input?.dataset.templateField;
     if ((field === "title" || field === "body") && this.settings) {
-      const next = structuredClone(this.settings) as NotificationSettings;
-      const key = `${this.locale}.${this.selectedEvent}`;
       this.rememberTemplateDraft();
-      next.templates[key] = { ...this.templateDrafts[key] };
-      this.settings = next;
       this.updateTemplatePreview();
-      await this.queueSettingsSave(next);
+      this.markTemplateDirty();
+      await this.flushTemplateDrafts();
       return;
     }
     const path = input?.dataset.path;
@@ -195,16 +259,25 @@ export class NotificationSettingsController {
     const button = target.closest<HTMLButtonElement>("button[data-action]");
     if (!button) return;
     const action = button.dataset.action;
+    if (action === "retry-init") { await this.init(this.locale); return; }
+    if (action === "retry-template") { await this.flushTemplateDrafts(); return; }
     if (action?.startsWith("install-")) {
       const source = action.slice(8);
+      if (this.installingSources.has(source)) return;
+      const restoreFocus = document.activeElement === button;
+      this.installingSources.add(source);
+      this.render();
       try {
         await this.api.installHooks(source);
         this.status = await this.api.getStatus();
         this.installFeedback = source === "deepseek" ? notificationCopy(this.locale).deepseekPrepared : notificationCopy(this.locale).installSuccess;
       } catch (error) {
         this.installFeedback = `${notificationCopy(this.locale).installFailed}: ${String(error)}`;
+      } finally {
+        this.installingSources.delete(source);
       }
       this.render();
+      if (restoreFocus) this.root.querySelector<HTMLButtonElement>(`[data-action="install-${source}"]`)?.focus();
       return;
     }
     if (action === "clear-diagnostics") {
@@ -214,21 +287,30 @@ export class NotificationSettingsController {
       return;
     }
     if (action === "reset-template" && this.settings) {
-      const next = structuredClone(this.settings) as NotificationSettings;
+      if (this.templateSaveTimer !== null) clearTimeout(this.templateSaveTimer);
+      this.templateSaveTimer = null;
       const key = `${this.locale}.${this.selectedEvent}`;
-      delete next.templates[key];
       delete this.templateDrafts[key];
-      this.settings = next;
+      this.resetTemplateKeys.add(key);
+      this.dirtyTemplateKeys.add(key);
+      this.templateEditRevision++;
+      delete this.settings.templates[key];
+      this.templateSaveState = "saving";
       this.render();
-      await this.queueSettingsSave(next);
+      await this.flushTemplateDrafts();
       return;
     }
     if (action === "save-key") {
       const input = this.root.querySelector<HTMLInputElement>("#bark-key");
       const key = input?.value.trim() ?? "";
-      if (input) input.value = "";
       if (!key) return;
-      try { await this.api.saveKey(key); this.status = await this.api.getStatus(); this.feedback = null; }
+      try {
+        await this.api.saveKey(key);
+        if (input) input.value = "";
+        if (this.status) this.status = { ...this.status, keySaved: true };
+        try { this.status = await this.api.getStatus(); } catch { /* Key was saved; status refresh can wait. */ }
+        this.feedback = null;
+      }
       catch (error) { this.feedback = error === "Invalid Bark device key" ? "invalidKey" : "saveFailure"; }
     } else if (action === "delete-key") {
       try { await this.api.deleteKey(); this.status = await this.api.getStatus(); this.feedback = null; }
@@ -238,19 +320,29 @@ export class NotificationSettingsController {
   }
 
   private render(): void {
+    if (this.loadFailed) {
+      const t = notificationCopy(this.locale);
+      document.documentElement.lang = this.locale;
+      this.root.innerHTML = `<section class="card load-error" role="alert"><h1>${t.title}</h1><p>${t.loadFailed}</p><button type="button" data-action="retry-init">${t.loadRetry}</button></section>`;
+      return;
+    }
     if (!this.settings || !this.status) return;
-    const active = this.root.contains(document.activeElement) ? document.activeElement as HTMLInputElement | HTMLTextAreaElement : null;
+    const active = this.root.contains(document.activeElement) ? document.activeElement as HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement | HTMLSelectElement : null;
     const activeTemplateField = active?.dataset?.templateField;
     const barkKey = this.root.querySelector<HTMLInputElement>("#bark-key")?.value ?? "";
     const activeBarkKey = active?.id === "bark-key";
-    const selection = activeTemplateField || activeBarkKey ? { start: active!.selectionStart, end: active!.selectionEnd } : null;
+    const activePath = active?.dataset?.path;
+    const activeAction = active?.dataset?.action;
+    const activeId = active?.id;
+    const activeText = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement ? active : null;
+    const selection = (activeTemplateField || activeBarkKey) && activeText ? { start: activeText.selectionStart, end: activeText.selectionEnd } : null;
     const s = this.settings, status = this.status, t = notificationCopy(this.locale);
     const settingsFailed = this.feedback === "settingsFailure";
     const feedback = settingsFailed ? null : this.feedback ?? (status.lastSendError ? sendErrorFeedback(status.lastSendError) : null);
     const feedbackError = feedback !== null;
     document.documentElement.lang = this.locale;
     const toggle = (path: string, label: string, checked: boolean) => `<label class="switch-row"><span>${label}</span><input type="checkbox" data-path="${path}" ${checked ? "checked" : ""} aria-label="${label}"><i aria-hidden="true"></i></label>`;
-    const sourceRow = (source: "claude" | "codex" | "cursor" | "trae" | "grok" | "deepseek", availability: string, installable: boolean) => `<div class="integration-source">${toggle(`sources.${source}`, t[source], s.sources[source])}<span class="availability">${availability}</span>${installable ? `<button type="button" data-action="install-${source}">${t.installHook}</button>` : `<span class="integration-action-space" aria-hidden="true"></span>`}</div>`;
+    const sourceRow = (source: "claude" | "codex" | "cursor" | "trae" | "grok" | "deepseek", availability: string, installable: boolean) => `<div class="integration-source">${toggle(`sources.${source}`, t[source], s.sources[source])}<span class="availability">${availability}</span>${installable ? `<button type="button" data-action="install-${source}" ${this.installingSources.has(source) ? "disabled" : ""}>${t.installHook}</button>` : `<span class="integration-action-space" aria-hidden="true"></span>`}</div>`;
     const sourceRows = sourceRow("claude", status.claudeHooksInstalled ? t.hooksInstalled : t.hooksMissing, false)
       + sourceRow("codex", status.codexHooksInstalled ? t.hooksInstalled : t.hooksMissing, false)
       + (["cursor", "trae", "grok", "deepseek"] as const).map((source) => sourceRow(source,
@@ -297,7 +389,7 @@ export class NotificationSettingsController {
         <div class="template-editor"><label class="field-label" for="template-event">${t.templateEvent}</label><select id="template-event">${templateEvents.map((event) => `<option value="${event}" ${event === this.selectedEvent ? "selected" : ""}>${labels[event]}</option>`).join("")}</select>
           <label class="field-label" for="template-title">${t.templateTitle}</label><input id="template-title" data-template-field="title" maxlength="120" value="${escapeHtml(selectedTemplate.title)}" placeholder="Vibe Coding Light">
           <label class="field-label" for="template-body">${t.templateBody}</label><textarea id="template-body" data-template-field="body" maxlength="2000" rows="3" placeholder="${escapeHtml(defaultBody(this.selectedEvent, this.locale))}">${escapeHtml(selectedTemplate.body)}</textarea>
-          <p class="token-hint">${t.templateTokens}</p><button type="button" data-action="reset-template">${t.templateReset}</button>
+          <p class="token-hint">${t.templateTokens}</p><div class="template-actions"><button type="button" data-action="reset-template">${t.templateReset}</button><span id="template-save-status" role="status"></span><button type="button" data-action="retry-template" ${this.templateSaveState === "failed" ? "" : "hidden"}>${t.templateRetry}</button></div>
         </div><div class="template-preview"><span>${t.templatePreview}</span><div id="template-preview"><strong id="preview-title"></strong><p id="preview-body"></p></div></div>
       </section>
       <section class="card diagnostics"><div class="card-title"><span class="card-index">07</span><h2>${t.diagnosticsTitle}</h2></div><p class="hint">${t.diagnosticsHint}</p><div class="diagnostic-actions"><button type="button" data-action="clear-diagnostics" ${this.diagnostics.length ? "" : "disabled"}>${t.diagnosticsClear}</button></div>${diagnosticRows ? `<ol class="diagnostic-list">${diagnosticRows}</ol>` : `<p class="diagnostic-empty">${t.diagnosticsEmpty}</p>`}</section>
@@ -305,6 +397,7 @@ export class NotificationSettingsController {
       ${!status.serviceAvailable ? `<p class="notice" role="status">${t.serviceUnavailable}</p>` : ""}
       <footer>${t.footer}</footer>`;
     this.updateTemplatePreview();
+    this.updateTemplateSaveStatus();
     const restoredBarkKey = this.root.querySelector<HTMLInputElement>("#bark-key");
     if (restoredBarkKey) restoredBarkKey.value = barkKey;
     if (activeBarkKey && restoredBarkKey) {
@@ -317,6 +410,9 @@ export class NotificationSettingsController {
         replacement.focus();
         if (selection && selection.start !== null && selection.end !== null) replacement.setSelectionRange(selection.start, selection.end);
       }
+    } else if (!activeBarkKey && active) {
+      const selector = activePath ? `[data-path="${activePath}"]` : activeAction ? `[data-action="${activeAction}"]` : activeId ? `#${activeId}` : null;
+      this.root.querySelector<HTMLElement>(selector ?? "[data-no-focus-target]")?.focus();
     }
   }
 
@@ -359,7 +455,7 @@ const root = document.getElementById("notification-app");
 if (root) {
   void initAppearance();
   const controller = new NotificationSettingsController(root, api);
-  void invoke<NotificationLocale>("get_app_locale").then((locale) => controller.init(locale));
+  void invoke<NotificationLocale>("get_app_locale").then((locale) => controller.init(locale)).catch(() => controller.init("zh-CN"));
   void listen<NotificationLocale>("locale-changed", (event) => controller.setLocale(event.payload));
   void listen<NotificationStatus>("notification-status-changed", (event) => controller.setStatus(event.payload));
   void listen("notification-diagnostics-changed", () => { void api.getDiagnostics().then((entries) => controller.setDiagnostics(entries)); });

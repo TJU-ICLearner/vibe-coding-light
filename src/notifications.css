@@ -58,6 +58,12 @@ button:focus-visible, .key-entry input:focus-visible { outline: 2px solid #2a8e5
 .template-editor .field-label { margin-top: 10px; }
 .template-editor :is(select, input, textarea):focus-visible { outline: 2px solid #2a8e5d; outline-offset: 2px; }
 .template-editor button { justify-self: start; margin-top: 8px; }
+.template-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.template-actions button { margin-top: 0; }
+#template-save-status { color: #517b5c; font-size: .73rem; font-weight: 700; }
+#template-save-status.error { color: #a43c38; }
+.load-error { margin-top: 28px; }
+.load-error p { color: #a43c38; }
 .token-hint { color: #698272; font-size: .72rem; line-height: 1.6; margin: 10px 0 0; overflow-wrap: anywhere; }
 .template-preview { margin-top: 18px; border-radius: 12px; border: 1px solid #d7e6da; background: #f3faf4; padding: 13px 15px; }
 .template-preview > span { display: block; margin-bottom: 8px; color: #5c8068; font-size: .7rem; font-weight: 800; }

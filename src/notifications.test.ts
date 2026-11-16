@@ -149,6 +149,84 @@ describe("notification settings window", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(root.querySelector(".connection #feedback")?.textContent).toContain("只填写设备密钥");
     expect(root.textContent).not.toContain("abc123");
+    expect(root.querySelector<HTMLInputElement>("#bark-key")?.value).toBe("abc123/title/body?group=example");
+  });
+
+  it("autosaves template input without waiting for blur and reports success", async () => {
+    const { root, api, controller } = setup(); await controller.init("en");
+    const title = root.querySelector<HTMLInputElement>('[data-template-field="title"]')!;
+    title.value = "{source} needs you";
+    title.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(root.querySelector("#template-save-status")?.textContent).toContain("Saving");
+    await vi.waitFor(() => expect(api.setSettings).toHaveBeenCalledWith(expect.objectContaining({
+      templates: { "en.permission": { title: "{source} needs you", body: "" } },
+    })), { timeout: 1000 });
+    await vi.waitFor(() => expect(root.querySelector("#template-save-status")?.textContent).toContain("Saved"));
+  });
+
+  it("flushes a template draft when switching events and keeps failed text for retry", async () => {
+    const { root, api, controller } = setup(); await controller.init("en");
+    (api.setSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("disk full"));
+    const body = root.querySelector<HTMLTextAreaElement>('[data-template-field="body"]')!;
+    body.value = "Please approve {command}";
+    body.dispatchEvent(new Event("input", { bubbles: true }));
+    const event = root.querySelector<HTMLSelectElement>("#template-event")!;
+    event.value = "completed";
+    event.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(root.querySelector("#template-save-status")?.textContent).toContain("Not saved"));
+    expect(root.querySelector("#template-save-status")?.classList.contains("error")).toBe(true);
+    const back = root.querySelector<HTMLSelectElement>("#template-event")!;
+    back.value = "permission"; back.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(root.querySelector<HTMLTextAreaElement>('[data-template-field="body"]')?.value).toBe("Please approve {command}");
+    root.querySelector<HTMLButtonElement>('[data-action="retry-template"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector("#template-save-status")?.textContent).toContain("Saved"));
+    expect(api.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      templates: { "en.permission": { title: "", body: "Please approve {command}" } },
+    }));
+  });
+
+  it("retries restoring a template default after the first write fails", async () => {
+    const { root, api, controller } = setup();
+    (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), templates: { "en.permission": { title: "Old title", body: "Old body" } } });
+    (api.setSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("disk full"));
+    await controller.init("en");
+    root.querySelector<HTMLButtonElement>('[data-action="reset-template"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector("#template-save-status")?.textContent).toContain("Not saved"));
+    root.querySelector<HTMLButtonElement>('[data-action="retry-template"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector("#template-save-status")?.textContent).toContain("Saved"));
+    expect(api.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({ templates: {} }));
+  });
+
+  it("shows an initial-load error with a retry that restores the settings", async () => {
+    const { root, api, controller } = setup();
+    (api.getSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("unavailable"));
+    await controller.init("en");
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("Could not load");
+    root.querySelector<HTMLButtonElement>('[data-action="retry-init"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector("h1")?.textContent).toBe("Notification Settings"));
+  });
+
+  it("keeps keyboard focus on a switch after a save-triggered redraw", async () => {
+    const { root, controller } = setup(); await controller.init("en");
+    const checkbox = root.querySelector<HTMLInputElement>('[data-path="enabled"]')!;
+    checkbox.focus(); checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(document.activeElement).toBe(root.querySelector('[data-path="enabled"]'));
+  });
+
+  it("does not run the same Hook installation twice while it is pending", async () => {
+    const { root, api, controller } = setup(); await controller.init("en");
+    let finish!: () => void;
+    (api.installHooks as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    root.querySelector<HTMLButtonElement>('[data-action="install-cursor"]')!.focus();
+    root.querySelector<HTMLButtonElement>('[data-action="install-cursor"]')!.click();
+    const pending = root.querySelector<HTMLButtonElement>('[data-action="install-cursor"]')!;
+    expect(pending.disabled).toBe(true);
+    pending.click();
+    expect(api.installHooks).toHaveBeenCalledTimes(1);
+    finish();
+    await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('[data-action="install-cursor"]')!.disabled).toBe(false));
+    expect(document.activeElement).toBe(root.querySelector('[data-action="install-cursor"]'));
   });
 
   it("fully localizes visible copy and Codex question coverage, including status errors", async () => {

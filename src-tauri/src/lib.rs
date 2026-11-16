@@ -1709,7 +1709,7 @@ fn show_notification_settings(app: &tauri::AppHandle) -> Result<(), String> {
         window.show().map_err(|error| error.to_string())?;
         window.set_focus().map_err(|error| error.to_string())?;
     } else {
-        WebviewWindowBuilder::new(
+        let window = WebviewWindowBuilder::new(
             app,
             "notifications",
             WebviewUrl::App("notifications.html".into()),
@@ -1719,6 +1719,13 @@ fn show_notification_settings(app: &tauri::AppHandle) -> Result<(), String> {
         .min_inner_size(600.0, 600.0)
         .build()
         .map_err(|error| error.to_string())?;
+        let close_window = window.clone();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = close_window.hide();
+            }
+        });
     }
     Ok(())
 }

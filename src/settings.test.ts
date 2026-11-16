@@ -49,6 +49,32 @@ const photo = (id: string) => ({ schema_version: 1, id, name: id, scale: 0.8, of
 const file = (name: string) => new File([name], `${name}.png`, { type: "image/png" });
 
 describe("settings preview", () => {
+  it("saves a draft once, then requires a change before another profile can be created", async () => {
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "get_app_locale") return "en";
+      if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true, transparent_gif: true };
+      if (command === "get_active_pet") return { kind: "builtin", id: "builtin:bubu" };
+      if (command === "prepare_pet_preview") return { kind: "png", data_url: "data:image/png;base64,UE5H" };
+      if (command === "save_pet_profile") return photo("saved");
+      return [];
+    });
+    document.body.innerHTML = settingsMarkup(); mountSettings();
+    await vi.waitFor(() => expect(document.querySelector<HTMLSelectElement>("#photo-mode")!.options.length).toBeGreaterThan(0));
+    chooseFile(document.querySelector<HTMLInputElement>("#photo-file")!, file("A"));
+    const save = document.querySelector<HTMLButtonElement>("#save-pet")!;
+    await vi.waitFor(() => expect(save.disabled).toBe(false));
+    save.click();
+    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toContain("saved"));
+    expect(save.disabled).toBe(true);
+    save.click();
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "save_pet_profile")).toHaveLength(1);
+    document.querySelector<HTMLButtonElement>("#resume-draft")!.click();
+    expect(save.disabled).toBe(true);
+    expect(document.querySelector("#status")?.textContent).toContain("already saved");
+    const name = document.querySelector<HTMLInputElement>("#pet-name")!;
+    name.value = "A edited"; name.dispatchEvent(new Event("input"));
+    expect(save.disabled).toBe(false);
+  });
   it("shows five ordered tabs and keeps preview before the editor in the DOM", async () => {
     mountFullSettings("en");
     enterStateMode();
@@ -373,7 +399,10 @@ describe("saved pets", () => {
     document.querySelector<HTMLButtonElement>('#saved-pets [data-pet-id="builtin-yier"]')!.click();
     expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(true);
     selecting.resolve();
-    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(false));
+    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>("#resume-draft")?.hidden).toBe(false));
+    expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(true);
+    document.querySelector<HTMLButtonElement>("#resume-draft")!.click();
+    expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(false);
   });
 
   it("uses state tabs to preview either built-in GIF set", async () => {

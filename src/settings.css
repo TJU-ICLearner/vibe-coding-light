@@ -35,6 +35,8 @@ button:disabled { opacity: .52; cursor: default; }
 .preview-box.checker { background-color: #fff; background-image: linear-gradient(45deg, #e8ece8 25%, transparent 25%), linear-gradient(-45deg, #e8ece8 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e8ece8 75%), linear-gradient(-45deg, transparent 75%, #e8ece8 75%); background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0; }
 .preview-viewport { width: 128px; height: 128px; position: relative; }
 .preview-context { grid-column: 1 / -1; margin: 0 0 9px; color: #607467; font-size: .72rem; }
+#resume-draft { margin: 0 0 10px; color: #277c55; font-weight: 700; }
+#resume-draft:hover { color: #1b6442; }
 .preview-window { width: 128px; height: 128px; overflow: hidden; position: absolute; left: 0; top: 0; transform-origin: top left; border: 1px solid #cbd9cf; background: #ffffff15; }
 #processed-frame { width: 128px; height: 128px; position: absolute; left: 50%; top: 50%; margin-left: -64px; margin-top: -64px; transform-origin: center; }
 #processed-preview { width: 128px; height: 128px; object-fit: contain; }
@@ -130,6 +132,7 @@ button:disabled { opacity: .52; cursor: default; }
 :root[data-theme] .slot-completion.complete { color: var(--accent-text); background: var(--accent-soft); }
 :root[data-theme] .asset-editor #pet-motion:disabled { background: var(--surface); }
 :root[data-theme] :is(.slot-status.error, #status.error, .warning, .subtle-button) { color: var(--danger); }
+:root[data-theme] #resume-draft { color: var(--accent); }
 :root[data-theme] #status { color: var(--accent-text); }
 :root[data-theme] .primary, :root[data-theme] .primary:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 :root[data-theme] :is(input, select, button):focus-visible { outline-color: var(--accent); }
