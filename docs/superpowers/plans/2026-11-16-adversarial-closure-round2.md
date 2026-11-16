@@ -60,5 +60,5 @@
 
 - [x] Align versions and document the changes.
 - [x] Run production build, formatting, and diff checks; build and verify macOS DMG.
-- [ ] Run Windows/Linux CI, verify artifacts and checksums, publish RC2 prerelease.
-- [ ] Provide cross-platform real-device checklist and keep stable release untouched.
+- [x] Run Windows/Linux CI, verify artifacts and checksums, publish RC2 prerelease.
+- [x] Provide cross-platform real-device checklist and keep stable release untouched.
