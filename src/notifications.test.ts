@@ -26,9 +26,102 @@ function setup() {
   return { root, api, controller };
 }
 
-beforeEach(() => document.body.replaceChildren());
+beforeEach(() => { document.body.replaceChildren(); localStorage.clear(); });
 
 describe("notification settings window", () => {
+  it("recovers wording typed just before the process exits", async () => {
+    vi.useFakeTimers();
+    const first = setup(); await first.controller.init("en");
+    const body = first.root.querySelector<HTMLTextAreaElement>('[data-template-field="body"]')!;
+    body.value = "Please approve {command}";
+    body.dispatchEvent(new Event("input", { bubbles: true }));
+    const pendingTimers = vi.getTimerCount();
+    expect(pendingTimers).toBeGreaterThan(0);
+    vi.clearAllTimers(); // Simulates the old webview being destroyed before its debounce fires.
+    vi.useRealTimers();
+    const restarted = setup(); await restarted.controller.init("en");
+    expect(restarted.root.querySelector<HTMLTextAreaElement>('[data-template-field="body"]')?.value).toBe("Please approve {command}");
+    await vi.waitFor(() => expect(restarted.api.setSettings).toHaveBeenCalledWith(expect.objectContaining({
+      templates: { "en.permission": { title: "", body: "Please approve {command}" } },
+    })));
+  });
+
+  it("recovers an unfinished reset of one template after restart", async () => {
+    const first = setup();
+    (first.api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), templates: { "en.permission": { title: "Old", body: "Old" } } });
+    (first.api.setSettings as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => {}));
+    await first.controller.init("en");
+    first.root.querySelector<HTMLButtonElement>('[data-action="reset-template"]')!.click();
+    const restarted = setup();
+    (restarted.api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...structuredClone(defaults), templates: { "en.permission": { title: "Old", body: "Old" } } });
+    await restarted.controller.init("en");
+    expect(restarted.root.querySelector<HTMLInputElement>('[data-template-field="title"]')?.value).toBe("");
+    await vi.waitFor(() => expect(restarted.api.setSettings).toHaveBeenCalledWith(expect.objectContaining({ templates: {} })));
+  });
+
+  it("clears recovered drafts that save successfully while another event is edited", async () => {
+    vi.useFakeTimers();
+    const first = setup(); await first.controller.init("en");
+    const title = first.root.querySelector<HTMLInputElement>('[data-template-field="title"]')!;
+    title.value = "Recovered"; title.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.clearAllTimers(); vi.useRealTimers();
+
+    const second = setup();
+    let finishFirst!: () => void;
+    (second.api.setSettings as ReturnType<typeof vi.fn>).mockImplementationOnce((settings: NotificationSettings) => new Promise((resolve) => { finishFirst = () => resolve(settings); }));
+    await second.controller.init("en");
+    await vi.waitFor(() => expect(second.api.setSettings).toHaveBeenCalledTimes(1));
+    const event = second.root.querySelector<HTMLSelectElement>("#template-event")!;
+    event.value = "completed"; event.dispatchEvent(new Event("change", { bubbles: true }));
+    const body = second.root.querySelector<HTMLTextAreaElement>('[data-template-field="body"]')!;
+    body.value = "New"; body.dispatchEvent(new Event("change", { bubbles: true }));
+    finishFirst();
+    await vi.waitFor(() => expect(second.api.setSettings).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(second.root.querySelector("#template-save-status")?.textContent).toContain("Saved"));
+
+    const third = setup(); await third.controller.init("en");
+    await Promise.resolve();
+    expect(third.api.setSettings).not.toHaveBeenCalled();
+  });
+
+  it("reports a successful Hook install even when status refresh fails", async () => {
+    const { root, api, controller } = setup(); await controller.init("en");
+    (api.getStatus as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("status unavailable"));
+    root.querySelector<HTMLButtonElement>('[data-action="install-cursor"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector(".sources [role=status]")?.textContent).toContain("Hook configuration saved"));
+    expect(root.querySelector(".sources")?.textContent).toContain("status could not refresh");
+  });
+
+  it("reports a deleted Bark key even when status refresh fails", async () => {
+    const { root, api, controller } = setup(); await controller.init("en");
+    controller.setStatus({ ...status, keySaved: true });
+    (api.getStatus as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("status unavailable"));
+    root.querySelector<HTMLButtonElement>('[data-action="delete-key"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector(".key-status")?.textContent).toBe("No key saved"));
+    expect(root.querySelector("#feedback")?.textContent).toContain("Key deleted");
+    expect(root.querySelector("#feedback")?.textContent).toContain("status could not refresh");
+  });
+
+  it("reports a saved Bark key even when status refresh fails", async () => {
+    const { root, api, controller } = setup(); await controller.init("en");
+    (api.getStatus as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("status unavailable"));
+    root.querySelector<HTMLInputElement>("#bark-key")!.value = "device-key";
+    root.querySelector<HTMLButtonElement>('[data-action="save-key"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector(".key-status")?.textContent).toBe("Saved in the system credential store"));
+    expect(root.querySelector("#feedback")?.textContent).toContain("Key saved");
+    expect(root.querySelector("#feedback")?.textContent).toContain("status could not refresh");
+  });
+
+  it("shows a retry when diagnostics refresh fails without clearing old records", async () => {
+    const { root, api, controller } = setup(); await controller.init("en");
+    controller.setDiagnostics([{ atMs: 1000, source: "codex", kind: "completed", outcome: "sent", reason: null }]);
+    (api.getDiagnostics as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("unavailable"));
+    await controller.refreshDiagnostics();
+    expect(root.querySelector(".diagnostic-list li")).not.toBeNull();
+    expect(root.querySelector("#diagnostics-refresh-error")?.textContent).toContain("Could not refresh");
+    root.querySelector<HTMLButtonElement>('[data-action="retry-diagnostics"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector("#diagnostics-refresh-error")).toBeNull());
+  });
   it("keeps a Bark key being typed when status or language changes", async () => {
     const { root, controller } = setup();
     await controller.init("zh-CN");

@@ -72,6 +72,11 @@ button:disabled { opacity: .52; cursor: default; }
 #saved-pets > button { text-align: left; }
 .saved-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .saved-row button:first-child { text-align: left; overflow-wrap: anywhere; }
+.delete-confirm { margin: -3px 0 6px; padding: 12px 14px; border: 1px solid #e7cfca; border-radius: 10px; background: #fff8f6; }
+.delete-confirm p { margin: 0 0 10px; color: #7e4a4d; font-size: .75rem; line-height: 1.5; overflow-wrap: anywhere; }
+.delete-confirm > div { display: flex; gap: 8px; flex-wrap: wrap; }
+.delete-confirm [data-action="confirm-delete"] { background: #a64245; border-color: #a64245; color: #fff; }
+.delete-confirm [data-action="confirm-delete"]:hover { background: #8c3438; }
 #processed-preview.motion-working { animation: pet-photo-working 1.1s ease-in-out infinite; }
 #processed-preview.motion-waiting { animation: pet-photo-waiting 1.7s ease-in-out infinite; }
 #processed-preview.motion-error { animation: pet-photo-error .34s ease-in-out infinite; }
@@ -132,6 +137,9 @@ button:disabled { opacity: .52; cursor: default; }
 :root[data-theme] .slot-completion.complete { color: var(--accent-text); background: var(--accent-soft); }
 :root[data-theme] .asset-editor #pet-motion:disabled { background: var(--surface); }
 :root[data-theme] :is(.slot-status.error, #status.error, .warning, .subtle-button) { color: var(--danger); }
+:root[data-theme] .delete-confirm { background: var(--surface); border-color: var(--danger); }
+:root[data-theme] .delete-confirm p { color: var(--danger); }
+:root[data-theme] .delete-confirm [data-action="confirm-delete"]:hover { background: #8c3438; }
 :root[data-theme] #resume-draft { color: var(--accent); }
 :root[data-theme] #status { color: var(--accent-text); }
 :root[data-theme] .primary, :root[data-theme] .primary:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }

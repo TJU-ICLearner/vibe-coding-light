@@ -262,6 +262,8 @@ export function mountSettings(): void {
   let suggestedName = "";
   let draftRevision = 0;
   let savedRevision: number | null = null;
+  let confirmDeleteId: string | null = null;
+  let deletingId: string | null = null;
   let locale: Locale = "zh-CN";
   let localeEventSeen = false;
 
@@ -439,6 +441,7 @@ export function mountSettings(): void {
       builtin.className = controller.selectedId === id ? "selected" : "";
       builtin.disabled = controller.busy;
       builtin.onclick = () => {
+        confirmDeleteId = null;
         void controller.select(id).then(() => {
           previewMode = "selected";
           builtinPreviewSlot = "default";
@@ -452,15 +455,44 @@ export function mountSettings(): void {
       const choose = document.createElement("button"); choose.type = "button";
       choose.textContent = pet.name; choose.className = controller.selectedId === pet.id ? "selected" : "";
       choose.disabled = controller.busy;
-      choose.onclick = () => { void controller.select(pet.id).then(() => { previewMode = "selected"; builtinPreviewSlot = "default"; render(); }).catch(() => {}); };
+      choose.onclick = () => { confirmDeleteId = null; void controller.select(pet.id).then(() => { previewMode = "selected"; builtinPreviewSlot = "default"; render(); }).catch(() => {}); };
       const remove = document.createElement("button"); remove.type = "button"; remove.textContent = t(locale, "delete");
-      remove.disabled = controller.busy;
+      remove.disabled = controller.busy || deletingId !== null;
       remove.setAttribute("aria-label", t(locale, "delete_named", { name: pet.name }));
       remove.onclick = () => {
-        const wasSelected = controller.selectedId === pet.id;
-        void controller.delete(pet.id).then(() => { if (wasSelected) previewMode = "selected"; render(); }).catch(() => {});
+        confirmDeleteId = pet.id;
+        render();
       };
       row.append(choose, remove); list.append(row);
+      if (confirmDeleteId === pet.id) {
+        const confirmation = document.createElement("div");
+        confirmation.className = "delete-confirm";
+        confirmation.setAttribute("role", "group");
+        confirmation.setAttribute("aria-label", t(locale, "delete_named", { name: pet.name }));
+        const message = document.createElement("p");
+        message.textContent = t(locale, "delete_confirm", { name: pet.name });
+        const actions = document.createElement("div");
+        const confirm = document.createElement("button");
+        confirm.type = "button"; confirm.dataset.action = "confirm-delete"; confirm.textContent = t(locale, "delete_confirm_action");
+        confirm.disabled = deletingId !== null;
+        confirm.onclick = () => {
+          if (deletingId || confirmDeleteId !== pet.id) return;
+          deletingId = pet.id;
+          const wasSelected = controller.selectedId === pet.id;
+          render();
+          void controller.delete(pet.id).then(() => {
+            confirmDeleteId = null;
+            if (wasSelected) previewMode = "selected";
+          }).catch(() => {}).finally(() => { deletingId = null; render(); });
+        };
+        const cancel = document.createElement("button");
+        cancel.type = "button"; cancel.dataset.action = "cancel-delete"; cancel.textContent = t(locale, "delete_cancel");
+        cancel.disabled = deletingId !== null;
+        cancel.onclick = () => { confirmDeleteId = null; render(); };
+        actions.append(confirm, cancel);
+        confirmation.append(message, actions);
+        list.append(confirmation);
+      }
     }
   };
 

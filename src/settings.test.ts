@@ -475,8 +475,30 @@ describe("saved pets", () => {
     expect(document.querySelector("#preview-context")?.textContent).toContain("草稿");
     expect(document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="waiting"] .tab-detail')?.textContent).toBe("已设置");
     document.querySelector<HTMLButtonElement>('#saved-pets .saved-row button[aria-label="删除 saved"]')!.click();
+    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "delete_photo_pet")).toBe(false);
+    expect(document.querySelector(".delete-confirm")?.textContent).toContain("saved");
+    document.querySelector<HTMLButtonElement>('.delete-confirm [data-action="confirm-delete"]')!.click();
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/bubu/waiting.gif"));
     expect(document.querySelector("#preview-context")?.textContent).toContain("默认布布");
+  });
+
+  it("requires named confirmation and lets the user cancel pet deletion", async () => {
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "get_app_locale") return "en";
+      if (command === "get_pet_import_capabilities") return { automatic: true, transparent_png: true, transparent_gif: true };
+      if (command === "get_active_pet") return { kind: "builtin", id: "builtin-cat" };
+      if (command === "list_photo_pets") return [photo("my-pet")];
+      return [];
+    });
+    document.body.innerHTML = settingsMarkup(); mountSettings();
+    await vi.waitFor(() => expect(document.querySelector('.saved-row button[aria-label="Delete my-pet"]')).not.toBeNull());
+    const remove = document.querySelector<HTMLButtonElement>('.saved-row button[aria-label="Delete my-pet"]')!;
+    remove.click(); remove.click();
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "delete_photo_pet")).toHaveLength(0);
+    expect(document.querySelector(".delete-confirm")?.textContent).toContain("my-pet");
+    document.querySelector<HTMLButtonElement>('.delete-confirm [data-action="cancel-delete"]')!.click();
+    expect(document.querySelector(".delete-confirm")).toBeNull();
+    expect(document.querySelector('.saved-row button[aria-label="Delete my-pet"]')).not.toBeNull();
   });
 
   it("returns to a retained draft when its scale, motion, or processing mode changes", async () => {

@@ -48,9 +48,40 @@ const api: NotificationApi = {
   installHooks: (source) => invoke("install_integration_hook", { source }),
 };
 
-type NotificationFeedback = "testSending" | "testSuccess" | "testQuietSkipped" | "testFailure" | "testRejected" | "testUnsent" | "testAmbiguous" | "invalidKey" | "saveFailure" | "settingsFailure";
+type NotificationFeedback = "testSending" | "testSuccess" | "testQuietSkipped" | "testFailure" | "testRejected" | "testUnsent" | "testAmbiguous" | "invalidKey" | "saveFailure" | "settingsFailure" | "keySavedRefreshFailed" | "keyDeletedRefreshFailed";
 type TemplateEvent = "permission" | "question" | "completed" | "error" | "quota80" | "quota50" | "quota20" | "quota0" | "recovered";
 const templateEvents: TemplateEvent[] = ["permission", "question", "completed", "error", "quota80", "quota50", "quota20", "quota0", "recovered"];
+const templateDraftStorageKey = "vibe-coding-light.notification-template-drafts.v1";
+type PendingTemplate = { title: string; body: string } | null;
+
+function readPendingTemplates(): Record<string, PendingTemplate> {
+  const entries: Record<string, PendingTemplate> = Object.create(null);
+  try {
+    const raw = window.localStorage.getItem(templateDraftStorageKey);
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return entries;
+    for (const [key, value] of Object.entries(parsed)) {
+      const [locale, event, extra] = key.split(".");
+      if (extra || (locale !== "zh-CN" && locale !== "en") || !templateEvents.includes(event as TemplateEvent)) continue;
+      if (value === null) entries[key] = null;
+      else if (value && typeof value === "object" && !Array.isArray(value)) {
+        const draft = value as Record<string, unknown>;
+        if (typeof draft.title === "string" && draft.title.length <= 120 && typeof draft.body === "string" && draft.body.length <= 2000) {
+          entries[key] = { title: draft.title, body: draft.body };
+        }
+      }
+    }
+  } catch { /* Storage may be unavailable; normal settings saves still work. */ }
+  return entries;
+}
+
+function writePendingTemplates(entries: Record<string, PendingTemplate>): boolean {
+  try {
+    if (Object.keys(entries).length) window.localStorage.setItem(templateDraftStorageKey, JSON.stringify(entries));
+    else window.localStorage.removeItem(templateDraftStorageKey);
+    return true;
+  } catch { return false; }
+}
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
@@ -85,6 +116,7 @@ export class NotificationSettingsController {
   private persistedSettings: NotificationSettings | null = null;
   private status: NotificationStatus | null = null;
   private diagnostics: DiagnosticEntry[] = [];
+  private diagnosticsRefreshFailed = false;
   private locale: NotificationLocale = "zh-CN";
   private localeOverridden = false;
   private statusRevision = 0;
@@ -94,9 +126,11 @@ export class NotificationSettingsController {
   private saveRevision = 0;
   private selectedEvent: TemplateEvent = "permission";
   private templateDrafts: Record<string, { title: string; body: string }> = {};
+  private pendingTemplates = readPendingTemplates();
   private dirtyTemplateKeys = new Set<string>();
   private resetTemplateKeys = new Set<string>();
   private templateEditRevision = 0;
+  private templateKeyRevisions: Record<string, number> = Object.create(null);
   private templateSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private templateSaveState: "idle" | "saving" | "saved" | "failed" = "idle";
   private installFeedback = "";
@@ -128,7 +162,14 @@ export class NotificationSettingsController {
       if (statusRevision === this.statusRevision) this.status = status;
       this.diagnostics = diagnostics;
       this.loadFailed = false;
+      for (const [key, draft] of Object.entries(this.pendingTemplates)) {
+        this.dirtyTemplateKeys.add(key);
+        if (draft === null) this.resetTemplateKeys.add(key);
+        else this.templateDrafts[key] = draft;
+      }
+      if (this.dirtyTemplateKeys.size) this.templateSaveState = "saving";
       this.render();
+      if (this.dirtyTemplateKeys.size) void this.flushTemplateDrafts();
     } catch {
       this.loadFailed = true;
       this.render();
@@ -137,7 +178,12 @@ export class NotificationSettingsController {
 
   setLocale(locale: NotificationLocale): void { this.localeOverridden = true; this.locale = locale; this.render(); }
   setStatus(status: NotificationStatus): void { this.statusRevision++; this.status = status; this.render(); }
-  setDiagnostics(entries: DiagnosticEntry[]): void { this.diagnostics = entries; this.render(); }
+  setDiagnostics(entries: DiagnosticEntry[]): void { this.diagnostics = entries; this.diagnosticsRefreshFailed = false; this.render(); }
+
+  async refreshDiagnostics(): Promise<void> {
+    try { this.setDiagnostics(await this.api.getDiagnostics()); }
+    catch { this.diagnosticsRefreshFailed = true; this.render(); }
+  }
 
   private queueSettingsSave(next: NotificationSettings, template = false): Promise<boolean> {
     const revision = ++this.saveRevision;
@@ -168,8 +214,10 @@ export class NotificationSettingsController {
     const key = `${this.locale}.${this.selectedEvent}`;
     this.resetTemplateKeys.delete(key);
     this.dirtyTemplateKeys.add(key);
+    this.pendingTemplates[key] = { ...this.templateDrafts[key] };
     this.templateEditRevision++;
-    this.templateSaveState = "saving";
+    this.templateKeyRevisions[key] = (this.templateKeyRevisions[key] ?? 0) + 1;
+    this.templateSaveState = writePendingTemplates(this.pendingTemplates) ? "saving" : "failed";
     this.updateTemplateSaveStatus();
     if (this.templateSaveTimer !== null) clearTimeout(this.templateSaveTimer);
     this.templateSaveTimer = setTimeout(() => { void this.flushTemplateDrafts(); }, 250);
@@ -181,6 +229,7 @@ export class NotificationSettingsController {
     if (!this.settings || this.dirtyTemplateKeys.size === 0) return;
     const keys = [...this.dirtyTemplateKeys];
     const editRevision = this.templateEditRevision;
+    const keyRevisions = keys.map((key) => this.templateKeyRevisions[key] ?? 0);
     this.dirtyTemplateKeys.clear();
     const next = structuredClone(this.settings) as NotificationSettings;
     for (const key of keys) {
@@ -191,9 +240,16 @@ export class NotificationSettingsController {
     this.templateSaveState = "saving";
     this.updateTemplateSaveStatus();
     const saved = await this.queueSettingsSave(next, true);
+    for (const [index, key] of keys.entries()) {
+      if ((this.templateKeyRevisions[key] ?? 0) !== keyRevisions[index]) continue;
+      if (!saved) this.dirtyTemplateKeys.add(key);
+      else {
+        this.resetTemplateKeys.delete(key);
+        delete this.pendingTemplates[key];
+      }
+    }
+    if (saved) writePendingTemplates(this.pendingTemplates);
     if (editRevision === this.templateEditRevision) {
-      if (!saved) for (const key of keys) this.dirtyTemplateKeys.add(key);
-      else for (const key of keys) this.resetTemplateKeys.delete(key);
       this.templateSaveState = saved && this.dirtyTemplateKeys.size === 0 ? "saved" : saved ? "saving" : "failed";
     }
     this.updateTemplateSaveStatus();
@@ -261,6 +317,7 @@ export class NotificationSettingsController {
     const action = button.dataset.action;
     if (action === "retry-init") { await this.init(this.locale); return; }
     if (action === "retry-template") { await this.flushTemplateDrafts(); return; }
+    if (action === "retry-diagnostics") { await this.refreshDiagnostics(); return; }
     if (action?.startsWith("install-")) {
       const source = action.slice(8);
       if (this.installingSources.has(source)) return;
@@ -269,8 +326,12 @@ export class NotificationSettingsController {
       this.render();
       try {
         await this.api.installHooks(source);
-        this.status = await this.api.getStatus();
-        this.installFeedback = source === "deepseek" ? notificationCopy(this.locale).deepseekPrepared : notificationCopy(this.locale).installSuccess;
+        const statusField = ({ cursor: "cursorHooksInstalled", trae: "traeHooksInstalled", grok: "grokHooksInstalled", deepseek: "deepseekHooksPrepared" } as const)[source as "cursor" | "trae" | "grok" | "deepseek"];
+        if (this.status && statusField) this.status = { ...this.status, [statusField]: true };
+        let refreshFailed = false;
+        try { this.status = await this.api.getStatus(); } catch { refreshFailed = true; }
+        const copy = notificationCopy(this.locale);
+        this.installFeedback = `${source === "deepseek" ? copy.deepseekPrepared : copy.installSuccess}${refreshFailed ? ` · ${copy.statusRefreshFailed}` : ""}`;
       } catch (error) {
         this.installFeedback = `${notificationCopy(this.locale).installFailed}: ${String(error)}`;
       } finally {
@@ -281,7 +342,7 @@ export class NotificationSettingsController {
       return;
     }
     if (action === "clear-diagnostics") {
-      try { await this.api.clearDiagnostics(); this.diagnostics = []; this.feedback = null; }
+      try { await this.api.clearDiagnostics(); this.diagnostics = []; this.diagnosticsRefreshFailed = false; this.feedback = null; }
       catch { this.feedback = "settingsFailure"; }
       this.render();
       return;
@@ -293,7 +354,10 @@ export class NotificationSettingsController {
       delete this.templateDrafts[key];
       this.resetTemplateKeys.add(key);
       this.dirtyTemplateKeys.add(key);
+      this.pendingTemplates[key] = null;
+      writePendingTemplates(this.pendingTemplates);
       this.templateEditRevision++;
+      this.templateKeyRevisions[key] = (this.templateKeyRevisions[key] ?? 0) + 1;
       delete this.settings.templates[key];
       this.templateSaveState = "saving";
       this.render();
@@ -308,12 +372,17 @@ export class NotificationSettingsController {
         await this.api.saveKey(key);
         if (input) input.value = "";
         if (this.status) this.status = { ...this.status, keySaved: true };
-        try { this.status = await this.api.getStatus(); } catch { /* Key was saved; status refresh can wait. */ }
-        this.feedback = null;
+        try { this.status = await this.api.getStatus(); this.feedback = null; }
+        catch { this.feedback = "keySavedRefreshFailed"; }
       }
       catch (error) { this.feedback = error === "Invalid Bark device key" ? "invalidKey" : "saveFailure"; }
     } else if (action === "delete-key") {
-      try { await this.api.deleteKey(); this.status = await this.api.getStatus(); this.feedback = null; }
+      try {
+        await this.api.deleteKey();
+        if (this.status) this.status = { ...this.status, keySaved: false };
+        try { this.status = await this.api.getStatus(); this.feedback = null; }
+        catch { this.feedback = "keyDeletedRefreshFailed"; }
+      }
       catch { this.feedback = "saveFailure"; }
     }
     this.render();
@@ -353,7 +422,9 @@ export class NotificationSettingsController {
       error: t.templateError, quota80: t.templateQuota80, quota50: t.templateQuota50,
       quota20: t.templateQuota20, quota0: t.templateQuota0, recovered: t.templateRecovered,
     };
-    const selectedTemplate = this.templateDrafts[`${this.locale}.${this.selectedEvent}`] ?? s.templates[`${this.locale}.${this.selectedEvent}`] ?? { title: "", body: "" };
+    const selectedTemplateKey = `${this.locale}.${this.selectedEvent}`;
+    const selectedTemplate = this.resetTemplateKeys.has(selectedTemplateKey) ? { title: "", body: "" }
+      : this.templateDrafts[selectedTemplateKey] ?? s.templates[selectedTemplateKey] ?? { title: "", body: "" };
     const outcomeLabels: Record<DiagnosticEntry["outcome"], string> = { observed: t.diagnosticObserved, deferred: t.diagnosticDeferred, sent: t.diagnosticSent, skipped: t.diagnosticSkipped, failed: t.diagnosticFailed };
     const reasonLabels: Record<string, string> = {
       notifications_disabled: t.diagnosticNotificationsDisabled, state_only: t.diagnosticStateOnly,
@@ -392,7 +463,7 @@ export class NotificationSettingsController {
           <p class="token-hint">${t.templateTokens}</p><div class="template-actions"><button type="button" data-action="reset-template">${t.templateReset}</button><span id="template-save-status" role="status"></span><button type="button" data-action="retry-template" ${this.templateSaveState === "failed" ? "" : "hidden"}>${t.templateRetry}</button></div>
         </div><div class="template-preview"><span>${t.templatePreview}</span><div id="template-preview"><strong id="preview-title"></strong><p id="preview-body"></p></div></div>
       </section>
-      <section class="card diagnostics"><div class="card-title"><span class="card-index">07</span><h2>${t.diagnosticsTitle}</h2></div><p class="hint">${t.diagnosticsHint}</p><div class="diagnostic-actions"><button type="button" data-action="clear-diagnostics" ${this.diagnostics.length ? "" : "disabled"}>${t.diagnosticsClear}</button></div>${diagnosticRows ? `<ol class="diagnostic-list">${diagnosticRows}</ol>` : `<p class="diagnostic-empty">${t.diagnosticsEmpty}</p>`}</section>
+      <section class="card diagnostics"><div class="card-title"><span class="card-index">07</span><h2>${t.diagnosticsTitle}</h2></div><p class="hint">${t.diagnosticsHint}</p>${this.diagnosticsRefreshFailed ? `<p id="diagnostics-refresh-error" class="quiet-error" role="status">${t.diagnosticsRefreshFailed}</p><button type="button" data-action="retry-diagnostics">${t.diagnosticsRetry}</button>` : ""}<div class="diagnostic-actions"><button type="button" data-action="clear-diagnostics" ${this.diagnostics.length ? "" : "disabled"}>${t.diagnosticsClear}</button></div>${diagnosticRows ? `<ol class="diagnostic-list">${diagnosticRows}</ol>` : `<p class="diagnostic-empty">${t.diagnosticsEmpty}</p>`}</section>
       ${!eventSelected ? `<p class="notice">${t.noTypes}</p>` : ""}
       ${!status.serviceAvailable ? `<p class="notice" role="status">${t.serviceUnavailable}</p>` : ""}
       <footer>${t.footer}</footer>`;
@@ -458,5 +529,5 @@ if (root) {
   void invoke<NotificationLocale>("get_app_locale").then((locale) => controller.init(locale)).catch(() => controller.init("zh-CN"));
   void listen<NotificationLocale>("locale-changed", (event) => controller.setLocale(event.payload));
   void listen<NotificationStatus>("notification-status-changed", (event) => controller.setStatus(event.payload));
-  void listen("notification-diagnostics-changed", () => { void api.getDiagnostics().then((entries) => controller.setDiagnostics(entries)); });
+  void listen("notification-diagnostics-changed", () => { void controller.refreshDiagnostics(); });
 }
