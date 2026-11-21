@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1740" height="900" viewBox="0 0 1740 900" role="img" aria-label="Vibe Coding Light BoardUI 风格桌宠设置、通知设置和快捷控制设计预览">
+  <defs>
+    <style>
+      text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;fill:#243128}
+      .title{font-size:25px;font-weight:700}.subtitle{font-size:12px;fill:#6b776d}.section{font-size:16px;font-weight:700}.label{font-size:12px;font-weight:650}.small{font-size:11px;fill:#6b776d}.tiny{font-size:10px;fill:#78867b}.button{font-size:12px;font-weight:700;fill:#fff}.darktext{fill:#e5d4c1}.darkmuted{fill:#a8b2af}
+      .window{fill:#f4f7f3;stroke:#d6dfd7;stroke-width:1}.card{fill:#fff;stroke:#dfe5df;stroke-width:1}.inset{fill:#f7faf6;stroke:#e1e8e1;stroke-width:1}.input{fill:#fff;stroke:#cbd8cc;stroke-width:1}.line{stroke:#e7ece7;stroke-width:1}.accent{fill:#477e59}.accentsoft{fill:#e2eee4}.tab{fill:#f3f6f2}.selected{fill:#e2eee4;stroke:#477e59;stroke-width:1.5}.toggle{fill:#477e59}.off{fill:#cbd6cc}
+    </style>
+    <pattern id="checker" width="20" height="20" patternUnits="userSpaceOnUse"><rect width="20" height="20" fill="#fff"/><rect width="10" height="10" fill="#edf0ec"/><rect x="10" y="10" width="10" height="10" fill="#edf0ec"/></pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="5" stdDeviation="12" flood-color="#203527" flood-opacity=".09"/></filter>
+  </defs>
+  <rect width="1740" height="900" fill="#e9efea"/>
+  <text x="38" y="40" font-size="14" font-weight="700" fill="#477e59" letter-spacing="2">VIBE CODING LIGHT / BOARDUI 视觉方向</text>
+  <text x="38" y="62" class="subtitle">设计示意 · 展示布局、层级和控件风格；实际交互以规格和组件实现为准</text>
+
+  <!-- Pet settings -->
+  <g filter="url(#shadow)"><rect class="window" x="30" y="86" width="770" height="770" rx="18"/></g>
+  <circle cx="56" cy="109" r="5" fill="#e7aaa5"/><circle cx="73" cy="109" r="5" fill="#ead194"/><circle cx="90" cy="109" r="5" fill="#a8cfae"/>
+  <text x="56" y="160" class="title">自定义桌宠</text><text x="56" y="182" class="subtitle">为每个状态挑选素材，随时查看桌宠实际效果</text>
+  <rect class="card" x="56" y="210" width="440" height="436" rx="14"/>
+  <text x="76" y="241" class="section">制作桌宠</text>
+  <rect class="tab" x="76" y="255" width="400" height="40" rx="9"/><rect class="selected" x="80" y="259" width="194" height="32" rx="7"/><text x="158" y="280" class="label">按状态</text><text x="355" y="280" class="label">单张图片</text>
+  <text x="76" y="324" class="label">选择状态</text>
+  <rect class="selected" x="76" y="337" width="73" height="49" rx="9"/><rect class="input" x="156" y="337" width="73" height="49" rx="9"/><rect class="input" x="236" y="337" width="73" height="49" rx="9"/><rect class="input" x="316" y="337" width="73" height="49" rx="9"/><rect class="input" x="396" y="337" width="80" height="49" rx="9"/>
+  <text x="101" y="359" class="label">休息</text><text x="101" y="377" class="tiny">已设置</text><text x="181" y="359" class="label">工作</text><text x="181" y="377" class="tiny">已设置</text><text x="261" y="359" class="label">等待</text><text x="261" y="377" class="tiny">未设置</text><text x="341" y="359" class="label">错误</text><text x="341" y="377" class="tiny">未设置</text><text x="420" y="359" class="label">完成</text><text x="420" y="377" class="tiny">已设置</text>
+  <text x="76" y="419" class="label">休息状态素材</text>
+  <rect x="76" y="432" width="400" height="93" rx="10" fill="#f7faf6" stroke="#9bbda4" stroke-dasharray="5 4"/>
+  <circle cx="111" cy="467" r="13" fill="#e2eee4"/><path d="M105 468l4 4 8-9" fill="none" stroke="#477e59" stroke-width="2"/>
+  <text x="134" y="466" class="label">布布 · 休息.gif</text><text x="134" y="485" class="small">透明 GIF · 动画保持原样</text><text x="134" y="505" class="tiny">点击替换或拖放图片</text>
+  <text x="76" y="556" class="label">动态特效</text><rect class="input" x="76" y="567" width="400" height="38" rx="8"/><text x="89" y="591" class="small">GIF 动画保持原样</text><text x="454" y="591" class="small">⌄</text>
+  <rect class="card" x="56" y="662" width="440" height="151" rx="14"/><text x="76" y="692" class="section">调整并保存</text><text x="76" y="716" class="label">名称</text><text x="291" y="716" class="label">大小</text><rect class="input" x="76" y="727" width="197" height="37" rx="8"/><rect class="input" x="288" y="727" width="76" height="37" rx="8"/><text x="90" y="751" class="small">我的布布</text><text x="306" y="751" class="small">0.8 ×</text><rect class="accent" x="376" y="727" width="100" height="37" rx="8"/><text x="392" y="751" class="button">保存并使用</text><text x="76" y="794" class="small">已完成 3 / 5 个状态 · 可随时保存</text>
+  <rect class="card" x="512" y="210" width="262" height="436" rx="14"/><text x="531" y="241" class="section">实时预览</text><text x="531" y="263" class="small">休息状态 · 实际窗口尺寸</text><rect x="531" y="279" width="224" height="246" rx="11" fill="url(#checker)" stroke="#dfe5df"/>
+  <g transform="translate(583 330)"><ellipse cx="59" cy="140" rx="69" ry="69" fill="#fff" stroke="#d2d8d3" stroke-width="3"/><ellipse cx="13" cy="36" rx="28" ry="51" fill="#fff" stroke="#d2d8d3" stroke-width="3" transform="rotate(-18 13 36)"/><ellipse cx="104" cy="36" rx="28" ry="51" fill="#fff" stroke="#d2d8d3" stroke-width="3" transform="rotate(18 104 36)"/><ellipse cx="13" cy="34" rx="12" ry="30" fill="#f6ced4" transform="rotate(-18 13 34)"/><ellipse cx="104" cy="34" rx="12" ry="30" fill="#f6ced4" transform="rotate(18 104 34)"/><circle cx="37" cy="130" r="4" fill="#3e4842"/><circle cx="82" cy="130" r="4" fill="#3e4842"/><path d="M54 144q5 5 10 0" fill="none" stroke="#7c8d82" stroke-width="2" stroke-linecap="round"/></g>
+  <rect class="inset" x="531" y="542" width="224" height="82" rx="9"/><text x="546" y="565" class="label">当前：默认布布</text><text x="546" y="584" class="small">点击左侧状态，预览同步切换</text><text x="546" y="604" class="small">静态图片与 GIF 均可预览</text>
+  <rect class="card" x="512" y="662" width="262" height="151" rx="14"/><text x="531" y="692" class="section">我的桌宠</text><rect class="selected" x="531" y="706" width="224" height="38" rx="8"/><text x="544" y="730" class="label">默认布布</text><text x="708" y="730" class="small">使用中</text><rect class="input" x="531" y="752" width="224" height="38" rx="8"/><text x="544" y="776" class="label">默认一二</text>
+
+  <!-- Notification settings -->
+  <g filter="url(#shadow)"><rect class="window" x="818" y="86" width="620" height="770" rx="18"/></g>
+  <circle cx="842" cy="109" r="5" fill="#e7aaa5"/><circle cx="859" cy="109" r="5" fill="#ead194"/><circle cx="876" cy="109" r="5" fill="#a8cfae"/>
+  <text x="844" y="160" class="title">通知设置</text><text x="844" y="182" class="subtitle">按来源、事件和时段决定哪些消息发送到 Bark</text>
+  <rect class="card" x="844" y="209" width="144" height="603" rx="12"/><text x="862" y="240" class="small">设置导航</text><rect class="accentsoft" x="853" y="253" width="126" height="35" rx="7"/><text x="867" y="276" class="label">连接状态</text><text x="867" y="320" class="small">Agent 来源</text><text x="867" y="358" class="small">事件通知</text><text x="867" y="396" class="small">额度提醒</text><text x="867" y="434" class="small">免打扰</text><text x="867" y="472" class="small">通知文案</text><text x="867" y="510" class="small">诊断记录</text>
+  <rect class="card" x="1002" y="209" width="410" height="122" rx="12"/><text x="1021" y="239" class="section">Bark 连接</text><rect x="1322" y="219" width="72" height="24" rx="12" fill="#e2eee4"/><text x="1337" y="235" font-size="11" font-weight="700" fill="#2d6741">已连接</text><text x="1021" y="267" class="small">设备密钥保存在系统凭据库</text><rect class="input" x="1021" y="280" width="263" height="35" rx="8"/><text x="1032" y="303" class="tiny">••••••••••••••••••••••</text><rect class="accent" x="1293" y="280" width="101" height="35" rx="8"/><text x="1313" y="303" class="button">保存密钥</text>
+  <rect class="card" x="1002" y="345" width="410" height="201" rx="12"/><text x="1021" y="375" class="section">Agent 来源</text><text x="1021" y="396" class="small">分别选择需要监听的工具</text>
+  <line class="line" x1="1021" x2="1394" y1="408" y2="408"/><text x="1021" y="434" class="label">Codex</text><text x="1194" y="434" class="small">已接入</text><rect class="toggle" x="1354" y="418" width="40" height="22" rx="11"/><circle cx="1382" cy="429" r="8" fill="#fff"/>
+  <line class="line" x1="1021" x2="1394" y1="448" y2="448"/><text x="1021" y="475" class="label">Claude Code</text><text x="1194" y="475" class="small">已接入</text><rect class="toggle" x="1354" y="459" width="40" height="22" rx="11"/><circle cx="1382" cy="470" r="8" fill="#fff"/>
+  <line class="line" x1="1021" x2="1394" y1="489" y2="489"/><text x="1021" y="518" class="label">Cursor</text><text x="1194" y="518" class="small">未接入</text><rect class="off" x="1354" y="502" width="40" height="22" rx="11"/><circle cx="1366" cy="513" r="8" fill="#fff"/>
+  <rect class="card" x="1002" y="560" width="410" height="252" rx="12"/><text x="1021" y="591" class="section">事件与额度</text><text x="1021" y="614" class="small">常用事件</text>
+  <rect class="accentsoft" x="1021" y="627" width="117" height="28" rx="7"/><text x="1035" y="646" class="label">需要确认</text><rect class="accentsoft" x="1147" y="627" width="113" height="28" rx="7"/><text x="1164" y="646" class="label">任务完成</text><rect class="accentsoft" x="1269" y="627" width="124" height="28" rx="7"/><text x="1285" y="646" class="label">错误提示</text>
+  <line class="line" x1="1021" x2="1394" y1="673" y2="673"/><text x="1021" y="701" class="label">5 小时额度 · 剩余 20%</text><rect class="toggle" x="1354" y="684" width="40" height="22" rx="11"/><circle cx="1382" cy="695" r="8" fill="#fff"/>
+  <line class="line" x1="1021" x2="1394" y1="716" y2="716"/><text x="1021" y="743" class="label">7 天额度 · 剩余 0%</text><rect class="toggle" x="1354" y="727" width="40" height="22" rx="11"/><circle cx="1382" cy="738" r="8" fill="#fff"/>
+  <text x="1021" y="786" class="small">免打扰、通知文案和诊断记录在左侧导航中</text>
+
+  <!-- Tray -->
+  <g filter="url(#shadow)"><rect x="1456" y="86" width="254" height="610" rx="18" fill="#1b2435" stroke="#3d4d56"/></g>
+  <text x="1475" y="128" font-size="10" font-weight="700" letter-spacing="1.5" fill="#e8c77f">VIBE CODING LIGHT</text><text x="1475" y="159" font-size="19" font-weight="700" fill="#e5d4c1">快捷控制</text>
+  <rect x="1475" y="178" width="216" height="37" rx="9" fill="#263249"/><rect x="1479" y="182" width="70" height="29" rx="7" fill="#3c3841"/><text x="1494" y="201" font-size="11" font-weight="700" fill="#e8c77f">概览</text><text x="1560" y="201" font-size="11" fill="#a8b2af">Agent</text><text x="1642" y="201" font-size="11" fill="#a8b2af">设置</text>
+  <rect x="1475" y="231" width="216" height="94" rx="11" fill="#263249" stroke="#3d4d56"/><text x="1490" y="253" font-size="10" font-weight="700" fill="#e8c77f">当前会话</text><text x="1490" y="282" font-size="13" font-weight="700" fill="#e5d4c1">正在整理项目文档…</text><text x="1490" y="304" font-size="10" fill="#a8b2af">Codex · 工作中</text>
+  <text x="1475" y="356" font-size="12" font-weight="700" fill="#e5d4c1">桌宠</text><line x1="1475" x2="1691" y1="369" y2="369" stroke="#3d4d56"/><text x="1475" y="395" font-size="12" fill="#e5d4c1">显示桌宠</text><rect x="1653" y="379" width="38" height="21" rx="11" fill="#c99b45"/><circle cx="1679" cy="389.5" r="7.5" fill="#fff"/><rect x="1475" y="416" width="105" height="34" rx="8" fill="#263249" stroke="#3d4d56"/><rect x="1586" y="416" width="105" height="34" rx="8" fill="#263249" stroke="#3d4d56"/><text x="1492" y="438" font-size="11" fill="#e5d4c1">摸摸桌宠</text><text x="1601" y="438" font-size="11" fill="#e5d4c1">自定义桌宠</text>
+  <text x="1475" y="484" font-size="12" font-weight="700" fill="#e5d4c1">通知</text><line x1="1475" x2="1691" y1="496" y2="496" stroke="#3d4d56"/><text x="1475" y="523" font-size="12" fill="#a8b2af">Bark</text><text x="1644" y="523" font-size="12" font-weight="700" fill="#e8c77f">已开启</text><rect x="1475" y="542" width="216" height="35" rx="8" fill="#263249" stroke="#3d4d56"/><text x="1490" y="565" font-size="11" fill="#e5d4c1">打开通知设置</text><text x="1677" y="565" font-size="15" fill="#a8b2af">›</text>
+  <text x="1475" y="620" font-size="11" fill="#a8b2af">主题示例：社戏</text><text x="1475" y="646" font-size="10" fill="#a8b2af">开关操作后弹窗保持打开</text>
+  <text x="38" y="882" class="small">同一组件体系，沿用现有六套主题 · 预览中的桌宠图形仅为占位示意</text>
+</svg>

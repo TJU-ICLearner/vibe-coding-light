@@ -60,7 +60,7 @@ Make Vibe Coding Light's three interactive windows feel like one polished deskto
 
 - For each migrated page, verify Chinese/English, all six themes, narrow and standard window sizes, keyboard navigation, async loading/retry, and existing action outcomes. Keep or replace existing DOM tests with equivalent user-visible checks; do not weaken coverage of save, partial failure, notification draft recovery, or tray focus.
 - Run TypeScript checks, frontend tests, Rust tests, and production build. Build macOS locally and Windows/Linux in CI before publishing a prerelease. Request real-device checks for transparency preview, dragging, tray positioning, and Bark delivery; the stable release stays unchanged until those checks pass.
-- Prepare a visual preview of the three windows for review before implementation if the user wants one. The preview is a design artifact, not a shipping view.
+- A visual direction preview of the three windows is at `docs/superpowers/specs/2026-11-21-boardui-interface-preview.png` (editable SVG alongside it). It is a design artifact, not a shipping view or screenshot of the running app.
 
 ## Builder decisions left open
 
