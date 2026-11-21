@@ -60,4 +60,19 @@ describe("headless notification settings", () => {
     expect(model.getSnapshot().settings?.templates["en.permission"]?.title).toBe("First");
     expect(model.getSnapshot().settings?.templates["en.completed"]?.body).toBe("Second");
   });
+  it("reports successful key and Hook writes before a failed status refresh", async () => {
+    const api = fixture();
+    const read = vi.fn().mockResolvedValueOnce(status).mockRejectedValueOnce(Error("offline")).mockRejectedValueOnce(Error("offline"));
+    api.getStatus = read;
+    const model = new NotificationSettingsModel(api);
+    await model.init("en");
+    await vi.waitFor(() => expect(model.getSnapshot().status?.serviceAvailable).toBe(true));
+    expect(await model.saveKey("key" )).toBe(true);
+    expect(model.getSnapshot().feedback).toBe("keySavedRefreshFailed");
+    expect(model.getSnapshot().status?.keySaved).toBe(true);
+    await model.installHook("cursor", "Installed", "Refresh failed", "Install failed");
+    expect(model.getSnapshot().installFeedback).toContain("Installed");
+    expect(model.getSnapshot().installFeedback).toContain("Refresh failed");
+    expect(model.getSnapshot().status?.cursorHooksInstalled).toBe(true);
+  });
 });

@@ -168,15 +168,16 @@ export class NotificationSettingsModel {
     return this.queueSave(next, false);
   }
 
-  async saveKey(key: string): Promise<void> {
+  async saveKey(key: string): Promise<boolean> {
     const trimmed = key.trim();
-    if (!trimmed) return;
+    if (!trimmed) return false;
     try {
       await this.api.saveKey(trimmed);
       if (this.snapshot.status) this.publish({ status: { ...this.snapshot.status, keySaved: true } });
       try { await this.refreshStatus(); this.publish({ feedback: this.snapshot.statusRefreshFailed ? "keySavedRefreshFailed" : null }); }
       catch { this.publish({ feedback: "keySavedRefreshFailed" }); }
-    } catch (error) { this.publish({ feedback: error === "Invalid Bark device key" ? "invalidKey" : "saveFailure" }); }
+      return true;
+    } catch (error) { this.publish({ feedback: error === "Invalid Bark device key" ? "invalidKey" : "saveFailure" }); return false; }
   }
   async deleteKey(): Promise<void> {
     try {
