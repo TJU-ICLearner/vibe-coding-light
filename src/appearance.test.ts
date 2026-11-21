@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appearanceLabel, resolveTheme, type Appearance } from "./appearance";
+import { appearanceLabel, applyAppearance, resolveTheme, themeIds, type Appearance } from "./appearance";
 
 const base: Appearance = { followSystem: true, manualTheme: "shaxi" };
 
@@ -19,5 +19,14 @@ describe("appearance", () => {
     expect(appearanceLabel("shaxi", "zh-CN")).toBe("社戏");
     expect(appearanceLabel("zhiqiu", "zh-CN")).toBe("知秋");
     expect(appearanceLabel("bajiao", "en")).toBe("Banana Rain");
+  });
+
+  it("keeps persisted palettes and BoardUI dark semantics", () => {
+    for (const manualTheme of themeIds) {
+      const preference: Appearance = { followSystem: false, manualTheme };
+      expect(resolveTheme(preference, true)).toBe(manualTheme);
+      applyAppearance(preference, false);
+      expect(document.documentElement.classList.contains("dark")).toBe(manualTheme === "system_dark" || manualTheme === "shaxi");
+    }
   });
 });

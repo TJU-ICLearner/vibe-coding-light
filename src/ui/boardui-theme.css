@@ -1,0 +1,30 @@
+/* Map the application's persisted palettes onto BoardUI's semantic tokens. */
+:root[data-theme] {
+  --color-accent-50: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  --color-accent-100: color-mix(in srgb, var(--accent) 13%, var(--panel));
+  --color-accent-200: color-mix(in srgb, var(--accent) 25%, var(--panel));
+  --color-accent-300: color-mix(in srgb, var(--accent) 42%, var(--panel));
+  --color-accent-400: color-mix(in srgb, var(--accent) 72%, var(--panel));
+  --color-accent-500: var(--accent);
+  --color-accent-600: color-mix(in srgb, var(--accent) 85%, black);
+  --color-accent-700: color-mix(in srgb, var(--accent) 72%, black);
+  --color-accent-800: color-mix(in srgb, var(--accent) 56%, black);
+  --color-accent-900: color-mix(in srgb, var(--accent) 42%, black);
+  --color-accent-950: color-mix(in srgb, var(--accent) 30%, black);
+  --color-background-full: var(--app-bg);
+  --color-background-primary-default: var(--panel);
+  --color-background-secondary-default: var(--surface);
+  --color-background-tertiary-default: var(--accent-soft);
+  --color-text-primary: var(--text);
+  --color-text-secondary: var(--muted);
+  --color-text-tertiary: var(--muted);
+  --color-text-white: var(--on-accent);
+  --color-foreground-full: var(--on-accent);
+  --color-border-button-default: var(--border);
+  --color-separator-border: var(--border);
+  --color-border-focus-ring: var(--accent);
+  --color-text-error-primary: var(--danger);
+  --color-text-destructive: var(--danger);
+}
+
+:root[data-theme] body { background: var(--app-bg); color: var(--text); }

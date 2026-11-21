@@ -1,11 +1,16 @@
 import { defineConfig } from "vitest/config";
 import { resolve } from "node:path";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+
+  plugins: [react(), tailwindcss()],
+  resolve: { alias: { "@": resolve(import.meta.dirname, "src") } },
 
   build: { rollupOptions: { input: { main: resolve(import.meta.dirname, "index.html"), settings: resolve(import.meta.dirname, "settings.html"), notifications: resolve(import.meta.dirname, "notifications.html"), tray: resolve(import.meta.dirname, "tray.html") } } },
   test: { environment: "jsdom" },

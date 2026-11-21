@@ -23,8 +23,11 @@ export function resolveTheme(preference: Appearance, systemDark: boolean): Theme
 }
 
 export function applyAppearance(preference: Appearance, systemDark: boolean): void {
-  document.documentElement.dataset.theme = resolveTheme(preference, systemDark);
-  document.documentElement.style.colorScheme = resolveTheme(preference, systemDark) === "system_dark" || resolveTheme(preference, systemDark) === "shaxi" ? "dark" : "light";
+  const theme = resolveTheme(preference, systemDark);
+  const dark = theme === "system_dark" || theme === "shaxi";
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.classList.toggle("dark", dark);
+  document.documentElement.style.colorScheme = dark ? "dark" : "light";
 }
 
 export async function initAppearance(): Promise<void> {
