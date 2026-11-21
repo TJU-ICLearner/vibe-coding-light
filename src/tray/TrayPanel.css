@@ -60,3 +60,27 @@ footer { padding: 9px 5px 3px; border-top: 1px solid var(--border); }
 .tray-quit { color: var(--danger); }
 .tray-error { margin: 4px 9px 8px; color: var(--danger); font-size: 11px; }
 button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* BoardUI React panel adjustments; all scrolling stays on the persistent root. */
+.tray-tabs { gap: 0; }
+.tray-tabs .tray-nav { display: flex; gap: 0; padding: 3px; margin: 0 0 13px; border: 0; }
+.tray-tabs .tray-nav [role="tab"] { flex: 1; justify-content: center; min-width: 0; padding: 8px 3px; border-radius: 8px; }
+.tray-tabs .tray-nav [role="tab"] > span { font-size: 11px; white-space: normal; text-align: center; }
+.tray-tabs .tray-nav [role="tab"][aria-selected="true"] { background: var(--panel); }
+.tray-tabs .relative > span[aria-hidden] { display: none; }
+.tray-tab-panel { display: block; outline: none; }
+.tray-action { width: 100%; min-height: 35px; justify-content: space-between; padding: 7px 9px; color: var(--text); font-size: 12px; }
+.tray-action > span:first-child { flex: 1; min-width: 0; justify-content: flex-start; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.tray-action > span:last-child { flex: none; color: var(--muted); font-size: 16px; }
+.tray-actions .tray-action { background: var(--surface); border: 1px solid var(--border); }
+.tray-switch { display: flex; flex-direction: row-reverse; justify-content: space-between; width: 100%; min-height: 35px; padding: 7px 9px; }
+.tray-switch > span:last-child { margin-right: auto; color: var(--text); font-size: 12px; }
+.tray-language { display: grid; gap: 6px; margin-bottom: 8px; cursor: default; }
+.tray-language button { width: 100%; }
+.tray-sessions { list-style: none; }
+.tray-sessions li { overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
+.tray-agent button { width: auto; min-width: 82px; }
+.theme-choice { width: 100%; min-width: 0; justify-content: flex-start; overflow: hidden; }
+.theme-choice > span:first-child { flex: none; }
+.theme-choice > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.tray-loading { padding: 20px; color: var(--muted); }
