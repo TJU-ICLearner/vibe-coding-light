@@ -1,0 +1,34 @@
+@import "../settings.css";
+
+#settings-app { max-width: 1040px; }
+.pet-page-header { margin-bottom: 26px; }
+.pet-page-header h1 { font-size: 1.9rem; }
+.pet-section-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.pet-section-heading h2 { margin: 0; }
+.pet-step { display: inline-grid; place-items: center; min-width: 32px; height: 32px; border-radius: 10px; background: var(--accent-soft, #e6f4ea); color: var(--accent-text, #216b45); font-size: .72rem; font-weight: 800; letter-spacing: .03em; }
+.pet-field-label { display: block; margin: 0 0 8px; font-size: .8rem; font-weight: 700; }
+.pet-mode-tabs { margin-bottom: 14px; }
+.pet-mode-tabs [role="tablist"] { gap: 4px; }
+.pet-mode-tabs [role="tab"] { flex: 1; min-width: 0; white-space: normal; text-align: center; justify-content: center; }
+.pet-mode-tabs [role="tab"] span { white-space: normal; }
+.slot-tabs { display: grid !important; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px !important; border: 0 !important; }
+.slot-tabs [role="tab"] { display: grid; justify-items: center; align-content: center; min-width: 0; min-height: 65px; padding: 6px 3px; border: 1px solid var(--border, #d5e1d7); border-radius: 9px; background: var(--panel, #fff); white-space: normal; text-align: center; }
+.slot-tabs [role="tab"] > span { display: grid; justify-items: center; gap: 3px; min-width: 0; }
+.slot-tabs [role="tab"][aria-selected="true"] { border: 2px solid var(--accent, #28845a); background: var(--accent-soft, #e3f3e8); }
+.slot-tabs .tab-label { font-size: .72rem; font-weight: 750; line-height: 1.2; }
+.slot-tabs .tab-detail { font-size: .6rem; line-height: 1.2; color: var(--muted, #748a79); }
+.pet-state-tabs .relative > span[aria-hidden] { display: none; }
+.pet-empty-panel { display: none; }
+.pet-upload-label input[type="file"] { min-height: 64px; border-style: dashed; border-width: 1.5px; background: var(--surface, #f7faf8); }
+.pet-save-button { width: 100%; margin-top: 14px; background: var(--accent, #287b53) !important; color: var(--on-accent, white) !important; }
+.pet-save-button:hover { filter: brightness(.95); }
+.preview-panel { border-radius: 18px; box-shadow: 0 10px 30px #304c3a0b; }
+.preview-box { min-height: 212px; }
+.asset-editor { border-radius: 14px; }
+.pet-library { margin-top: 22px; }
+.pet-library #saved-pets > button { text-align: left; justify-content: flex-start; }
+@media (max-width: 700px) {
+  .pet-page-header { margin-bottom: 16px; }
+  .pet-mode-tabs [role="tab"] { font-size: .72rem; }
+  .preview-box { min-height: 160px; }
+}

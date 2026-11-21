@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { fireEvent } from "@testing-library/react";
 import settingsHtml from "../settings.html?raw";
 import { PreviewController, SettingsController, availableModes, validatePetFile, mountSettings } from "./settings";
 
@@ -28,14 +29,19 @@ function mountFullSettings(initialLocale: "zh-CN" | "en") {
 }
 
 function chooseFile(input: HTMLInputElement, value: File) {
-  Object.defineProperty(input, "files", { configurable: true, value: [value] });
-  input.dispatchEvent(new Event("change"));
+  fireEvent.change(input, { target: { files: [value] } });
 }
 
-function enterStateMode() {
-  const style = document.querySelector<HTMLSelectElement>("#pet-style")!;
-  style.value = "states";
-  style.dispatchEvent(new Event("change"));
+async function setStyle(mode: "single" | "states") {
+  document.querySelector<HTMLElement>(`.pet-mode-tabs [data-key="${mode}"]`)!.click();
+  await vi.waitFor(() => expect(document.querySelector(`.pet-mode-tabs [data-key="${mode}"]`)?.getAttribute("aria-selected")).toBe("true"));
+}
+
+async function enterStateMode() { await setStyle("states"); }
+
+async function clickSlot(slot: string) {
+  document.querySelector<HTMLElement>(`#slot-tabs [data-slot="${slot}"]`)!.click();
+  await vi.waitFor(() => expect(document.querySelector(`#slot-tabs [data-slot="${slot}"]`)?.getAttribute("aria-selected")).toBe("true"));
 }
 
 function deferred<T>() {
@@ -47,6 +53,7 @@ function deferred<T>() {
 
 const photo = (id: string) => ({ schema_version: 1, id, name: id, scale: 0.8, offset_x: 0, offset_y: 0, created_at: 1 });
 const file = (name: string) => new File([name], `${name}.png`, { type: "image/png" });
+afterEach(() => window.dispatchEvent(new Event("beforeunload")));
 
 describe("settings preview", () => {
   it("saves a draft once, then requires a change before another profile can be created", async () => {
@@ -72,8 +79,8 @@ describe("settings preview", () => {
     expect(save.disabled).toBe(true);
     expect(document.querySelector("#status")?.textContent).toContain("already saved");
     const name = document.querySelector<HTMLInputElement>("#pet-name")!;
-    name.value = "A edited"; name.dispatchEvent(new Event("input"));
-    expect(save.disabled).toBe(false);
+    fireEvent.change(name, { target: { value: "A edited" } });
+    await vi.waitFor(() => expect(save.disabled).toBe(false));
   });
   it("does not offer duplicate save after the profile was written but list refresh failed", async () => {
     vi.mocked(invoke).mockImplementation(async (command) => {
@@ -120,7 +127,7 @@ describe("settings preview", () => {
   });
   it("shows five ordered tabs and keeps preview before the editor in the DOM", async () => {
     mountFullSettings("en");
-    enterStateMode();
+    await enterStateMode();
     const tabs = [...document.querySelectorAll<HTMLButtonElement>("#slot-tabs [role=tab]")];
     expect(tabs.map((tab) => tab.dataset.slot)).toEqual(["default", "working", "waiting", "error", "completed"]);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
@@ -137,11 +144,11 @@ describe("settings preview", () => {
 
   it("uses arrow keys to move the selected slot and keyboard focus", async () => {
     mountFullSettings("en");
-    enterStateMode();
+    await enterStateMode();
     const tabs = [...document.querySelectorAll<HTMLButtonElement>("#slot-tabs [role=tab]")];
     tabs[0].focus();
-    tabs[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-    expect(tabs[1].getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
+    await vi.waitFor(() => expect(tabs[1].getAttribute("aria-selected")).toBe("true"));
     expect(document.activeElement).toBe(tabs[1]);
   });
 
@@ -163,14 +170,14 @@ describe("settings preview", () => {
     await vi.waitFor(() => expect(document.querySelector<HTMLSelectElement>("#photo-mode")!.options.length).toBeGreaterThan(0));
     chooseFile(document.querySelector("#photo-file")!, file("A"));
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H"));
-    enterStateMode();
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="working"]')!.click();
+    await enterStateMode();
+    await clickSlot("working");
     chooseFile(document.querySelector("#photo-file")!, new File(["GIF89a"], "work.gif", { type: "image/gif" }));
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/gif;base64,R0lG"));
     const before = vi.mocked(invoke).mock.calls.filter(([command]) => command === "prepare_pet_preview").length;
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="waiting"]')!.click();
+    await clickSlot("waiting");
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H");
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="working"]')!.click();
+    await clickSlot("working");
     expect(document.querySelector("#slot-file-name")?.textContent).toContain("work.gif");
     expect(document.querySelector<HTMLSelectElement>("#photo-mode")?.value).toBe("keep_animation");
     expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "prepare_pet_preview")).toHaveLength(before);
@@ -179,9 +186,8 @@ describe("settings preview", () => {
   it("shows only the default editor in single mode", async () => {
     mountFullSettings("en");
     await vi.waitFor(() => expect(document.documentElement.lang).toBe("en"));
-    enterStateMode();
-    const style = document.querySelector<HTMLSelectElement>("#pet-style")!;
-    style.value = "single"; style.dispatchEvent(new Event("change"));
+    await enterStateMode();
+    await setStyle("single");
     expect(document.querySelector<HTMLElement>("#slot-tabs")!.hidden).toBe(true);
     expect(document.querySelector("#slot-editor-title")?.textContent).toContain("Default");
   });
@@ -200,17 +206,17 @@ describe("settings preview", () => {
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H"));
     const motion = document.querySelector<HTMLSelectElement>("#pet-motion")!;
     expect(motion).not.toBeNull();
-    motion.value = "sway"; motion.dispatchEvent(new Event("change"));
-    enterStateMode();
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="working"]')!.click();
+    fireEvent.change(motion, { target: { value: "sway" } });
+    await enterStateMode();
+    await clickSlot("working");
     chooseFile(document.querySelector("#photo-file")!, file("B"));
     await vi.waitFor(() => expect(document.querySelector("#slot-file-name")?.textContent).toContain("B.png"));
     await vi.waitFor(() => expect(motion.disabled).toBe(false));
-    motion.value = "bounce"; motion.dispatchEvent(new Event("change"));
+    fireEvent.change(motion, { target: { value: "bounce" } });
     localeEvents.handler?.({ payload: "zh-CN" });
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="default"]')!.click();
+    await clickSlot("default");
     expect(motion.value).toBe("sway");
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="working"]')!.click();
+    await clickSlot("working");
     expect(motion.value).toBe("bounce");
     document.querySelector<HTMLButtonElement>("#save-pet")!.click();
     await vi.waitFor(() => expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "save_pet_profile")).toBe(true));
@@ -219,7 +225,7 @@ describe("settings preview", () => {
     chooseFile(document.querySelector("#photo-file")!, file("C"));
     await vi.waitFor(() => expect(motion.disabled).toBe(false));
     expect(motion.value).toBe("follow_state");
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="default"]')!.click();
+    await clickSlot("default");
     expect(motion.value).toBe("sway");
   });
   it("reports a missing default preview before saving", async () => {
@@ -264,15 +270,14 @@ describe("settings preview", () => {
     });
     const scale = document.querySelector<HTMLInputElement>("#pet-scale")!;
     await vi.waitFor(() => expect(document.querySelector<HTMLSelectElement>("#photo-mode")!.options.length).toBeGreaterThan(0));
-    scale.value = "0.75";
-    scale.dispatchEvent(new Event("input"));
+    fireEvent.change(scale, { target: { value: "0.75" } });
     const input = document.querySelector<HTMLInputElement>("#photo-file")!;
     Object.defineProperty(input, "files", { configurable: true, value: [file("A")] });
-    input.dispatchEvent(new Event("change"));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
     await vi.waitFor(() => expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "prepare_pet_preview")).toBe(true));
     await vi.waitFor(() => expect(localeEvents.handler).not.toBeNull());
     localeEvents.handler!({ payload: "en" });
-    expect(document.querySelector("#status")?.textContent).toContain("Processing");
+    await vi.waitFor(() => expect(document.querySelector("#status")?.textContent).toContain("Processing"));
     pending.resolve({ kind: "png", data_url: "data:image/png;base64,QUJD" });
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,QUJD"));
     expect(scale.value).toBe("0.75");
@@ -324,8 +329,7 @@ describe("settings preview", () => {
     expect(scale.max).toBe("3");
     expect(document.querySelector("#pet-offset-x")).toBeNull();
     expect(document.querySelector("#pet-offset-y")).toBeNull();
-    scale.value = "3";
-    scale.dispatchEvent(new Event("input"));
+    fireEvent.change(scale, { target: { value: "3" } });
     expect(document.querySelector<HTMLElement>(".preview-window")!.style.width).toBe("400px");
     expect(document.querySelector<HTMLElement>(".preview-viewport")!.style.width).toBe("160px");
     expect(document.querySelector<HTMLElement>("#processed-frame")!.style.transform).toBe("scale(3)");
@@ -409,16 +413,16 @@ describe("settings preview", () => {
     const defaultInput = document.querySelector<HTMLInputElement>("#photo-file")!;
     chooseFile(defaultInput, new File(["A"], "base.png", { type: "image/png" }));
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H"));
-    enterStateMode();
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="working"]')!.click();
-    chooseFile(defaultInput, new File(["GIF89a"], "work.gif", { type: "image/gif" }));
+    await enterStateMode();
+    await clickSlot("working");
+    chooseFile(document.querySelector("#photo-file")!, new File(["GIF89a"], "work.gif", { type: "image/gif" }));
     await vi.waitFor(() => expect(document.querySelector<HTMLSelectElement>("#photo-mode")?.value).toBe("keep_animation"));
     expect(document.querySelectorAll("#photo-mode option")).toHaveLength(1);
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/gif;base64,R0lG"));
     expect(document.querySelector("#processed-preview")?.classList.contains("animated")).toBe(true);
     expect(document.querySelector<HTMLSelectElement>("#pet-motion")?.disabled).toBe(true);
     expect(document.querySelector("#motion-hint")?.textContent).toContain("GIF");
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="waiting"]')!.click();
+    await clickSlot("waiting");
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H");
   });
 });
@@ -440,12 +444,12 @@ describe("saved pets", () => {
     chooseFile(document.querySelector("#photo-file")!, file("draft"));
     await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(false));
     document.querySelector<HTMLButtonElement>('#saved-pets [data-pet-id="builtin-yier"]')!.click();
-    expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(true);
+    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(true));
     selecting.resolve();
     await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>("#resume-draft")?.hidden).toBe(false));
     expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(true);
     document.querySelector<HTMLButtonElement>("#resume-draft")!.click();
-    expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(false);
+    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>("#save-pet")?.disabled).toBe(false));
   });
 
   it("uses state tabs to preview either built-in GIF set", async () => {
@@ -463,22 +467,21 @@ describe("saved pets", () => {
     const choices = [...document.querySelectorAll<HTMLButtonElement>("#saved-pets button")].map((button) => button.textContent);
     expect(choices).toContain("默认布布");
     expect(choices).toContain("默认一二");
-    enterStateMode();
+    await enterStateMode();
     expect(document.querySelector<HTMLElement>("#builtin-preview-control")!.hidden).toBe(true);
     expect([...document.querySelectorAll("#slot-tabs .tab-detail")].every((item) => item.textContent === "已设置")).toBe(true);
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="working"]')!.click();
+    await clickSlot("working");
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/bubu/working.gif");
     document.querySelector<HTMLButtonElement>('#saved-pets [data-pet-id="builtin-yier"]')!.click();
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/yier/working.gif"));
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="error"]')!.click();
+    await clickSlot("error");
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/yier/error.gif");
-    const style = document.querySelector<HTMLSelectElement>("#pet-style")!;
-    style.value = "single"; style.dispatchEvent(new Event("change"));
+    await setStyle("single");
     expect(document.querySelector<HTMLElement>("#builtin-preview-control")!.hidden).toBe(false);
     const previewState = document.querySelector<HTMLSelectElement>("#builtin-preview-state")!;
     expect(previewState.value).toBe("error");
     previewState.value = "working";
-    previewState.dispatchEvent(new Event("change"));
+    previewState.dispatchEvent(new Event("change", { bubbles: true }));
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/yier/working.gif");
   });
 
@@ -507,10 +510,10 @@ describe("saved pets", () => {
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe(saved.assets.default.data_url));
     expect(document.querySelector("#preview-context")?.textContent).toContain("saved");
     expect(document.querySelector<HTMLElement>("#processed-frame")?.style.transform).toBe("scale(2)");
-    enterStateMode();
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="working"]')!.click();
+    await enterStateMode();
+    await clickSlot("working");
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe(saved.assets.working.data_url);
-    document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="waiting"]')!.click();
+    await clickSlot("waiting");
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe(saved.assets.default.data_url);
     expect(document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="waiting"] .tab-detail')?.textContent).toBe("使用默认");
     chooseFile(document.querySelector("#photo-file")!, file("new"));
@@ -519,8 +522,8 @@ describe("saved pets", () => {
     expect(document.querySelector<HTMLButtonElement>('#slot-tabs [data-slot="waiting"] .tab-detail')?.textContent).toBe("已设置");
     document.querySelector<HTMLButtonElement>('#saved-pets .saved-row button[aria-label="删除 saved"]')!.click();
     expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "delete_photo_pet")).toBe(false);
-    expect(document.querySelector(".delete-confirm")?.textContent).toContain("saved");
-    document.querySelector<HTMLButtonElement>('.delete-confirm [data-action="confirm-delete"]')!.click();
+    await vi.waitFor(() => expect(document.querySelector("[role=alertdialog]")?.textContent).toContain("saved"));
+    [...document.querySelectorAll<HTMLButtonElement>("[role=alertdialog] button")].find((button) => button.textContent?.includes("确定删除桌宠"))!.click();
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("/pet/bubu/waiting.gif"));
     expect(document.querySelector("#preview-context")?.textContent).toContain("默认布布");
   });
@@ -538,9 +541,9 @@ describe("saved pets", () => {
     const remove = document.querySelector<HTMLButtonElement>('.saved-row button[aria-label="Delete my-pet"]')!;
     remove.click(); remove.click();
     expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "delete_photo_pet")).toHaveLength(0);
-    expect(document.querySelector(".delete-confirm")?.textContent).toContain("my-pet");
-    document.querySelector<HTMLButtonElement>('.delete-confirm [data-action="cancel-delete"]')!.click();
-    expect(document.querySelector(".delete-confirm")).toBeNull();
+    await vi.waitFor(() => expect(document.querySelector("[role=alertdialog]")?.textContent).toContain("my-pet"));
+    [...document.querySelectorAll<HTMLButtonElement>("[role=alertdialog] button")].find((button) => button.textContent?.includes("Cancel"))!.click();
+    await vi.waitFor(() => expect(document.querySelector("[role=alertdialog]")).toBeNull());
     expect(document.querySelector('.saved-row button[aria-label="Delete my-pet"]')).not.toBeNull();
   });
 
@@ -566,18 +569,18 @@ describe("saved pets", () => {
     };
     await selectYier();
     const scale = document.querySelector<HTMLInputElement>("#pet-scale")!;
-    scale.value = "1.7"; scale.dispatchEvent(new Event("input"));
+    fireEvent.change(scale, { target: { value: "1.7" } });
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H");
     expect(document.querySelector<HTMLElement>("#processed-frame")?.style.transform).toBe("scale(1.7)");
     expect(document.querySelector("#status")?.textContent).toContain("预览已生成");
     await selectYier();
     const motion = document.querySelector<HTMLSelectElement>("#pet-motion")!;
-    motion.value = "sway"; motion.dispatchEvent(new Event("change"));
+    fireEvent.change(motion, { target: { value: "sway" } });
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H");
     expect(document.querySelector<HTMLImageElement>("#processed-preview")?.className).toBe("motion-sway");
     await selectYier();
     const mode = document.querySelector<HTMLSelectElement>("#photo-mode")!;
-    mode.value = "keep_alpha"; mode.dispatchEvent(new Event("change"));
+    fireEvent.change(mode, { target: { value: "keep_alpha" } });
     await vi.waitFor(() => expect(document.querySelector<HTMLImageElement>("#processed-preview")?.getAttribute("src")).toBe("data:image/png;base64,UE5H"));
     expect(document.querySelector("#preview-context")?.textContent).toContain("草稿");
   });

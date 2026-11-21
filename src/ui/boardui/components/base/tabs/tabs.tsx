@@ -82,6 +82,7 @@ export function TabList<T extends object>({ className, ref, ...props }: TabListP
       }
     };
     measure();
+    if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     // Labels and fonts can change width without resizing the full tab strip.

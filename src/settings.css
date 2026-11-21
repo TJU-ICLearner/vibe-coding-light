@@ -19,11 +19,7 @@ label { display: grid; gap: 7px; min-width: 0; margin: 12px 0; font-size: .8rem;
 input, select { min-width: 0; width: 100%; font: inherit; color: inherit; background: #fbfdfb; border: 1px solid #c9d8ce; border-radius: 9px; padding: 9px 11px; }
 input[type="file"] { font-size: .74rem; padding: 7px; color: #52665a; }
 input[type="file"]::file-selector-button { border: 0; border-radius: 6px; background: #e9f2eb; color: #256543; padding: 6px 9px; margin-right: 8px; font: inherit; font-weight: 700; cursor: pointer; }
-input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid #277c55; outline-offset: 2px; }
-button { border: 1px solid #cbd9cf; border-radius: 9px; padding: 9px 12px; background: #fff; color: #294637; cursor: pointer; font: inherit; }
-button:hover { background: #f0f7f1; }
-button.selected { border-color: #278a59; background: #e6f4ea; color: #1b6442; }
-button:disabled { opacity: .52; cursor: default; }
+input:focus-visible, select:focus-visible { outline: 2px solid #277c55; outline-offset: 2px; }
 .hint { margin: 6px 0 14px; color: #687b70; font-size: .75rem; line-height: 1.5; }
 .editor-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; grid-template-areas: "editor preview"; gap: 18px; align-items: start; }
 .editor-main { grid-area: editor; min-width: 0; }
@@ -127,11 +123,11 @@ button:disabled { opacity: .52; cursor: default; }
 :root[data-theme] :is(header p, .hint, .preview-size, .preview-context, .original-row, .builtin-preview-control, .tab-detail, .file-name, .slot-status) { color: var(--muted); }
 :root[data-theme] .eyebrow { color: var(--accent-text); }
 :root[data-theme] :is(.panel, .asset-editor, .preview-panel, .original-thumb, .slot-tabs button) { background: var(--panel); border-color: var(--border); }
-:root[data-theme] :is(input, select, button) { color: var(--text); background: var(--panel); border-color: var(--border); }
+:root[data-theme] :is(input, select) { color: var(--text); background: var(--panel); border-color: var(--border); }
 :root[data-theme] input[type="file"] { color: var(--muted); }
 :root[data-theme] input[type="file"]::file-selector-button { background: var(--accent-soft); color: var(--accent-text); }
-:root[data-theme] :is(button:hover, .slot-tabs button:hover) { background: var(--accent-soft); }
-:root[data-theme] :is(button.selected, .slot-tabs button[aria-selected="true"]) { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+:root[data-theme] .slot-tabs [role="tab"]:hover { background: var(--accent-soft); }
+:root[data-theme] .slot-tabs [role="tab"][aria-selected="true"] { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 :root[data-theme] .slot-tabs button[aria-selected="true"] .tab-detail { color: var(--accent-text); }
 :root[data-theme] :is(.slot-completion, .original-thumb) { background: var(--surface); border-color: var(--border); }
 :root[data-theme] .slot-completion { color: var(--warning); }
@@ -143,5 +139,4 @@ button:disabled { opacity: .52; cursor: default; }
 :root[data-theme] .delete-confirm [data-action="confirm-delete"]:hover { background: #8c3438; }
 :root[data-theme] #resume-draft { color: var(--accent); }
 :root[data-theme] #status { color: var(--accent-text); }
-:root[data-theme] .primary, :root[data-theme] .primary:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-:root[data-theme] :is(input, select, button):focus-visible { outline-color: var(--accent); }
+:root[data-theme] :is(input, select):focus-visible { outline-color: var(--accent); }
