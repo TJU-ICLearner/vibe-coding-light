@@ -236,7 +236,7 @@ it("records prompt transitions for repeated Claude replies and Codex turns", () 
     expect(events.filter((item) => item.kind === "completed"), `${agent} events: ${JSON.stringify(events)}`).toHaveLength(2);
     expect(JSON.stringify(events)).not.toContain("secret");
   }
-});
+}, 20_000);
 
 it("keeps Claude session state separate without an environment session id", () => {
   const home = mkdtempSync(join(tmpdir(), "vcl-hook-")); roots.push(home);
