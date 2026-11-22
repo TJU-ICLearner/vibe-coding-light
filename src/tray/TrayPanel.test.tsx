@@ -53,4 +53,12 @@ describe("BoardUI quick controls", () => {
     await setup();
     for (const name of ["概览", "Agent 接入", "设置"]) { fireEvent.click(screen.getByRole("tab", { name })); await vi.waitFor(() => expect(screen.getByRole("tab", { name }).getAttribute("aria-selected")).toBe("true")); }
   });
+  it("offers a retry when the initial panel read fails", async () => {
+    const api = fixture();
+    api.getState = vi.fn().mockRejectedValueOnce(Error("offline")).mockResolvedValue(base);
+    const { model } = await setup(api);
+    expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await vi.waitFor(() => expect(model.getSnapshot().state?.sessions[0]).toContain("Codex"));
+  });
 });

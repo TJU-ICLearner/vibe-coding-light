@@ -17,7 +17,7 @@ export function TrayPanel({ model }: { model: TrayPanelModel }) {
     document.addEventListener("keydown", escape);
     return () => document.removeEventListener("keydown", escape);
   }, [model]);
-  if (!state) return <div className="tray-loading" role="status">Vibe Coding Light</div>;
+  if (!state) return <div className="tray-loading" role="status"><strong>Vibe Coding Light</strong>{view.error ? <Button variant="secondary" onClick={() => { void model.refresh(); }}>{document.documentElement.lang === "en" ? "Retry" : "重试"}</Button> : <span>…</span>}</div>;
   const zh = state.locale === "zh-CN";
   const action = (id: string, label: string, disabled = false, extra = "") => <Button data-action={id} variant="ghost" className={`tray-action ${extra}`} disabled={disabled || view.pending} onClick={() => { void model.performAction(id); }}>{label}<span aria-hidden="true">›</span></Button>;
   const toggle = (id: string, label: string, selected: boolean, disabled = false) => <Switch data-action={id} className="tray-switch" isSelected={selected} isDisabled={disabled || view.pending} onChange={() => { void model.performAction(id); }}>{label}</Switch>;

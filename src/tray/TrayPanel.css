@@ -83,4 +83,4 @@ button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); o
 .theme-choice { width: 100%; min-width: 0; justify-content: flex-start; overflow: hidden; }
 .theme-choice > span:first-child { flex: none; }
 .theme-choice > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.tray-loading { padding: 20px; color: var(--muted); }
+.tray-loading { display: grid; gap: 12px; justify-items: start; padding: 20px; color: var(--muted); }
